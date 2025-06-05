@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional
 
 from fastmcp import FastMCP
@@ -240,4 +241,6 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="sse", host="0.0.0.0", port=8000)
+    port = int(os.getenv("MCP_SERVER_PORT", 8000))
+    host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
+    mcp.run(transport="sse", host=host, port=port)
