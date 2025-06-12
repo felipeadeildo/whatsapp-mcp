@@ -51,12 +51,8 @@ idna==3.10
     #   anyio
     #   httpx
     #   requests
-jinja2==3.1.6
-    # via whatsapp-mcp-server
 markdown-it-py==3.0.0
     # via rich
-markupsafe==3.0.2
-    # via jinja2
 mcp==1.9.2
     # via fastmcp
 mdurl==0.1.2

@@ -1,18 +1,9 @@
 import os
 from typing import Any, Dict, List, Optional
 
-from auth import (
-    SimpleAuthBackend,
-    create_api_key,
-    create_session,
-    create_user,
-    init_db,
-    list_api_keys,
-    verify_user,
-)
-from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from auth import SimpleAuthBackend, load_api_key
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.middleware.authentication import AuthenticationMiddleware
@@ -258,68 +249,13 @@ if __name__ == "__main__":
     port = int(os.getenv("MCP_SERVER_PORT", 8000))
     host = os.getenv("MCP_SERVER_HOST", "0.0.0.0")
 
-    init_db()
+    api_key = load_api_key()
+    print(f"MCP API key: {api_key}")
 
-    templates = Jinja2Templates(
-        directory=os.path.join(os.path.dirname(__file__), "templates")
-    )
+    backend = SimpleAuthBackend(api_key)
 
-    backend = SimpleAuthBackend()
-    middleware = [Middleware(AuthenticationMiddleware, backend=backend)]
-    app = FastAPI(middleware=middleware)
-
-    mcp_app = mcp.http_app(transport="sse")
-    app.mount("/mcp", mcp_app)
-
-    def current_user(request: Request) -> Optional[int]:
-        if request.user and request.user.is_authenticated:
-            return int(request.user.identity)
-        return None
-
-    @app.get("/")
-    def root(request: Request):
-        user = current_user(request)
-        if user:
-            return RedirectResponse("/keys")
-        return RedirectResponse("/login")
-
-    @app.get("/register", response_class=HTMLResponse)
-    def register_form(request: Request):
-        return templates.TemplateResponse("register.html", {"request": request})
-
-    @app.post("/register")
-    def register(username: str = Form(...), password: str = Form(...)):
-        if create_user(username, password):
-            return RedirectResponse("/login", status_code=303)
-        return HTMLResponse("User already exists", status_code=400)
-
-    @app.get("/login", response_class=HTMLResponse)
-    def login_form(request: Request):
-        return templates.TemplateResponse("login.html", {"request": request})
-
-    @app.post("/login")
-    def login(username: str = Form(...), password: str = Form(...)):
-        user_id = verify_user(username, password)
-        if user_id:
-            token = create_session(user_id)
-            response = RedirectResponse("/keys", status_code=303)
-            response.set_cookie("session_token", token, httponly=True)
-            return response
-        return HTMLResponse("Invalid credentials", status_code=400)
-
-    @app.get("/keys", response_class=HTMLResponse)
-    def keys(request: Request):
-        user = current_user(request)
-        if not user:
-            return RedirectResponse("/login")
-        keys_list = list_api_keys(user)
-        return templates.TemplateResponse(
-            "keys.html", {"request": request, "keys": keys_list}
-        )
-
-    @app.post("/keys/new")
-    def new_key(request: Request):
-        user = current_user(request)
+    def root():
+        return JSONResponse({"status": "ok"})
         if not user:
             return RedirectResponse("/login")
         create_api_key(user)

@@ -100,18 +100,15 @@ Here's an example of what you can do when it's connected to Claude.
 
 ### Authentication and API Keys
 
-With the MCP server running (it starts automatically when Claude or Cursor launches with the
-above configuration), visit `http://localhost:8000/register` in your browser to create your
-first user. After registering, log in at `http://localhost:8000/login` and go to `/keys` to
-generate API keys. These keys must be included as a `Bearer` token in the `Authorization`
-header when making HTTP requests to the `/mcp` endpoints. For example:
+When the MCP server starts for the first time it automatically generates a random API key
+and saves it to `whatsapp-mcp-server/api_key.txt`. Use this key as a `Bearer` token in the
+`Authorization` header when making requests to the `/mcp` endpoints. For example:
 
 ```bash
 curl -H "Authorization: Bearer <YOUR_KEY>" http://localhost:8000/mcp/list_chats
 ```
 
-You can also access the MCP server through an authenticated browser session using the
-`session_token` cookie that is set upon login.
+You can regenerate the key at any time by deleting `api_key.txt` before starting the server.
 
 ### Windows Compatibility
 
