@@ -31,7 +31,23 @@ Here's an example of what you can do when it's connected to Claude.
    cd whatsapp-mcp
    ```
 
-2. **Run the WhatsApp bridge**
+2. **Set up the Python environment**
+
+   Create a virtual environment using `uv` and install the required packages:
+
+   ```bash
+   cd whatsapp-mcp-server
+   uv venv
+   uv pip install -r requirements.txt
+   ```
+
+   If you modify `pyproject.toml`, regenerate `requirements.txt` with:
+
+   ```bash
+   uv export --no-hashes --format requirements-txt --no-dev > requirements.txt
+   ```
+
+3. **Run the WhatsApp bridge**
 
    Navigate to the whatsapp-bridge directory and run the Go application:
 
@@ -44,7 +60,7 @@ Here's an example of what you can do when it's connected to Claude.
 
    After approximately 20 days, you will might need to re-authenticate.
 
-3. **Connect to the MCP server**
+4. **Connect to the MCP server**
 
    Copy the below json with the appropriate {{PATH}} values:
 
@@ -76,7 +92,7 @@ Here's an example of what you can do when it's connected to Claude.
    ~/.cursor/mcp.json
    ```
 
-4. **Restart Claude Desktop / Cursor**
+5. **Restart Claude Desktop / Cursor**
 
    Open Claude Desktop and you should now see WhatsApp as an available integration.
 
