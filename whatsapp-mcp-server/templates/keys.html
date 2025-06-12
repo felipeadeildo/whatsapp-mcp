@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Keys</title>
+</head>
+<body>
+<h2>Your API Keys</h2>
+<ul>
+{% for key, created in keys %}
+    <li>{{ key }} - {{ created }}</li>
+{% endfor %}
+</ul>
+<form method="post" action="/keys/new">
+    <button type="submit">Generate New Key</button>
+</form>
+<a href="/logout">Logout</a>
+</body>
+</html>
