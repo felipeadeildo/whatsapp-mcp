@@ -98,6 +98,21 @@ Here's an example of what you can do when it's connected to Claude.
 
    Or restart Cursor.
 
+### Authentication and API Keys
+
+With the MCP server running (it starts automatically when Claude or Cursor launches with the
+above configuration), visit `http://localhost:8000/register` in your browser to create your
+first user. After registering, log in at `http://localhost:8000/login` and go to `/keys` to
+generate API keys. These keys must be included as a `Bearer` token in the `Authorization`
+header when making HTTP requests to the `/mcp` endpoints. For example:
+
+```bash
+curl -H "Authorization: Bearer <YOUR_KEY>" http://localhost:8000/mcp/list_chats
+```
+
+You can also access the MCP server through an authenticated browser session using the
+`session_token` cookie that is set upon login.
+
 ### Windows Compatibility
 
 If you're running this project on Windows, be aware that `go-sqlite3` requires **CGO to be enabled** in order to compile and work properly. By default, **CGO is disabled on Windows**, so you need to explicitly enable it and have a C compiler installed.
