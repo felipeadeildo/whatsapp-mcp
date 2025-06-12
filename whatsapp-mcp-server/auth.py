@@ -153,7 +153,7 @@ def verify_session(token: str) -> Optional[int]:
 
 
 class SimpleAuthBackend(AuthenticationBackend):
-    def authenticate(self, conn: HTTPConnection):
+    async def authenticate(self, conn: HTTPConnection):
         token = None
         auth_header = conn.headers.get("Authorization")
         if auth_header and auth_header.lower().startswith("bearer "):
