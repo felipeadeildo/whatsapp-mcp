@@ -1,13 +1,22 @@
 import os
 from typing import Any, Dict, List, Optional
 
+from auth import (
+    SimpleAuthBackend,
+    create_api_key,
+    create_session,
+    create_user,
+    init_db,
+    list_api_keys,
+    verify_user,
+)
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.middleware.authentication import AuthenticationMiddleware
-from whatsapp import Contact, Message
+from whatsapp import Chat, Contact, Message, MessageContext
 from whatsapp import download_media as whatsapp_download_media
 from whatsapp import get_chat as whatsapp_get_chat
 from whatsapp import get_contact_chats as whatsapp_get_contact_chats
@@ -20,16 +29,6 @@ from whatsapp import search_contacts as whatsapp_search_contacts
 from whatsapp import send_audio_message as whatsapp_audio_voice_message
 from whatsapp import send_file as whatsapp_send_file
 from whatsapp import send_message as whatsapp_send_message
-
-from auth import (
-    SimpleAuthBackend,
-    create_api_key,
-    create_session,
-    create_user,
-    init_db,
-    list_api_keys,
-    verify_user,
-)
 
 # Initialize FastMCP server
 mcp = FastMCP("whatsapp")
@@ -261,7 +260,9 @@ if __name__ == "__main__":
 
     init_db()
 
-    templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
+    templates = Jinja2Templates(
+        directory=os.path.join(os.path.dirname(__file__), "templates")
+    )
 
     backend = SimpleAuthBackend()
     middleware = [Middleware(AuthenticationMiddleware, backend=backend)]
@@ -312,7 +313,9 @@ if __name__ == "__main__":
         if not user:
             return RedirectResponse("/login")
         keys_list = list_api_keys(user)
-        return templates.TemplateResponse("keys.html", {"request": request, "keys": keys_list})
+        return templates.TemplateResponse(
+            "keys.html", {"request": request, "keys": keys_list}
+        )
 
     @app.post("/keys/new")
     def new_key(request: Request):
