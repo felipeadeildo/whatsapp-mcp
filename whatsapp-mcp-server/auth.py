@@ -5,7 +5,11 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional
 
-from starlette.authentication import AuthenticationBackend, AuthCredentials, SimpleUser
+from starlette.authentication import (
+    AuthenticationBackend,
+    AuthCredentials,
+    SimpleUser,
+)
 from starlette.requests import HTTPConnection
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth.db")
@@ -152,6 +156,18 @@ def verify_session(token: str) -> Optional[int]:
     return None
 
 
+class AuthUser(SimpleUser):
+    """User object that exposes the numeric ID via the identity property."""
+
+    def __init__(self, user_id: int):
+        super().__init__(str(user_id))
+        self.user_id = user_id
+
+    @property
+    def identity(self) -> str:  # pragma: no cover - starlette compatibility
+        return str(self.user_id)
+
+
 class SimpleAuthBackend(AuthenticationBackend):
     async def authenticate(self, conn: HTTPConnection):
         token = None
@@ -160,11 +176,11 @@ class SimpleAuthBackend(AuthenticationBackend):
             token = auth_header[7:]
             user_id = verify_api_key(token)
             if user_id:
-                return AuthCredentials(["authenticated"]), SimpleUser(str(user_id))
+                return AuthCredentials(["authenticated"]), AuthUser(user_id)
 
         cookie_token = conn.cookies.get("session_token")
         if cookie_token:
             user_id = verify_session(cookie_token)
             if user_id:
-                return AuthCredentials(["authenticated"]), SimpleUser(str(user_id))
+                return AuthCredentials(["authenticated"]), AuthUser(user_id)
         return None
