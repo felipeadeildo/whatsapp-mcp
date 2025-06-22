@@ -3,3 +3,6 @@ __pycache__/
 
 # WuzAPI Sqlite Database
 dbdata/
+
+# MCP Data
+data/

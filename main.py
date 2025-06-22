@@ -1,6 +1,4 @@
-def main():
-    print("Hello from whatsapp-mcp!")
-
+from whatsapp_mcp.cli import main
 
 if __name__ == "__main__":
     main()
