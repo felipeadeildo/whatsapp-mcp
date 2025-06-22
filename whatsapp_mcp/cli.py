@@ -7,7 +7,7 @@ from .config import load_users
 from .server import run_server
 
 
-def cmd_generate_keys(args):
+def cmd_generate_keys(args) -> None:
     """Gera novas chaves RSA."""
     print("🔑 Gerando novas chaves RSA...")
     auth = WhatsAppAuth()
@@ -15,7 +15,7 @@ def cmd_generate_keys(args):
     print("✅ Chaves geradas com sucesso!")
 
 
-def cmd_create_user(args):
+def cmd_create_user(args) -> None:
     """Cria um novo usuário."""
     username = args.username
 
@@ -51,7 +51,7 @@ def cmd_create_user(args):
         sys.exit(1)
 
 
-def cmd_generate_token(args):
+def cmd_generate_token(args) -> None:
     """Gera token para um usuário existente."""
     username = args.username
 
@@ -70,7 +70,7 @@ def cmd_generate_token(args):
         sys.exit(1)
 
 
-def cmd_list_users(args):
+def cmd_list_users(args) -> None:
     """Lista usuários cadastrados."""
     users = load_users()
 
@@ -85,12 +85,12 @@ def cmd_list_users(args):
         print(f"\t• {username} - {status} - Scopes: {scopes}")
 
 
-def cmd_server(args):
+def cmd_server(args) -> None:
     """Executa o servidor MCP."""
     run_server()
 
 
-def main():
+def main() -> None:
     """Interface CLI principal."""
     parser = argparse.ArgumentParser(
         description="WhatsApp MCP Server - Sistema de autenticação e servidor MCP"
@@ -116,9 +116,7 @@ def main():
     user_parser.set_defaults(func=cmd_create_user)
 
     # Comando: generate-token
-    token_parser = subparsers.add_parser(
-        "generate-token", help="Gera token para usuário"
-    )
+    token_parser = subparsers.add_parser("generate-token", help="Gera token para usuário")
     token_parser.add_argument("username", nargs="?", help="Nome do usuário")
     token_parser.set_defaults(func=cmd_generate_token)
 
