@@ -1,11 +1,13 @@
 from datetime import datetime
 
+from fastapi import FastAPI, HTTPException, Request
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from fastmcp.server.dependencies import AccessToken, get_access_token
 
 from .auth import WhatsAppAuth
 from .config import get_settings
+from .utils import process_webhook_data, save_webhook_event, validate_user_exists
 
 
 def create_mcp_server() -> FastMCP:
@@ -87,21 +89,77 @@ def create_mcp_server() -> FastMCP:
     return mcp
 
 
-def run_server():
-    """Executa o servidor MCP."""
+def create_fastapi_app() -> FastAPI:
+    """Cria aplicação FastAPI com MCP integrado."""
+    # Cria o servidor MCP
+    mcp = create_mcp_server()
+
+    # Cria o app ASGI do MCP
+    mcp_app = mcp.http_app(path="/")
+
+    # Cria a aplicação FastAPI principal
+    app = FastAPI(
+        title="WhatsApp MCP Server",
+        description="Servidor MCP para integração com WhatsApp via wuzapi",
+        lifespan=mcp_app.lifespan,
+    )
+
+    # Monta o servidor MCP
+    app.mount("/mcp", mcp_app)
+
+    # Adiciona webhook listener dinâmico no FastAPI
+    @app.get("/webhook/{username}")
+    @app.post("/webhook/{username}")
+    async def webhook_listener(username: str, request: Request):
+        """Recebe webhooks do wuzapi para usuários específicos."""
+        try:
+            # Valida usuário
+            validate_user_exists(username)
+
+            # Processa dados do webhook
+            if request.method == "POST":
+                data = await process_webhook_data(request)
+            else:
+                data = dict(request.query_params)
+
+            # Salva evento no debug
+            filename = save_webhook_event(
+                username=username,
+                request_method=request.method,
+                headers=dict(request.headers),
+                data=data,
+            )
+
+            print(f"📨 Webhook recebido para {username}: {filename}")
+
+            return {"status": "ok", "message": "Webhook received"}
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"❌ Erro no webhook para {username}: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return app
+
+
+def run_server() -> None:
+    """Executa o servidor FastAPI com MCP integrado."""
+    import uvicorn
+
     config = get_settings()
     server_config = config.server
-
-    mcp = create_mcp_server()
 
     print("🚀 Iniciando WhatsApp MCP Server...")
     print(f"\tHost: {server_config.host}")
     print(f"\tPort: {server_config.port}")
-    print(f"\tTransport: {server_config.transport}")
-    print(f"\tURL: http://{server_config.host}:{server_config.port}/mcp/")
+    print(f"\tMCP URL: {server_config.url}/mcp")
+    print(f"\tWebhooks: {server_config.url}/webhook/{{username}}")
 
-    mcp.run(
-        transport=server_config.transport,
+    app = create_fastapi_app()
+
+    uvicorn.run(
+        app,
         host=server_config.host,
         port=server_config.port,
     )
