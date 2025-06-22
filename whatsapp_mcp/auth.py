@@ -1,4 +1,5 @@
 import hashlib
+import secrets
 from datetime import datetime
 from typing import Any
 
@@ -6,6 +7,7 @@ from fastmcp.server.auth import BearerAuthProvider
 from fastmcp.server.auth.providers.bearer import RSAKeyPair
 
 from .config import KEYS_DIR, get_settings, load_users, save_users
+from .wuzapi_client import WuzapiClient
 
 PRIVATE_KEY_FILE = KEYS_DIR / "private_key.pem"
 PUBLIC_KEY_FILE = KEYS_DIR / "public_key.pem"
@@ -20,9 +22,9 @@ class WhatsAppAuth:
         """Carrega chaves existentes ou gera novas."""
         if PRIVATE_KEY_FILE.exists() and PUBLIC_KEY_FILE.exists():
             print("🔑 Carregando chaves existentes...")
-            with open(PRIVATE_KEY_FILE, "r") as f:
+            with open(PRIVATE_KEY_FILE) as f:
                 private_key = f.read()
-            with open(PUBLIC_KEY_FILE, "r") as f:
+            with open(PUBLIC_KEY_FILE) as f:
                 public_key = f.read()
 
             # Cria RSAKeyPair com chaves existentes
@@ -55,7 +57,7 @@ class WhatsAppAuth:
     def create_user(
         self, username: str, password: str, scopes: list[str] | None = None
     ) -> dict[str, Any]:
-        """Cria um novo usuário."""
+        """Cria um novo usuário local e no wuzapi."""
         if scopes is None:
             scopes = ["whatsapp:send", "whatsapp:read"]
 
@@ -63,6 +65,12 @@ class WhatsAppAuth:
 
         if username in users:
             raise ValueError(f"Usuário '{username}' já existe")
+
+        # Gera token único para o wuzapi
+        wuzapi_token = secrets.token_urlsafe(20)
+
+        # Gera webhook URL único para o usuário
+        webhook_url = f"{self.config.server.url}/webhook/{username}"
 
         # Hash da senha
         password_hash = hashlib.sha256(password.encode()).hexdigest()
@@ -73,7 +81,26 @@ class WhatsAppAuth:
             "scopes": scopes,
             "created_at": datetime.now().isoformat(),
             "active": True,
+            "wuzapi_token": wuzapi_token,
+            "webhook_url": webhook_url,
+            "wuzapi_user_id": None,
         }
+
+        # Cria usuário no wuzapi
+        try:
+            with WuzapiClient() as wuzapi:
+                wuzapi_user_id = wuzapi.create_user(
+                    name=username, token=wuzapi_token, webhook=webhook_url
+                )
+                user_data["wuzapi_user_id"] = wuzapi_user_id
+                print(f"✅ Usuário criado no wuzapi com ID: {wuzapi_user_id}")
+                print(
+                    "Conecte-se ao WhatsApp por meio do link:\n"
+                    f"\t{self.config.wuzapi.base_url}/dashboard"
+                )
+        except Exception as e:
+            print(f"⚠️ Erro ao criar usuário no wuzapi: {e}")
+            print("\tUsuário será criado apenas localmente")
 
         users[username] = user_data
         save_users(users)
