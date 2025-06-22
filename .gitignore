@@ -6,3 +6,6 @@ dbdata/
 
 # MCP Data
 data/
+
+# Environment Variables
+.env
