@@ -18,5 +18,10 @@ services:
     build:
       dockerfile: Dockerfile
     env_file: .env
+    volumes:
+      - ./debug:/app/debug
+      - ./data:/app/data
     ports:
       - '${SERVER__PORT}:${SERVER__PORT}'
+    environment:
+      - IS_DOCKER=true

@@ -1,8 +1,9 @@
 import json
+import os
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).parent.parent
@@ -16,6 +17,9 @@ KEYS_DIR.mkdir(exist_ok=True)
 DEBUG_DIR.mkdir(exist_ok=True)
 
 
+IS_DOCKER = os.getenv("IS_DOCKER", "false").lower() == "true"
+
+
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
@@ -23,7 +27,7 @@ class ServerConfig(BaseModel):
 
     @property
     def url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return f"http://{self.host}:{self.port}" if not IS_DOCKER else f"http://server:{self.port}"
 
 
 class AuthConfig(BaseModel):
@@ -36,6 +40,12 @@ class WuzapiConfig(BaseModel):
     base_url: str = "http://localhost:8080"
     admin_token: str = ""
     events: list[str] = ["Message", "ReadReceipt", "HistorySync", "ChatPresence"]
+
+    @model_validator(mode="after")
+    def override_base_url_for_docker(self) -> "WuzapiConfig":
+        if IS_DOCKER:
+            self.base_url = "http://wuzapi:8080"
+        return self
 
 
 class Settings(BaseSettings):
