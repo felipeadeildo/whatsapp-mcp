@@ -94,9 +94,18 @@ class WhatsAppAuth:
                 )
                 user_data["wuzapi_user_id"] = wuzapi_user_id
                 print(f"✅ Usuário criado no wuzapi com ID: {wuzapi_user_id}")
+
+                # Configura webhook e conecta sessão com eventos
+                print("🔗 Configurando webhook...")
+                wuzapi.set_webhook(wuzapi_token, webhook_url)
+
+                # Conecta sessão imediatamente com todos os eventos
+                wuzapi.connect_session(wuzapi_token, immediate=True)
+                print(f"✅ Sessão conectada com eventos: {self.config.wuzapi.events}")
+
                 print(
                     "Conecte-se ao WhatsApp por meio do link:\n"
-                    f"\t{self.config.wuzapi.base_url}/dashboard"
+                    f"\t{self.config.wuzapi.base_url}/dashboard\n"
                 )
         except Exception as e:
             print(f"⚠️ Erro ao criar usuário no wuzapi: {e}")
