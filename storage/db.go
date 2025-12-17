@@ -9,7 +9,7 @@ import (
 
 // init db and create schema
 func InitDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 
 	if err != nil {
 		return nil, err
