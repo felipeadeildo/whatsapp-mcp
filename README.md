@@ -4,7 +4,7 @@ This is a proof of concept for a WhatsApp MCP with a database for storing messag
 
 # Architecture
 
-The client-whatsapp interface is built on top of [whatsmeow](https://github.com/whatsmeow/whatsmeow). The server is built on top of [go-mcp](https://github.com/whatsapp/go-mcp).
+The client-whatsapp interface is built on top of [whatsmeow](https://github.com/whatsmeow/whatsmeow). The server is built on top of [mcp-go](https://github.com/mark3labs/mcp-go).
 
 When connected to WhatsApp, an event of HistorySync is sent to the client. This event is where we load a bunch of messages. The next sent Message events is stored as well.
 
