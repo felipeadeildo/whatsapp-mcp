@@ -24,9 +24,11 @@ func (c *Client) eventHandler(evt interface{}) {
 	case *events.Disconnected:
 		c.log.Warnf("Disconnected from WhatsApp")
 	case *events.QR:
-		// QR codes são tratados externamente via GetQRChannel
+		// QR codes are handled externally via GetQRChannel
 	case *events.PairSuccess:
 		c.log.Infof("Successfully paired device")
+	case *events.GroupInfo:
+		c.handleGroupInfo(v)
 	}
 }
 
@@ -100,9 +102,17 @@ func (c *Client) handleMessage(evt *events.Message) {
 	chatName := ""
 
 	// for DMs, use sender's push name as chat name
-	// for groups, leave name empty (will be updated by group info events)
 	if !isGroup && info.PushName != "" && !info.IsFromMe {
 		chatName = info.PushName
+	} else if isGroup {
+		// for groups, fetch group info to get the name
+		ctx := context.Background()
+		groupInfo, err := c.wa.GetGroupInfo(ctx, info.Chat)
+		if err != nil {
+			c.log.Debugf("Failed to get group info for %s: %v", info.Chat, err)
+		} else {
+			chatName = groupInfo.Name
+		}
 	}
 
 	chat := storage.Chat{
@@ -139,6 +149,29 @@ func (c *Client) handleMessage(evt *events.Message) {
 	c.log.Infof("Saved message: %s", info.ID)
 }
 
+// handle group info updates (name, topic, settings changes)
+func (c *Client) handleGroupInfo(evt *events.GroupInfo) {
+	// update group name if changed
+	if evt.Name != nil {
+		groupPN, groupLID := c.extractJIDPair(evt.JID, types.EmptyJID)
+
+		chat := storage.Chat{
+			JIDPN:           groupPN,
+			JIDLID:          groupLID,
+			Name:            evt.Name.Name,
+			LastMessageTime: evt.Timestamp,
+			IsGroup:         true,
+		}
+
+		if err := c.store.SaveChat(chat); err != nil {
+			c.log.Errorf("Failed to update group name: %v", err)
+			return
+		}
+
+		c.log.Infof("Updated group name: %s -> %s", evt.JID, evt.Name.Name)
+	}
+}
+
 func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	c.log.Infof("History sync: %d conversations", len(evt.Data.GetConversations()))
 
@@ -173,6 +206,17 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 		chatPN, chatLID := c.extractJIDPair(chatJIDObject, chatAltJID)
 		isGroup := chatJIDObject.Server == "g.us"
+
+		// fetch group name if this is a group
+		var groupName string
+		if isGroup {
+			groupInfo, err := c.wa.GetGroupInfo(ctx, chatJIDObject)
+			if err != nil {
+				c.log.Debugf("Failed to get group info for %s: %v", chatJIDObject, err)
+			} else {
+				groupName = groupInfo.Name
+			}
+		}
 
 		c.log.Infof("Processing chat: %s with %d messages",
 			chatJIDObject.String(), len(conv.GetMessages()))
@@ -237,14 +281,22 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 					if timestamp.After(existingChat.LastMessageTime) {
 						existingChat.LastMessageTime = timestamp
 					}
-					// update name if we have a name and existing doesn't (for DMs only)
-					if !isGroup && existingChat.Name == "" && senderName != "" && !fromMe {
-						existingChat.Name = senderName
+					// update name if we have a name and existing doesn't
+					if existingChat.Name == "" {
+						if isGroup && groupName != "" {
+							existingChat.Name = groupName
+						} else if !isGroup && senderName != "" && !fromMe {
+							existingChat.Name = senderName
+						}
 					}
 				} else {
 					// create new chat entry
 					chatName := ""
-					if !isGroup && senderName != "" && !fromMe {
+					if isGroup {
+						// use group name fetched from API
+						chatName = groupName
+					} else if senderName != "" && !fromMe {
+						// for DMs, use sender's push name
 						chatName = senderName
 					}
 					chatMap[chatKey] = &storage.Chat{
