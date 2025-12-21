@@ -8,14 +8,18 @@ import (
 
 // represents a whatsapp message
 type Message struct {
-	ID          string
-	ChatJID     string
-	SenderJID   string
-	SenderName  string
-	Text        string
-	Timestamp   time.Time
-	IsFromMe    bool
-	MessageType string
+	ID           string
+	ChatJIDPN    *string // JID do chat em formato PN (nullable)
+	ChatJIDLID   *string // JID do chat em formato LID (nullable)
+	ChatJID      string  // JID canônico gerado automaticamente (read-only)
+	SenderJIDPN  *string // JID do remetente em formato PN (nullable)
+	SenderJIDLID *string // JID do remetente em formato LID (nullable)
+	SenderJID    string  // JID canônico gerado automaticamente (read-only)
+	SenderName   string
+	Text         string
+	Timestamp    time.Time
+	IsFromMe     bool
+	MessageType  string
 }
 
 // messages operations manager
@@ -32,15 +36,17 @@ func NewMessageStore(db *sql.DB) *MessageStore {
 func (s *MessageStore) SaveMessage(msg Message) error {
 	query := `
 	INSERT OR REPLACE INTO messages
-	(id, chat_jid, sender_jid, sender_name, text, timestamp, is_from_me, message_type)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	(id, chat_jid_pn, chat_jid_lid, sender_jid_pn, sender_jid_lid, sender_name, text, timestamp, is_from_me, message_type)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err := s.db.Exec(
 		query,
 		msg.ID,
-		msg.ChatJID,
-		msg.SenderJID,
+		msg.ChatJIDPN,
+		msg.ChatJIDLID,
+		msg.SenderJIDPN,
+		msg.SenderJIDLID,
 		msg.SenderName,
 		msg.Text,
 		msg.Timestamp.Unix(),
@@ -52,7 +58,7 @@ func (s *MessageStore) SaveMessage(msg Message) error {
 		return fmt.Errorf("faild to save message: %w", err)
 	}
 
-	return s.updateChatLastMessage(msg.ChatJID, msg.Timestamp)
+	return nil
 }
 
 // save multple messages (optismized for history sync!)
@@ -67,8 +73,8 @@ func (s *MessageStore) SaveBulk(messages []Message) error {
 
 	stmt, err := tx.Prepare(`
 	INSERT OR REPLACE INTO messages
-	(id, chat_jid, sender_jid, sender_name, text, timestamp, is_from_me, message_type)
-	values (?, ?, ?, ?, ?, ?, ?, ?)
+	(id, chat_jid_pn, chat_jid_lid, sender_jid_pn, sender_jid_lid, sender_name, text, timestamp, is_from_me, message_type)
+	values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -79,8 +85,10 @@ func (s *MessageStore) SaveBulk(messages []Message) error {
 	for _, msg := range messages {
 		_, err := stmt.Exec(
 			msg.ID,
-			msg.ChatJID,
-			msg.SenderJID,
+			msg.ChatJIDPN,
+			msg.ChatJIDLID,
+			msg.SenderJIDPN,
+			msg.SenderJIDLID,
 			msg.SenderName,
 			msg.Text,
 			msg.Timestamp.Unix(),
@@ -100,7 +108,8 @@ func (s *MessageStore) SaveBulk(messages []Message) error {
 // get messages by text
 func (s *MessageStore) SearchMessages(q string, limit int) ([]Message, error) {
 	query := `
-	SELECT id, chat_jid, sender_jid, sender_name, text, timestamp, is_from_me, message_type
+	SELECT id, chat_jid_pn, chat_jid_lid, chat_jid, sender_jid_pn, sender_jid_lid, sender_jid,
+	       sender_name, text, timestamp, is_from_me, message_type
 	FROM messages
 	WHERE text LIKE ?
 	ORDER BY timestamp DESC
@@ -117,17 +126,18 @@ func (s *MessageStore) SearchMessages(q string, limit int) ([]Message, error) {
 	return s.scanMessages(rows)
 }
 
-// get messages from a chat
+// get messages from a chat (matches by any JID format)
 func (s *MessageStore) GetChatMessages(chatJID string, limit int, offset int) ([]Message, error) {
 	query := `
-	SELECT id, chat_jid, sender_jid, sender_name, text, timestamp, is_from_me, message_type
+	SELECT id, chat_jid_pn, chat_jid_lid, chat_jid, sender_jid_pn, sender_jid_lid, sender_jid,
+	       sender_name, text, timestamp, is_from_me, message_type
 	FROM messages
-	WHERE chat_jid = ?
+	WHERE chat_jid = ? OR chat_jid_pn = ? OR chat_jid_lid = ?
 	ORDER BY timestamp DESC
 	LIMIT ? OFFSET ?
 	`
 
-	rows, err := s.db.Query(query, chatJID, limit, offset)
+	rows, err := s.db.Query(query, chatJID, chatJID, chatJID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +149,8 @@ func (s *MessageStore) GetChatMessages(chatJID string, limit int, offset int) ([
 // get a message by id
 func (s *MessageStore) GetMessageByID(messageID string) (*Message, error) {
 	query := `
-	SELECT id, chat_jid, sender_jid, sender_name, text, timestamp, is_from_me, message_type
+	SELECT id, chat_jid_pn, chat_jid_lid, chat_jid, sender_jid_pn, sender_jid_lid, sender_jid,
+	       sender_name, text, timestamp, is_from_me, message_type
 	FROM messages
 	WHERE id = ?
 	`
@@ -151,7 +162,11 @@ func (s *MessageStore) GetMessageByID(messageID string) (*Message, error) {
 
 	err := row.Scan(
 		&msg.ID,
+		&msg.ChatJIDPN,
+		&msg.ChatJIDLID,
 		&msg.ChatJID,
+		&msg.SenderJIDPN,
+		&msg.SenderJIDLID,
 		&msg.SenderJID,
 		&msg.SenderName,
 		&msg.Text,
@@ -183,7 +198,11 @@ func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
 
 		err := rows.Scan(
 			&msg.ID,
+			&msg.ChatJIDPN,
+			&msg.ChatJIDLID,
 			&msg.ChatJID,
+			&msg.SenderJIDPN,
+			&msg.SenderJIDLID,
 			&msg.SenderJID,
 			&msg.SenderName,
 			&msg.Text,
