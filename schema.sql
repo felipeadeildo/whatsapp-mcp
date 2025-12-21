@@ -4,6 +4,7 @@ CREATE TABLE
     id TEXT PRIMARY KEY, -- Message ID único do WhatsApp
     chat_jid TEXT NOT NULL, -- JID do chat (número@s.whatsapp.net ou grupo@g.us)
     sender_jid TEXT NOT NULL, -- JID de quem enviou
+    sender_name TEXT, -- Nome do remetente no momento da mensagem (PushName)
     text TEXT, -- Conteúdo texto (null se for mídia)
     timestamp INTEGER NOT NULL, -- Unix timestamp
     is_from_me BOOLEAN NOT NULL, -- true se eu enviei

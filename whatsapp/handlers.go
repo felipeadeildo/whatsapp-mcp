@@ -55,6 +55,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 		ID:          info.ID,
 		ChatJID:     info.Chat.String(),
 		SenderJID:   info.Sender.String(),
+		SenderName:  info.PushName,
 		Text:        text,
 		Timestamp:   info.Timestamp,
 		IsFromMe:    info.IsFromMe,
@@ -66,13 +67,45 @@ func (c *Client) handleMessage(evt *events.Message) {
 		return
 	}
 
+	// Update chat name if we have a PushName
+	// For incoming messages (not from me), use the sender's push name
+	// For self-messages (to myself), also update with my own push name
+	if info.PushName != "" {
+		chatName := info.PushName
+		isGroup := info.Chat.Server == "g.us"
+
+		// Only update chat name for DMs or self-chats, not for groups
+		// (groups have their own names)
+		if !isGroup {
+			chat := storage.Chat{
+				JID:             info.Chat.String(),
+				Name:            chatName,
+				LastMessageTime: info.Timestamp,
+				IsGroup:         false,
+			}
+
+			if err := c.store.SaveChat(chat); err != nil {
+				c.log.Warnf("Failed to update chat name: %v", err)
+			}
+		}
+	}
+
 	c.log.Infof("Saved message: %s", info.ID)
 }
 
 func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	c.log.Infof("History sync: %d conversations", len(evt.Data.GetConversations()))
 
+	// Create a map of JID to push name for quick lookup
+	pushNameMap := make(map[string]string)
+	for _, pushname := range evt.Data.GetPushnames() {
+		if pushname.GetPushname() != "" && pushname.GetPushname() != "-" {
+			pushNameMap[pushname.GetID()] = pushname.GetPushname()
+		}
+	}
+
 	var allMessages []storage.Message
+	chatNamesMap := make(map[string]string) // Track latest name per chat
 
 	for _, conv := range evt.Data.GetConversations() {
 		chatJIDObject, err := types.ParseJID(conv.GetID())
@@ -82,6 +115,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 		}
 
 		chatJID := chatJIDObject.String()
+		isGroup := chatJIDObject.Server == "g.us"
 
 		c.log.Infof("Processing chat: %s with %d messages",
 			chatJID, len(conv.GetMessages()))
@@ -112,6 +146,18 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				senderJID = key.GetRemoteJID()
 			}
 
+			// Get push name from WebMessageInfo or from pushNameMap
+			senderName := msg.GetPushName()
+			if senderName == "" {
+				// Try to get from the pushNameMap using sender JID
+				senderName = pushNameMap[senderJID]
+			}
+
+			// For DMs (not groups), update the chat name with the contact's push name
+			if !isGroup && senderName != "" && !fromMe {
+				chatNamesMap[chatJID] = senderName
+			}
+
 			text := extractText(msg.GetMessage())
 			if text == "" {
 				text = "[Media or unknown]"
@@ -123,6 +169,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				ID:          messageID,
 				ChatJID:     chatJID,
 				SenderJID:   senderJID,
+				SenderName:  senderName,
 				Text:        text,
 				Timestamp:   timestamp,
 				IsFromMe:    fromMe,
@@ -140,6 +187,21 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 		}
 
 		c.log.Infof("Successfully saved %d messages", len(allMessages))
+	}
+
+	// Update chat names for DMs
+	if len(chatNamesMap) > 0 {
+		c.log.Infof("Updating %d chat names from history sync", len(chatNamesMap))
+		for chatJID, chatName := range chatNamesMap {
+			chat := storage.Chat{
+				JID:     chatJID,
+				Name:    chatName,
+				IsGroup: false,
+			}
+			if err := c.store.SaveChat(chat); err != nil {
+				c.log.Warnf("Failed to update chat name for %s: %v", chatJID, err)
+			}
+		}
 	}
 }
 
