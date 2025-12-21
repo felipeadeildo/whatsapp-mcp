@@ -83,8 +83,19 @@ func main() {
 	mcpServer := mcp.NewMCPServer(waClient, store)
 	log.Println("MCP server initialized")
 
-	// create streamable HTTP server with authentication
-	httpServer := server.NewStreamableHTTPServer(
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if waClient.IsLoggedIn() {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("OK"))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("WhatsApp not connected"))
+		}
+	})
+
+	streamableServer := server.NewStreamableHTTPServer(
 		mcpServer.GetServer(),
 		server.WithEndpointPath("/mcp"),
 		server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
@@ -101,35 +112,20 @@ func main() {
 		}),
 	)
 
-	// add health check endpoint on separate port or handle separately
-	healthMux := http.NewServeMux()
-	healthMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if waClient.IsLoggedIn() {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte("OK"))
-		} else {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("WhatsApp not connected"))
-		}
-	})
+	mux.Handle("/mcp", streamableServer)
 
-	// start health check server
-	healthServer := &http.Server{
-		Addr:    ":8081",
-		Handler: healthMux,
+	httpServer := &http.Server{
+		Addr:    ":" + httpPort,
+		Handler: mux,
 	}
-	go func() {
-		log.Println("Health check available at http://0.0.0.0:8081/health")
-		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Health server error: %v", err)
-		}
-	}()
 
-	// start MCP server in background
+	// start server in background
 	go func() {
-		log.Printf("Starting MCP server on http://0.0.0.0:%s/mcp", httpPort)
-		if err := httpServer.Start(":" + httpPort); err != nil {
-			log.Fatalf("MCP server error: %v", err)
+		log.Printf("Starting server on http://0.0.0.0:%s", httpPort)
+		log.Printf("- Health check: http://0.0.0.0:%s/health", httpPort)
+		log.Printf("- MCP endpoint: http://0.0.0.0:%s/mcp", httpPort)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server error: %v", err)
 		}
 	}()
 
@@ -146,9 +142,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// shutdown health server
-	if err := healthServer.Shutdown(ctx); err != nil {
-		log.Printf("Health server shutdown error: %v", err)
+	// shutdown HTTP server
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
 	}
 
 	// disconnect WhatsApp
