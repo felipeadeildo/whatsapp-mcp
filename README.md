@@ -17,7 +17,7 @@ So, we exposes the database to the outside world by MCP tools to send / fetch me
 - [x] Store to message database
 - [x] WhatsApp interface with whatsmeow
 - [x] MCP interface
-- [ ] docker setup for fast deployment
+- [x] docker setup for fast deployment
 - [ ] audio, image, video and contact messages transcription
 - [ ] knowledge graph for GraphRAG
 
