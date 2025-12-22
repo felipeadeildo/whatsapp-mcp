@@ -9,12 +9,12 @@ import (
 // represents a whatsapp message
 type Message struct {
 	ID           string
-	ChatJIDPN    *string // JID do chat em formato PN (nullable)
-	ChatJIDLID   *string // JID do chat em formato LID (nullable)
-	ChatJID      string  // JID canônico gerado automaticamente (read-only)
-	SenderJIDPN  *string // JID do remetente em formato PN (nullable)
-	SenderJIDLID *string // JID do remetente em formato LID (nullable)
-	SenderJID    string  // JID canônico gerado automaticamente (read-only)
+	ChatJIDPN    *string // Chat JID in PN format (nullable)
+	ChatJIDLID   *string // Chat JID in LID format (nullable)
+	ChatJID      string  // Canonical JID auto-generated (read-only)
+	SenderJIDPN  *string // Sender JID in PN format (nullable)
+	SenderJIDLID *string // Sender JID in LID format (nullable)
+	SenderJID    string  // Canonical JID auto-generated (read-only)
 	SenderName   string
 	Text         string
 	Timestamp    time.Time
@@ -32,7 +32,7 @@ func NewMessageStore(db *sql.DB) *MessageStore {
 	return &MessageStore{db: db}
 }
 
-// save wpp message on db
+// saves a WhatsApp message to database
 func (s *MessageStore) SaveMessage(msg Message) error {
 	query := `
 	INSERT OR REPLACE INTO messages
@@ -55,13 +55,13 @@ func (s *MessageStore) SaveMessage(msg Message) error {
 	)
 
 	if err != nil {
-		return fmt.Errorf("faild to save message: %w", err)
+		return fmt.Errorf("failed to save message: %w", err)
 	}
 
 	return nil
 }
 
-// save multple messages (optismized for history sync!)
+// saves multiple messages (optimized for history sync)
 func (s *MessageStore) SaveBulk(messages []Message) error {
 	tx, err := s.db.Begin()
 
@@ -219,18 +219,4 @@ func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
 	}
 
 	return messages, rows.Err()
-}
-
-// update last message time
-func (s *MessageStore) updateChatLastMessage(chatJID string, timestamp time.Time) error {
-	query := `
-	INSERT INTO chats (jid, last_message_time)
-	VALUES (?, ?)
-	ON CONFLICT(jid) DO UPDATE SET
-		last_message_time = excluded.last_message_time
-	`
-
-	_, err := s.db.Exec(query, chatJID, timestamp.Unix())
-
-	return err
 }

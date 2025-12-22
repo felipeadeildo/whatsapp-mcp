@@ -32,6 +32,7 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 	}
 
 	logger := waLog.Stdout("whatsapp", logLevel, true)
+	logger.Infof("Initializing WhatsApp client with log level: %s", logLevel)
 
 	ctx := context.Background()
 

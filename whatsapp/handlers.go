@@ -2,7 +2,6 @@ package whatsapp
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -20,7 +19,7 @@ func (c *Client) eventHandler(evt interface{}) {
 	case *events.HistorySync:
 		c.handleHistorySync(v)
 	case *events.Connected:
-		c.log.Infof("Connected to WhatsApp")
+		c.log.Infof("Connected to WhatsApp (JID: %s)", c.wa.Store.ID)
 	case *events.Disconnected:
 		c.log.Warnf("Disconnected from WhatsApp")
 	case *events.QR:
@@ -30,6 +29,17 @@ func (c *Client) eventHandler(evt interface{}) {
 	case *events.GroupInfo:
 		c.handleGroupInfo(v)
 	}
+}
+
+// computeCanonicalJID returns the first non-nil JID value (PN takes precedence)
+func computeCanonicalJID(pn, lid *string) string {
+	if pn != nil {
+		return *pn
+	}
+	if lid != nil {
+		return *lid
+	}
+	return ""
 }
 
 // extractJIDPair extracts both PN and LID representations from JID objects
@@ -80,12 +90,8 @@ func (c *Client) handleMessage(evt *events.Message) {
 	c.log.Debugf("Received message: %s from %s in %s",
 		info.ID, info.Sender, info.Chat)
 
-	// Debug: log message type
-	c.log.Debugf("Message type: %T", evt.Message)
-
 	text := extractText(evt.Message)
 	if text == "" {
-		c.log.Debugf("extractText returned empty, checking message types...")
 		if evt.Message.GetImageMessage() != nil {
 			text = "[Image]"
 		} else if evt.Message.GetVideoMessage() != nil {
@@ -95,10 +101,6 @@ func (c *Client) handleMessage(evt *events.Message) {
 		} else if evt.Message.GetDocumentMessage() != nil {
 			text = "[Document]"
 		} else {
-			// Debug: log what methods are available
-			c.log.Debugf("Message content: Conversation=%q, ExtendedText=%v",
-				evt.Message.GetConversation(),
-				evt.Message.GetExtendedTextMessage())
 			text = "[Unknown message type]"
 		}
 	}
@@ -147,17 +149,11 @@ func (c *Client) handleMessage(evt *events.Message) {
 		IsGroup:         isGroup,
 	}
 
-	// debug: log what we're trying to save
-	c.log.Debugf("Saving chat: PN=%v, LID=%v, IsGroup=%v, IsFromMe=%v",
-		chatPN, chatLID, isGroup, info.IsFromMe)
-
 	if err := c.store.SaveChat(chat); err != nil {
-		c.log.Errorf("Failed to save chat (PN=%v, LID=%v, IsFromMe=%v): %v",
-			chatPN, chatLID, info.IsFromMe, err)
+		c.log.Errorf("Failed to save chat %s (PN=%v, LID=%v, IsFromMe=%v): %v",
+			info.Chat, chatPN, chatLID, info.IsFromMe, err)
 		return
 	}
-
-	c.log.Debugf("Chat saved successfully")
 
 	msg := storage.Message{
 		ID:           info.ID,
@@ -172,23 +168,15 @@ func (c *Client) handleMessage(evt *events.Message) {
 		MessageType:  msgType,
 	}
 
-	// debug: log the computed chat_jid that will be used for FK lookup
-	computedChatJID := ""
-	if chatPN != nil {
-		computedChatJID = *chatPN
-	} else if chatLID != nil {
-		computedChatJID = *chatLID
-	}
-	c.log.Debugf("Saving message: ID=%s, ComputedChatJID=%s, IsFromMe=%v",
-		info.ID, computedChatJID, info.IsFromMe)
-
 	if err := c.store.SaveMessage(msg); err != nil {
-		c.log.Errorf("Failed to save message (ID=%s, ChatPN=%v, ChatLID=%v, ComputedChatJID=%s, IsFromMe=%v): %v",
-			info.ID, chatPN, chatLID, computedChatJID, info.IsFromMe, err)
+		computedChatJID := computeCanonicalJID(chatPN, chatLID)
+		c.log.Errorf("Failed to save message %s in chat %s: %v (ChatJID computed as: %s)",
+			info.ID, info.Chat, err, computedChatJID)
 		return
 	}
 
-	c.log.Infof("Saved message: %s", info.ID)
+	c.log.Infof("Saved message %s from %s (IsFromMe=%v, Type=%s)",
+		info.ID, info.Sender, info.IsFromMe, msgType)
 }
 
 // handle group info updates (name, topic, settings changes)
@@ -215,7 +203,7 @@ func (c *Client) handleGroupInfo(evt *events.GroupInfo) {
 }
 
 func (c *Client) handleHistorySync(evt *events.HistorySync) {
-	c.log.Infof("History sync: %d conversations", len(evt.Data.GetConversations()))
+	c.log.Infof("Starting history sync: %d conversations to process", len(evt.Data.GetConversations()))
 
 	ctx := context.Background()
 
@@ -230,7 +218,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	var allMessages []storage.Message
 	chatMap := make(map[string]*storage.Chat) // track chats by canonical JID
 
-	for _, conv := range evt.Data.GetConversations() {
+	for idx, conv := range evt.Data.GetConversations() {
 		chatJIDObject, err := types.ParseJID(conv.GetID())
 		if err != nil {
 			c.log.Errorf("Failed to parse JID: %v", err)
@@ -260,7 +248,8 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			}
 		}
 
-		c.log.Infof("Processing chat: %s with %d messages",
+		c.log.Infof("Processing chat [%d/%d]: %s (%d messages)",
+			idx+1, len(evt.Data.GetConversations()),
 			chatJIDObject.String(), len(conv.GetMessages()))
 
 		for _, histMsg := range conv.GetMessages() {
@@ -280,13 +269,22 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 			// determine sender JID object
 			var senderJIDObject types.JID
+			var parseErr error
 			if fromMe {
 				senderJIDObject = *c.wa.Store.ID
 			} else if key.GetParticipant() != "" {
-				senderJIDObject, _ = types.ParseJID(key.GetParticipant())
+				senderJIDObject, parseErr = types.ParseJID(key.GetParticipant())
+				if parseErr != nil {
+					c.log.Debugf("Failed to parse participant JID: %v", parseErr)
+					continue
+				}
 			} else {
 				// DM
-				senderJIDObject, _ = types.ParseJID(key.GetRemoteJID())
+				senderJIDObject, parseErr = types.ParseJID(key.GetRemoteJID())
+				if parseErr != nil {
+					c.log.Debugf("Failed to parse remote JID: %v", parseErr)
+					continue
+				}
 			}
 
 			// get alternative JID for sender
@@ -307,13 +305,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			}
 
 			// track ALL chats (for foreign key constraint)
-			// use first PN or LID as key
-			chatKey := ""
-			if chatPN != nil {
-				chatKey = *chatPN
-			} else if chatLID != nil {
-				chatKey = *chatLID
-			}
+			chatKey := computeCanonicalJID(chatPN, chatLID)
 
 			if chatKey != "" {
 				// check if chat already exists in map
@@ -392,81 +384,17 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			return
 		}
 
-		c.log.Infof("Successfully saved %d messages", len(allMessages))
+		c.log.Infof("History sync complete: %d chats updated, %d messages saved",
+			len(chatMap), len(allMessages))
 	}
 }
 
 func extractText(msg interface{}) string {
-	// Try to get as *waProto.Message first (from events.Message)
-	if waMsg, ok := msg.(*events.Message); ok {
-		return extractTextFromWAMessage(waMsg.Message)
-	}
-
-	// Otherwise try interface{} with Get methods (for proto messages directly)
-	type conversationGetter interface {
-		GetConversation() string
-	}
-	if conv, ok := msg.(conversationGetter); ok {
-		if text := conv.GetConversation(); text != "" {
-			return text
-		}
-	}
-
-	type extendedTextGetter interface {
-		GetExtendedTextMessage() interface{ GetText() string }
-	}
-	if ext, ok := msg.(extendedTextGetter); ok {
-		if extMsg := ext.GetExtendedTextMessage(); extMsg != nil {
-			if text := extMsg.GetText(); text != "" {
-				return text
-			}
-		}
-	}
-
-	type imageGetter interface {
-		GetImageMessage() interface{ GetCaption() string }
-	}
-	if img, ok := msg.(imageGetter); ok {
-		if imgMsg := img.GetImageMessage(); imgMsg != nil {
-			if caption := imgMsg.GetCaption(); caption != "" {
-				return caption
-			}
-		}
-	}
-
-	type videoGetter interface {
-		GetVideoMessage() interface{ GetCaption() string }
-	}
-	if vid, ok := msg.(videoGetter); ok {
-		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
-			if caption := vidMsg.GetCaption(); caption != "" {
-				return caption
-			}
-		}
-	}
-
-	// Document caption
-	type documentGetter interface {
-		GetDocumentMessage() interface{ GetCaption() string }
-	}
-	if doc, ok := msg.(documentGetter); ok {
-		if docMsg := doc.GetDocumentMessage(); docMsg != nil {
-			if caption := docMsg.GetCaption(); caption != "" {
-				return caption
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractTextFromWAMessage extracts text from waE2E.Message type (unused but kept for reference)
-func extractTextFromWAMessage(msg interface{}) string {
 	if msg == nil {
 		return ""
 	}
 
-	// Plain text conversation
+	// plain text conversation
 	type conversationGetter interface {
 		GetConversation() string
 	}
@@ -476,7 +404,6 @@ func extractTextFromWAMessage(msg interface{}) string {
 		}
 	}
 
-	// Extended text message (links, formatting, etc)
 	type extendedTextGetter interface {
 		GetExtendedTextMessage() interface{ GetText() string }
 	}
@@ -488,7 +415,6 @@ func extractTextFromWAMessage(msg interface{}) string {
 		}
 	}
 
-	// Image caption
 	type imageGetter interface {
 		GetImageMessage() interface{ GetCaption() string }
 	}
@@ -500,7 +426,6 @@ func extractTextFromWAMessage(msg interface{}) string {
 		}
 	}
 
-	// Video caption
 	type videoGetter interface {
 		GetVideoMessage() interface{ GetCaption() string }
 	}
@@ -512,7 +437,7 @@ func extractTextFromWAMessage(msg interface{}) string {
 		}
 	}
 
-	// Document caption
+	// document caption
 	type documentGetter interface {
 		GetDocumentMessage() interface{ GetCaption() string }
 	}
@@ -528,19 +453,36 @@ func extractTextFromWAMessage(msg interface{}) string {
 }
 
 func getMessageType(msg interface{}) string {
-	msgStr := fmt.Sprintf("%T", msg)
-
-	if strings.Contains(msgStr, "Conversation") {
-		return "text"
-	} else if strings.Contains(msgStr, "ImageMessage") {
-		return "image"
-	} else if strings.Contains(msgStr, "VideoMessage") {
-		return "video"
-	} else if strings.Contains(msgStr, "AudioMessage") {
-		return "audio"
-	} else if strings.Contains(msgStr, "DocumentMessage") {
-		return "document"
+	// Type assertion interface to check message content
+	type messageChecker interface {
+		GetConversation() string
+		GetExtendedTextMessage() interface{}
+		GetImageMessage() interface{}
+		GetVideoMessage() interface{}
+		GetAudioMessage() interface{}
+		GetDocumentMessage() interface{}
 	}
 
-	return "unknown"
+	m, ok := msg.(messageChecker)
+	if !ok {
+		return "unknown"
+	}
+
+	// Check message type based on content
+	switch {
+	case m.GetConversation() != "":
+		return "text"
+	case m.GetExtendedTextMessage() != nil:
+		return "text"
+	case m.GetImageMessage() != nil:
+		return "image"
+	case m.GetVideoMessage() != nil:
+		return "video"
+	case m.GetAudioMessage() != nil:
+		return "audio"
+	case m.GetDocumentMessage() != nil:
+		return "document"
+	default:
+		return "unknown"
+	}
 }
