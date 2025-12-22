@@ -33,6 +33,13 @@ func main() {
 		httpPort = "8080"
 	}
 
+	// get log level from environment
+	logLevel := os.Getenv("LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "INFO"
+	}
+	log.Printf("Log level: %s", logLevel)
+
 	// initialize database
 	db, err := storage.InitDB("./data/messages.db")
 	if err != nil {
@@ -44,7 +51,7 @@ func main() {
 	log.Println("Message storage initialized")
 
 	// initialize WhatsApp client
-	waClient, err := whatsapp.NewClient(store, "./data/whatsapp_auth.db")
+	waClient, err := whatsapp.NewClient(store, "./data/whatsapp_auth.db", logLevel)
 	if err != nil {
 		log.Fatal("Failed to create WhatsApp client:", err)
 	}

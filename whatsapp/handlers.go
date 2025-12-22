@@ -2,10 +2,10 @@ package whatsapp
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
@@ -20,7 +20,7 @@ func (c *Client) eventHandler(evt interface{}) {
 	case *events.HistorySync:
 		c.handleHistorySync(v)
 	case *events.Connected:
-		c.log.Infof("Connected to WhatsApp")
+		c.log.Infof("Connected to WhatsApp (JID: %s)", c.wa.Store.ID)
 	case *events.Disconnected:
 		c.log.Warnf("Disconnected from WhatsApp")
 	case *events.QR:
@@ -30,6 +30,17 @@ func (c *Client) eventHandler(evt interface{}) {
 	case *events.GroupInfo:
 		c.handleGroupInfo(v)
 	}
+}
+
+// computeCanonicalJID returns the first non-nil JID value (PN takes precedence)
+func computeCanonicalJID(pn, lid *string) string {
+	if pn != nil {
+		return *pn
+	}
+	if lid != nil {
+		return *lid
+	}
+	return ""
 }
 
 // extractJIDPair extracts both PN and LID representations from JID objects
@@ -81,16 +92,18 @@ func (c *Client) handleMessage(evt *events.Message) {
 		info.ID, info.Sender, info.Chat)
 
 	text := extractText(evt.Message)
-	if text == "" && evt.Message.GetImageMessage() != nil {
-		text = "[Image]"
-	} else if text == "" && evt.Message.GetVideoMessage() != nil {
-		text = "[Video]"
-	} else if text == "" && evt.Message.GetAudioMessage() != nil {
-		text = "[Audio]"
-	} else if text == "" && evt.Message.GetDocumentMessage() != nil {
-		text = "[Document]"
-	} else if text == "" {
-		text = "[Unknown message type]"
+	if text == "" {
+		if evt.Message.GetImageMessage() != nil {
+			text = "[Image]"
+		} else if evt.Message.GetVideoMessage() != nil {
+			text = "[Video]"
+		} else if evt.Message.GetAudioMessage() != nil {
+			text = "[Audio]"
+		} else if evt.Message.GetDocumentMessage() != nil {
+			text = "[Document]"
+		} else {
+			text = "[Unknown message type]"
+		}
 	}
 
 	msgType := getMessageType(evt.Message)
@@ -99,8 +112,17 @@ func (c *Client) handleMessage(evt *events.Message) {
 	senderPN, senderLID := c.extractJIDPair(info.Sender, info.SenderAlt)
 
 	// extract chat JID with alternatives
-	// for DMs, check if we have RecipientAlt (not always available)
-	chatPN, chatLID := c.extractJIDPair(info.Chat, types.EmptyJID)
+	// for DMs (not groups), get alternative JID from store
+	ctx := context.Background()
+	var chatAltJID types.JID
+	if info.Chat.Server != "g.us" {
+		var err error
+		chatAltJID, err = c.wa.Store.GetAltJID(ctx, info.Chat)
+		if err != nil {
+			c.log.Debugf("No alt JID for chat %s: %v", info.Chat, err)
+		}
+	}
+	chatPN, chatLID := c.extractJIDPair(info.Chat, chatAltJID)
 
 	// save/update chat BEFORE saving message (for foreign key constraint)
 	isGroup := info.Chat.Server == "g.us"
@@ -129,8 +151,8 @@ func (c *Client) handleMessage(evt *events.Message) {
 	}
 
 	if err := c.store.SaveChat(chat); err != nil {
-		c.log.Errorf("Failed to save chat (PN=%v, LID=%v, IsFromMe=%v): %v",
-			chatPN, chatLID, info.IsFromMe, err)
+		c.log.Errorf("Failed to save chat %s (PN=%v, LID=%v, IsFromMe=%v): %v",
+			info.Chat, chatPN, chatLID, info.IsFromMe, err)
 		return
 	}
 
@@ -148,12 +170,14 @@ func (c *Client) handleMessage(evt *events.Message) {
 	}
 
 	if err := c.store.SaveMessage(msg); err != nil {
-		c.log.Errorf("Failed to save message (ID=%s, ChatPN=%v, ChatLID=%v, IsFromMe=%v): %v",
-			info.ID, chatPN, chatLID, info.IsFromMe, err)
+		computedChatJID := computeCanonicalJID(chatPN, chatLID)
+		c.log.Errorf("Failed to save message %s in chat %s: %v (ChatJID computed as: %s)",
+			info.ID, info.Chat, err, computedChatJID)
 		return
 	}
 
-	c.log.Infof("Saved message: %s", info.ID)
+	c.log.Infof("Saved message %s from %s (IsFromMe=%v, Type=%s)",
+		info.ID, info.Sender, info.IsFromMe, msgType)
 }
 
 // handle group info updates (name, topic, settings changes)
@@ -180,7 +204,7 @@ func (c *Client) handleGroupInfo(evt *events.GroupInfo) {
 }
 
 func (c *Client) handleHistorySync(evt *events.HistorySync) {
-	c.log.Infof("History sync: %d conversations", len(evt.Data.GetConversations()))
+	c.log.Infof("Starting history sync: %d conversations to process", len(evt.Data.GetConversations()))
 
 	ctx := context.Background()
 
@@ -195,7 +219,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	var allMessages []storage.Message
 	chatMap := make(map[string]*storage.Chat) // track chats by canonical JID
 
-	for _, conv := range evt.Data.GetConversations() {
+	for idx, conv := range evt.Data.GetConversations() {
 		chatJIDObject, err := types.ParseJID(conv.GetID())
 		if err != nil {
 			c.log.Errorf("Failed to parse JID: %v", err)
@@ -225,7 +249,8 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			}
 		}
 
-		c.log.Infof("Processing chat: %s with %d messages",
+		c.log.Infof("Processing chat [%d/%d]: %s (%d messages)",
+			idx+1, len(evt.Data.GetConversations()),
 			chatJIDObject.String(), len(conv.GetMessages()))
 
 		for _, histMsg := range conv.GetMessages() {
@@ -245,13 +270,22 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 			// determine sender JID object
 			var senderJIDObject types.JID
+			var parseErr error
 			if fromMe {
 				senderJIDObject = *c.wa.Store.ID
 			} else if key.GetParticipant() != "" {
-				senderJIDObject, _ = types.ParseJID(key.GetParticipant())
+				senderJIDObject, parseErr = types.ParseJID(key.GetParticipant())
+				if parseErr != nil {
+					c.log.Debugf("Failed to parse participant JID: %v", parseErr)
+					continue
+				}
 			} else {
 				// DM
-				senderJIDObject, _ = types.ParseJID(key.GetRemoteJID())
+				senderJIDObject, parseErr = types.ParseJID(key.GetRemoteJID())
+				if parseErr != nil {
+					c.log.Debugf("Failed to parse remote JID: %v", parseErr)
+					continue
+				}
 			}
 
 			// get alternative JID for sender
@@ -272,13 +306,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			}
 
 			// track ALL chats (for foreign key constraint)
-			// use first PN or LID as key
-			chatKey := ""
-			if chatPN != nil {
-				chatKey = *chatPN
-			} else if chatLID != nil {
-				chatKey = *chatLID
-			}
+			chatKey := computeCanonicalJID(chatPN, chatLID)
 
 			if chatKey != "" {
 				// check if chat already exists in map
@@ -357,40 +385,23 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			return
 		}
 
-		c.log.Infof("Successfully saved %d messages", len(allMessages))
+		c.log.Infof("History sync complete: %d chats updated, %d messages saved",
+			len(chatMap), len(allMessages))
 	}
 }
 
 func extractText(msg interface{}) string {
+	if msg == nil {
+		return ""
+	}
+
+	// plain text conversation
 	type conversationGetter interface {
 		GetConversation() string
 	}
-
 	if conv, ok := msg.(conversationGetter); ok {
 		if text := conv.GetConversation(); text != "" {
 			return text
-		}
-	}
-
-	type captionGetter interface {
-		GetCaption() string
-	}
-
-	type imageGetter interface {
-		GetImageMessage() captionGetter
-	}
-	if img, ok := msg.(imageGetter); ok {
-		if imgMsg := img.GetImageMessage(); imgMsg != nil {
-			return imgMsg.GetCaption()
-		}
-	}
-
-	type videoGetter interface {
-		GetVideoMessage() captionGetter
-	}
-	if vid, ok := msg.(videoGetter); ok {
-		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
-			return vidMsg.GetCaption()
 		}
 	}
 
@@ -399,27 +410,149 @@ func extractText(msg interface{}) string {
 	}
 	if ext, ok := msg.(extendedTextGetter); ok {
 		if extMsg := ext.GetExtendedTextMessage(); extMsg != nil {
-			return extMsg.GetText()
+			if text := extMsg.GetText(); text != "" {
+				return text
+			}
+		}
+	}
+
+	type imageGetter interface {
+		GetImageMessage() interface{ GetCaption() string }
+	}
+	if img, ok := msg.(imageGetter); ok {
+		if imgMsg := img.GetImageMessage(); imgMsg != nil {
+			if caption := imgMsg.GetCaption(); caption != "" {
+				return caption
+			}
+		}
+	}
+
+	type videoGetter interface {
+		GetVideoMessage() interface{ GetCaption() string }
+	}
+	if vid, ok := msg.(videoGetter); ok {
+		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
+			if caption := vidMsg.GetCaption(); caption != "" {
+				return caption
+			}
+		}
+	}
+
+	// document caption
+	type documentGetter interface {
+		GetDocumentMessage() interface{ GetCaption() string }
+	}
+	if doc, ok := msg.(documentGetter); ok {
+		if docMsg := doc.GetDocumentMessage(); docMsg != nil {
+			if caption := docMsg.GetCaption(); caption != "" {
+				return caption
+			}
 		}
 	}
 
 	return ""
 }
 
-func getMessageType(msg interface{}) string {
-	msgStr := fmt.Sprintf("%T", msg)
-
-	if strings.Contains(msgStr, "Conversation") {
-		return "text"
-	} else if strings.Contains(msgStr, "ImageMessage") {
-		return "image"
-	} else if strings.Contains(msgStr, "VideoMessage") {
-		return "video"
-	} else if strings.Contains(msgStr, "AudioMessage") {
-		return "audio"
-	} else if strings.Contains(msgStr, "DocumentMessage") {
-		return "document"
+// getTypeFromMessage returns the high-level message type (text, media, reaction, poll)
+// based on whatsmeow's internal implementation
+func getTypeFromMessage(msg *waE2E.Message) string {
+	if msg == nil {
+		return "unknown"
 	}
 
-	return "unknown"
+	switch {
+	case msg.ViewOnceMessage != nil:
+		return getTypeFromMessage(msg.ViewOnceMessage.Message)
+	case msg.ViewOnceMessageV2 != nil:
+		return getTypeFromMessage(msg.ViewOnceMessageV2.Message)
+	case msg.ViewOnceMessageV2Extension != nil:
+		return getTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
+	case msg.EphemeralMessage != nil:
+		return getTypeFromMessage(msg.EphemeralMessage.Message)
+	case msg.DocumentWithCaptionMessage != nil:
+		return getTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
+	case msg.ReactionMessage != nil, msg.EncReactionMessage != nil:
+		return "reaction"
+	case msg.PollCreationMessage != nil, msg.PollUpdateMessage != nil:
+		return "poll"
+	case getMediaTypeFromMessage(msg) != "":
+		return "media"
+	case msg.Conversation != nil, msg.ExtendedTextMessage != nil, msg.ProtocolMessage != nil:
+		return "text"
+	default:
+		return "unknown"
+	}
+}
+
+// getMediaTypeFromMessage returns the specific media type (image, video, audio, etc.)
+// based on whatsmeow's internal implementation
+func getMediaTypeFromMessage(msg *waE2E.Message) string {
+	if msg == nil {
+		return ""
+	}
+
+	switch {
+	case msg.ViewOnceMessage != nil:
+		return getMediaTypeFromMessage(msg.ViewOnceMessage.Message)
+	case msg.ViewOnceMessageV2 != nil:
+		return getMediaTypeFromMessage(msg.ViewOnceMessageV2.Message)
+	case msg.ViewOnceMessageV2Extension != nil:
+		return getMediaTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
+	case msg.EphemeralMessage != nil:
+		return getMediaTypeFromMessage(msg.EphemeralMessage.Message)
+	case msg.DocumentWithCaptionMessage != nil:
+		return getMediaTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
+	case msg.ExtendedTextMessage != nil && msg.ExtendedTextMessage.Title != nil:
+		return "url"
+	case msg.ImageMessage != nil:
+		return "image"
+	case msg.StickerMessage != nil:
+		return "sticker"
+	case msg.DocumentMessage != nil:
+		return "document"
+	case msg.AudioMessage != nil:
+		if msg.AudioMessage.GetPTT() {
+			return "ptt"
+		}
+		return "audio"
+	case msg.VideoMessage != nil:
+		if msg.VideoMessage.GetGifPlayback() {
+			return "gif"
+		}
+		return "video"
+	case msg.ContactMessage != nil:
+		return "vcard"
+	case msg.ContactsArrayMessage != nil:
+		return "contact_array"
+	case msg.ListMessage != nil:
+		return "list"
+	case msg.ListResponseMessage != nil:
+		return "list_response"
+	case msg.ButtonsResponseMessage != nil:
+		return "buttons_response"
+	case msg.OrderMessage != nil:
+		return "order"
+	case msg.ProductMessage != nil:
+		return "product"
+	case msg.InteractiveResponseMessage != nil:
+		return "native_flow_response"
+	default:
+		return ""
+	}
+}
+
+// getMessageType returns a user-friendly message type string
+// This wraps the whatsmeow-style functions for backward compatibility
+func getMessageType(msg *waE2E.Message) string {
+	msgType := getTypeFromMessage(msg)
+
+	// If it's media, return the specific media type
+	if msgType == "media" {
+		mediaType := getMediaTypeFromMessage(msg)
+		if mediaType != "" {
+			return mediaType
+		}
+	}
+
+	return msgType
 }
