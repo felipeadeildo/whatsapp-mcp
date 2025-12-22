@@ -73,8 +73,14 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 
 	for i := len(messages) - 1; i >= 0; i-- { // reverse to show oldest first
 		msg := messages[i]
-		sender := msg.SenderName
-		if sender == "" {
+
+		// prefer contact name over sender name (PushName)
+		sender := ""
+		if msg.ContactName != nil && *msg.ContactName != "" {
+			sender = *msg.ContactName
+		} else if msg.SenderName != "" {
+			sender = msg.SenderName
+		} else {
 			sender = msg.SenderJID
 		}
 
@@ -119,8 +125,13 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 	result.WriteString(fmt.Sprintf("Found %d messages matching '%s':\n\n", len(messages), query))
 
 	for i, msg := range messages {
-		sender := msg.SenderName
-		if sender == "" {
+		// prefer contact name over sender name (PushName)
+		sender := ""
+		if msg.ContactName != nil && *msg.ContactName != "" {
+			sender = *msg.ContactName
+		} else if msg.SenderName != "" {
+			sender = msg.SenderName
+		} else {
 			sender = msg.SenderJID
 		}
 

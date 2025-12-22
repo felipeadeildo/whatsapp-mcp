@@ -108,18 +108,19 @@ func (s *MessageStore) SaveBulk(messages []Message) error {
 
 }
 
-// get messages by text
+// get messages by text, sender name, or contact name
 func (s *MessageStore) SearchMessages(q string, limit int) ([]Message, error) {
 	query := `
 	SELECT id, chat_jid_pn, chat_jid_lid, chat_jid, sender_jid_pn, sender_jid_lid, sender_jid,
 	       sender_name, contact_name, text, timestamp, is_from_me, message_type
 	FROM messages
-	WHERE text LIKE ?
+	WHERE text LIKE ? OR sender_name LIKE ? OR contact_name LIKE ?
 	ORDER BY timestamp DESC
 	LIMIT ?
 	`
 
-	rows, err := s.db.Query(query, "%"+q+"%", limit)
+	searchPattern := "%" + q + "%"
+	rows, err := s.db.Query(query, searchPattern, searchPattern, searchPattern, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -35,13 +35,13 @@ func (m *MCPServer) registerTools() {
 		m.handleGetChatMessages,
 	)
 
-	// 3. search messages by text
+	// 3. search messages by text, sender name, or contact name
 	m.server.AddTool(
 		mcp.NewTool("search_messages",
-			mcp.WithDescription("search for messages across all chats by text content"),
+			mcp.WithDescription("search for messages across all chats by text content, sender name, or contact name"),
 			mcp.WithString("query",
 				mcp.Required(),
-				mcp.Description("search query text (supports partial matches)"),
+				mcp.Description("search query text (searches in message text, sender name, and contact name - supports partial matches)"),
 			),
 			mcp.WithNumber("limit",
 				mcp.Description("maximum number of results to return (default: 50, max: 200)"),
