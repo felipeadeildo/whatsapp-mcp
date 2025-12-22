@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
@@ -452,37 +453,106 @@ func extractText(msg interface{}) string {
 	return ""
 }
 
-func getMessageType(msg interface{}) string {
-	// Type assertion interface to check message content
-	type messageChecker interface {
-		GetConversation() string
-		GetExtendedTextMessage() interface{}
-		GetImageMessage() interface{}
-		GetVideoMessage() interface{}
-		GetAudioMessage() interface{}
-		GetDocumentMessage() interface{}
-	}
-
-	m, ok := msg.(messageChecker)
-	if !ok {
+// getTypeFromMessage returns the high-level message type (text, media, reaction, poll)
+// based on whatsmeow's internal implementation
+func getTypeFromMessage(msg *waE2E.Message) string {
+	if msg == nil {
 		return "unknown"
 	}
 
-	// Check message type based on content
 	switch {
-	case m.GetConversation() != "":
+	case msg.ViewOnceMessage != nil:
+		return getTypeFromMessage(msg.ViewOnceMessage.Message)
+	case msg.ViewOnceMessageV2 != nil:
+		return getTypeFromMessage(msg.ViewOnceMessageV2.Message)
+	case msg.ViewOnceMessageV2Extension != nil:
+		return getTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
+	case msg.EphemeralMessage != nil:
+		return getTypeFromMessage(msg.EphemeralMessage.Message)
+	case msg.DocumentWithCaptionMessage != nil:
+		return getTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
+	case msg.ReactionMessage != nil, msg.EncReactionMessage != nil:
+		return "reaction"
+	case msg.PollCreationMessage != nil, msg.PollUpdateMessage != nil:
+		return "poll"
+	case getMediaTypeFromMessage(msg) != "":
+		return "media"
+	case msg.Conversation != nil, msg.ExtendedTextMessage != nil, msg.ProtocolMessage != nil:
 		return "text"
-	case m.GetExtendedTextMessage() != nil:
-		return "text"
-	case m.GetImageMessage() != nil:
-		return "image"
-	case m.GetVideoMessage() != nil:
-		return "video"
-	case m.GetAudioMessage() != nil:
-		return "audio"
-	case m.GetDocumentMessage() != nil:
-		return "document"
 	default:
 		return "unknown"
 	}
+}
+
+// getMediaTypeFromMessage returns the specific media type (image, video, audio, etc.)
+// based on whatsmeow's internal implementation
+func getMediaTypeFromMessage(msg *waE2E.Message) string {
+	if msg == nil {
+		return ""
+	}
+
+	switch {
+	case msg.ViewOnceMessage != nil:
+		return getMediaTypeFromMessage(msg.ViewOnceMessage.Message)
+	case msg.ViewOnceMessageV2 != nil:
+		return getMediaTypeFromMessage(msg.ViewOnceMessageV2.Message)
+	case msg.ViewOnceMessageV2Extension != nil:
+		return getMediaTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
+	case msg.EphemeralMessage != nil:
+		return getMediaTypeFromMessage(msg.EphemeralMessage.Message)
+	case msg.DocumentWithCaptionMessage != nil:
+		return getMediaTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
+	case msg.ExtendedTextMessage != nil && msg.ExtendedTextMessage.Title != nil:
+		return "url"
+	case msg.ImageMessage != nil:
+		return "image"
+	case msg.StickerMessage != nil:
+		return "sticker"
+	case msg.DocumentMessage != nil:
+		return "document"
+	case msg.AudioMessage != nil:
+		if msg.AudioMessage.GetPTT() {
+			return "ptt"
+		}
+		return "audio"
+	case msg.VideoMessage != nil:
+		if msg.VideoMessage.GetGifPlayback() {
+			return "gif"
+		}
+		return "video"
+	case msg.ContactMessage != nil:
+		return "vcard"
+	case msg.ContactsArrayMessage != nil:
+		return "contact_array"
+	case msg.ListMessage != nil:
+		return "list"
+	case msg.ListResponseMessage != nil:
+		return "list_response"
+	case msg.ButtonsResponseMessage != nil:
+		return "buttons_response"
+	case msg.OrderMessage != nil:
+		return "order"
+	case msg.ProductMessage != nil:
+		return "product"
+	case msg.InteractiveResponseMessage != nil:
+		return "native_flow_response"
+	default:
+		return ""
+	}
+}
+
+// getMessageType returns a user-friendly message type string
+// This wraps the whatsmeow-style functions for backward compatibility
+func getMessageType(msg *waE2E.Message) string {
+	msgType := getTypeFromMessage(msg)
+
+	// If it's media, return the specific media type
+	if msgType == "media" {
+		mediaType := getMediaTypeFromMessage(msg)
+		if mediaType != "" {
+			return mediaType
+		}
+	}
+
+	return msgType
 }
