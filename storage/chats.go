@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -65,6 +66,11 @@ func (s *MessageStore) SaveChat(chat Chat) error {
 		lid = *chat.JIDLID
 	}
 
+	// validate: at least one JID must be provided (CHECK constraint)
+	if chat.JIDPN == nil && chat.JIDLID == nil {
+		return fmt.Errorf("chat must have at least one JID (PN or LID)")
+	}
+
 	existing, err := s.findExistingChat(pn, lid)
 	if err != nil {
 		return err
@@ -91,6 +97,11 @@ func (s *MessageStore) SaveChat(chat Chat) error {
 		canonicalJID = *chat.JIDPN
 	} else if chat.JIDLID != nil {
 		canonicalJID = *chat.JIDLID
+	}
+
+	// double-check: canonical JID must not be empty
+	if canonicalJID == "" {
+		return fmt.Errorf("canonical JID cannot be empty")
 	}
 
 	query := `
