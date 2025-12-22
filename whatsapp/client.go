@@ -19,8 +19,19 @@ type Client struct {
 	log   waLog.Logger
 }
 
-func NewClient(store *storage.MessageStore, dbPath string) (*Client, error) {
-	logger := waLog.Stdout("whatsapp", "INFO", true)
+func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Client, error) {
+	// validate log level, default to INFO if invalid
+	validLevels := map[string]bool{
+		"DEBUG": true,
+		"INFO":  true,
+		"WARN":  true,
+		"ERROR": true,
+	}
+	if !validLevels[logLevel] {
+		logLevel = "INFO"
+	}
+
+	logger := waLog.Stdout("whatsapp", logLevel, true)
 
 	ctx := context.Background()
 
