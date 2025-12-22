@@ -35,6 +35,7 @@ func (c *Client) eventHandler(evt interface{}) {
 // extractJIDPair extracts both PN and LID representations from JID objects
 // returns (pnPtr, lidPtr) for storage
 // for groups (@g.us), stores group JID in PN column, LID as nil
+// ALWAYS returns at least one non-nil value to satisfy CHECK constraint
 func (c *Client) extractJIDPair(canonical types.JID, alternative types.JID) (*string, *string) {
 	canonicalStr := canonical.String()
 
@@ -62,8 +63,12 @@ func (c *Client) extractJIDPair(canonical types.JID, alternative types.JID) (*st
 			pn := alternative.String()
 			pnJID = &pn
 		}
+	} else if canonicalStr != "" {
+		// for unknown formats (newsletters, status, etc), store in PN column as fallback
+		// this ensures at least one JID is non-nil to satisfy CHECK constraint
+		fallback := canonicalStr
+		pnJID = &fallback
 	}
-	// for unknown formats, both remain nil
 
 	return pnJID, lidJID
 }
@@ -124,7 +129,8 @@ func (c *Client) handleMessage(evt *events.Message) {
 	}
 
 	if err := c.store.SaveChat(chat); err != nil {
-		c.log.Errorf("Failed to save chat: %v", err)
+		c.log.Errorf("Failed to save chat (PN=%v, LID=%v, IsFromMe=%v): %v",
+			chatPN, chatLID, info.IsFromMe, err)
 		return
 	}
 
@@ -142,7 +148,8 @@ func (c *Client) handleMessage(evt *events.Message) {
 	}
 
 	if err := c.store.SaveMessage(msg); err != nil {
-		c.log.Errorf("Failed to save message: %v", err)
+		c.log.Errorf("Failed to save message (ID=%s, ChatPN=%v, ChatLID=%v, IsFromMe=%v): %v",
+			info.ID, chatPN, chatLID, info.IsFromMe, err)
 		return
 	}
 
@@ -336,7 +343,8 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 		c.log.Infof("Updating %d chat names from history sync", len(chatMap))
 		for _, chat := range chatMap {
 			if err := c.store.SaveChat(*chat); err != nil {
-				c.log.Warnf("Failed to update chat: %v", err)
+				c.log.Warnf("Failed to update chat (PN=%v, LID=%v): %v",
+					chat.JIDPN, chat.JIDLID, err)
 			}
 		}
 	}
