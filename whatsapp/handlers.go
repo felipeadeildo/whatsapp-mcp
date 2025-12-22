@@ -99,8 +99,17 @@ func (c *Client) handleMessage(evt *events.Message) {
 	senderPN, senderLID := c.extractJIDPair(info.Sender, info.SenderAlt)
 
 	// extract chat JID with alternatives
-	// for DMs, check if we have RecipientAlt (not always available)
-	chatPN, chatLID := c.extractJIDPair(info.Chat, types.EmptyJID)
+	// for DMs (not groups), get alternative JID from store
+	ctx := context.Background()
+	var chatAltJID types.JID
+	if info.Chat.Server != "g.us" {
+		var err error
+		chatAltJID, err = c.wa.Store.GetAltJID(ctx, info.Chat)
+		if err != nil {
+			c.log.Debugf("No alt JID for chat %s: %v", info.Chat, err)
+		}
+	}
+	chatPN, chatLID := c.extractJIDPair(info.Chat, chatAltJID)
 
 	// save/update chat BEFORE saving message (for foreign key constraint)
 	isGroup := info.Chat.Server == "g.us"
@@ -128,11 +137,17 @@ func (c *Client) handleMessage(evt *events.Message) {
 		IsGroup:         isGroup,
 	}
 
+	// debug: log what we're trying to save
+	c.log.Debugf("Saving chat: PN=%v, LID=%v, IsGroup=%v, IsFromMe=%v",
+		chatPN, chatLID, isGroup, info.IsFromMe)
+
 	if err := c.store.SaveChat(chat); err != nil {
 		c.log.Errorf("Failed to save chat (PN=%v, LID=%v, IsFromMe=%v): %v",
 			chatPN, chatLID, info.IsFromMe, err)
 		return
 	}
+
+	c.log.Debugf("Chat saved successfully")
 
 	msg := storage.Message{
 		ID:           info.ID,
@@ -147,9 +162,19 @@ func (c *Client) handleMessage(evt *events.Message) {
 		MessageType:  msgType,
 	}
 
+	// debug: log the computed chat_jid that will be used for FK lookup
+	computedChatJID := ""
+	if chatPN != nil {
+		computedChatJID = *chatPN
+	} else if chatLID != nil {
+		computedChatJID = *chatLID
+	}
+	c.log.Debugf("Saving message: ID=%s, ComputedChatJID=%s, IsFromMe=%v",
+		info.ID, computedChatJID, info.IsFromMe)
+
 	if err := c.store.SaveMessage(msg); err != nil {
-		c.log.Errorf("Failed to save message (ID=%s, ChatPN=%v, ChatLID=%v, IsFromMe=%v): %v",
-			info.ID, chatPN, chatLID, info.IsFromMe, err)
+		c.log.Errorf("Failed to save message (ID=%s, ChatPN=%v, ChatLID=%v, ComputedChatJID=%s, IsFromMe=%v): %v",
+			info.ID, chatPN, chatLID, computedChatJID, info.IsFromMe, err)
 		return
 	}
 

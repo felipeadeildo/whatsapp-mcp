@@ -115,7 +115,7 @@ func (s *MessageStore) SaveChat(chat Chat) error {
 	    is_group = excluded.is_group
 	`
 
-	_, err = s.db.Exec(
+	result, err := s.db.Exec(
 		query,
 		canonicalJID,
 		chat.JIDPN,
@@ -126,7 +126,26 @@ func (s *MessageStore) SaveChat(chat Chat) error {
 		chat.IsGroup,
 	)
 
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to insert/update chat (canonical=%s, pn=%v, lid=%v): %w",
+			canonicalJID, chat.JIDPN, chat.JIDLID, err)
+	}
+
+	// verify the chat was actually saved
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("chat save affected 0 rows (canonical=%s)", canonicalJID)
+	}
+
+	// verify the chat exists in the database after insert
+	var verifyJID string
+	verifyQuery := "SELECT jid FROM chats WHERE jid = ?"
+	verifyErr := s.db.QueryRow(verifyQuery, canonicalJID).Scan(&verifyJID)
+	if verifyErr != nil {
+		return fmt.Errorf("chat was inserted but cannot be found (canonical=%s): %w", canonicalJID, verifyErr)
+	}
+
+	return nil
 }
 
 // return all chats ordered by last message timestamp
