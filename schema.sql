@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_jid TEXT GENERATED ALWAYS AS (COALESCE(sender_jid_pn, sender_jid_lid)) STORED,
 
     sender_name TEXT, -- Sender name at message time (PushName)
+    contact_name TEXT, -- Saved contact name from contact store
     text TEXT, -- Text content (null for media)
     timestamp INTEGER NOT NULL, -- Unix timestamp
     is_from_me BOOLEAN NOT NULL, -- true if I sent it

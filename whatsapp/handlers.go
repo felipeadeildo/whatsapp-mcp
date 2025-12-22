@@ -111,9 +111,25 @@ func (c *Client) handleMessage(evt *events.Message) {
 	// extract sender JID with alternatives using Info.SenderAlt
 	senderPN, senderLID := c.extractJIDPair(info.Sender, info.SenderAlt)
 
+	// get contact name from contact store
+	ctx := context.Background()
+	var contactName *string
+	if c.wa.Store.Contacts != nil {
+		contact, err := c.wa.Store.Contacts.GetContact(ctx, info.Sender)
+		if err == nil && contact.Found {
+			// prefer FullName, fallback to FirstName
+			name := contact.FullName
+			if name == "" {
+				name = contact.FirstName
+			}
+			if name != "" {
+				contactName = &name
+			}
+		}
+	}
+
 	// extract chat JID with alternatives
 	// for DMs (not groups), get alternative JID from store
-	ctx := context.Background()
 	var chatAltJID types.JID
 	if info.Chat.Server != "g.us" {
 		var err error
@@ -163,6 +179,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 		SenderJIDPN:  senderPN,
 		SenderJIDLID: senderLID,
 		SenderName:   info.PushName,
+		ContactName:  contactName,
 		Text:         text,
 		Timestamp:    info.Timestamp,
 		IsFromMe:     info.IsFromMe,
@@ -305,6 +322,22 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				senderName = pushNameMap[senderJIDObject.String()]
 			}
 
+			// get contact name from contact store
+			var contactName *string
+			if c.wa.Store.Contacts != nil {
+				contact, err := c.wa.Store.Contacts.GetContact(ctx, senderJIDObject)
+				if err == nil && contact.Found {
+					// prefer FullName, fallback to FirstName
+					name := contact.FullName
+					if name == "" {
+						name = contact.FirstName
+					}
+					if name != "" {
+						contactName = &name
+					}
+				}
+			}
+
 			// track ALL chats (for foreign key constraint)
 			chatKey := computeCanonicalJID(chatPN, chatLID)
 
@@ -358,6 +391,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				SenderJIDPN:  senderPN,
 				SenderJIDLID: senderLID,
 				SenderName:   senderName,
+				ContactName:  contactName,
 				Text:         text,
 				Timestamp:    timestamp,
 				IsFromMe:     fromMe,
