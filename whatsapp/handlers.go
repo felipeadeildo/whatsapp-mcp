@@ -417,7 +417,9 @@ func extractText(msg interface{}) string {
 	}
 	if ext, ok := msg.(extendedTextGetter); ok {
 		if extMsg := ext.GetExtendedTextMessage(); extMsg != nil {
-			return extMsg.GetText()
+			if text := extMsg.GetText(); text != "" {
+				return text
+			}
 		}
 	}
 
@@ -426,7 +428,9 @@ func extractText(msg interface{}) string {
 	}
 	if img, ok := msg.(imageGetter); ok {
 		if imgMsg := img.GetImageMessage(); imgMsg != nil {
-			return imgMsg.GetCaption()
+			if caption := imgMsg.GetCaption(); caption != "" {
+				return caption
+			}
 		}
 	}
 
@@ -435,14 +439,28 @@ func extractText(msg interface{}) string {
 	}
 	if vid, ok := msg.(videoGetter); ok {
 		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
-			return vidMsg.GetCaption()
+			if caption := vidMsg.GetCaption(); caption != "" {
+				return caption
+			}
+		}
+	}
+
+	// Document caption
+	type documentGetter interface {
+		GetDocumentMessage() interface{ GetCaption() string }
+	}
+	if doc, ok := msg.(documentGetter); ok {
+		if docMsg := doc.GetDocumentMessage(); docMsg != nil {
+			if caption := docMsg.GetCaption(); caption != "" {
+				return caption
+			}
 		}
 	}
 
 	return ""
 }
 
-// extractTextFromWAMessage extracts text from waE2E.Message type
+// extractTextFromWAMessage extracts text from waE2E.Message type (unused but kept for reference)
 func extractTextFromWAMessage(msg interface{}) string {
 	if msg == nil {
 		return ""
