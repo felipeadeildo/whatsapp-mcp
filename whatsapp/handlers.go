@@ -80,17 +80,27 @@ func (c *Client) handleMessage(evt *events.Message) {
 	c.log.Debugf("Received message: %s from %s in %s",
 		info.ID, info.Sender, info.Chat)
 
+	// Debug: log message type
+	c.log.Debugf("Message type: %T", evt.Message)
+
 	text := extractText(evt.Message)
-	if text == "" && evt.Message.GetImageMessage() != nil {
-		text = "[Image]"
-	} else if text == "" && evt.Message.GetVideoMessage() != nil {
-		text = "[Video]"
-	} else if text == "" && evt.Message.GetAudioMessage() != nil {
-		text = "[Audio]"
-	} else if text == "" && evt.Message.GetDocumentMessage() != nil {
-		text = "[Document]"
-	} else if text == "" {
-		text = "[Unknown message type]"
+	if text == "" {
+		c.log.Debugf("extractText returned empty, checking message types...")
+		if evt.Message.GetImageMessage() != nil {
+			text = "[Image]"
+		} else if evt.Message.GetVideoMessage() != nil {
+			text = "[Video]"
+		} else if evt.Message.GetAudioMessage() != nil {
+			text = "[Audio]"
+		} else if evt.Message.GetDocumentMessage() != nil {
+			text = "[Document]"
+		} else {
+			// Debug: log what methods are available
+			c.log.Debugf("Message content: Conversation=%q, ExtendedText=%v",
+				evt.Message.GetConversation(),
+				evt.Message.GetExtendedTextMessage())
+			text = "[Unknown message type]"
+		}
 	}
 
 	msgType := getMessageType(evt.Message)
@@ -387,35 +397,18 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 }
 
 func extractText(msg interface{}) string {
+	// Try to get as *waProto.Message first (from events.Message)
+	if waMsg, ok := msg.(*events.Message); ok {
+		return extractTextFromWAMessage(waMsg.Message)
+	}
+
+	// Otherwise try interface{} with Get methods (for proto messages directly)
 	type conversationGetter interface {
 		GetConversation() string
 	}
-
 	if conv, ok := msg.(conversationGetter); ok {
 		if text := conv.GetConversation(); text != "" {
 			return text
-		}
-	}
-
-	type captionGetter interface {
-		GetCaption() string
-	}
-
-	type imageGetter interface {
-		GetImageMessage() captionGetter
-	}
-	if img, ok := msg.(imageGetter); ok {
-		if imgMsg := img.GetImageMessage(); imgMsg != nil {
-			return imgMsg.GetCaption()
-		}
-	}
-
-	type videoGetter interface {
-		GetVideoMessage() captionGetter
-	}
-	if vid, ok := msg.(videoGetter); ok {
-		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
-			return vidMsg.GetCaption()
 		}
 	}
 
@@ -425,6 +418,91 @@ func extractText(msg interface{}) string {
 	if ext, ok := msg.(extendedTextGetter); ok {
 		if extMsg := ext.GetExtendedTextMessage(); extMsg != nil {
 			return extMsg.GetText()
+		}
+	}
+
+	type imageGetter interface {
+		GetImageMessage() interface{ GetCaption() string }
+	}
+	if img, ok := msg.(imageGetter); ok {
+		if imgMsg := img.GetImageMessage(); imgMsg != nil {
+			return imgMsg.GetCaption()
+		}
+	}
+
+	type videoGetter interface {
+		GetVideoMessage() interface{ GetCaption() string }
+	}
+	if vid, ok := msg.(videoGetter); ok {
+		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
+			return vidMsg.GetCaption()
+		}
+	}
+
+	return ""
+}
+
+// extractTextFromWAMessage extracts text from waE2E.Message type
+func extractTextFromWAMessage(msg interface{}) string {
+	if msg == nil {
+		return ""
+	}
+
+	// Plain text conversation
+	type conversationGetter interface {
+		GetConversation() string
+	}
+	if conv, ok := msg.(conversationGetter); ok {
+		if text := conv.GetConversation(); text != "" {
+			return text
+		}
+	}
+
+	// Extended text message (links, formatting, etc)
+	type extendedTextGetter interface {
+		GetExtendedTextMessage() interface{ GetText() string }
+	}
+	if ext, ok := msg.(extendedTextGetter); ok {
+		if extMsg := ext.GetExtendedTextMessage(); extMsg != nil {
+			if text := extMsg.GetText(); text != "" {
+				return text
+			}
+		}
+	}
+
+	// Image caption
+	type imageGetter interface {
+		GetImageMessage() interface{ GetCaption() string }
+	}
+	if img, ok := msg.(imageGetter); ok {
+		if imgMsg := img.GetImageMessage(); imgMsg != nil {
+			if caption := imgMsg.GetCaption(); caption != "" {
+				return caption
+			}
+		}
+	}
+
+	// Video caption
+	type videoGetter interface {
+		GetVideoMessage() interface{ GetCaption() string }
+	}
+	if vid, ok := msg.(videoGetter); ok {
+		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
+			if caption := vidMsg.GetCaption(); caption != "" {
+				return caption
+			}
+		}
+	}
+
+	// Document caption
+	type documentGetter interface {
+		GetDocumentMessage() interface{ GetCaption() string }
+	}
+	if doc, ok := msg.(documentGetter); ok {
+		if docMsg := doc.GetDocumentMessage(); docMsg != nil {
+			if caption := docMsg.GetCaption(); caption != "" {
+				return caption
+			}
 		}
 	}
 
