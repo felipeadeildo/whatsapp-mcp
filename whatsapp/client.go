@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"os"
 	"whatsapp-mcp/storage"
 
 	"go.mau.fi/whatsmeow"
@@ -14,9 +15,42 @@ import (
 )
 
 type Client struct {
-	wa    *whatsmeow.Client
-	store *storage.MessageStore
-	log   waLog.Logger
+	wa      *whatsmeow.Client
+	store   *storage.MessageStore
+	log     waLog.Logger
+	logFile *os.File
+}
+
+type fileLogger struct {
+	base waLog.Logger
+	file *os.File
+}
+
+func (l *fileLogger) Errorf(msg string, args ...interface{}) {
+	l.base.Errorf(msg, args...)
+	fmt.Fprintf(l.file, "[ERROR] "+msg+"\n", args...)
+}
+
+func (l *fileLogger) Warnf(msg string, args ...interface{}) {
+	l.base.Warnf(msg, args...)
+	fmt.Fprintf(l.file, "[WARN] "+msg+"\n", args...)
+}
+
+func (l *fileLogger) Infof(msg string, args ...interface{}) {
+	l.base.Infof(msg, args...)
+	fmt.Fprintf(l.file, "[INFO] "+msg+"\n", args...)
+}
+
+func (l *fileLogger) Debugf(msg string, args ...interface{}) {
+	l.base.Debugf(msg, args...)
+	fmt.Fprintf(l.file, "[DEBUG] "+msg+"\n", args...)
+}
+
+func (l *fileLogger) Sub(module string) waLog.Logger {
+	return &fileLogger{
+		base: l.base.Sub(module),
+		file: l.file,
+	}
 }
 
 func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Client, error) {
@@ -31,8 +65,22 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 		logLevel = "INFO"
 	}
 
-	logger := waLog.Stdout("whatsapp", logLevel, true)
-	logger.Infof("Initializing WhatsApp client with log level: %s", logLevel)
+	// Create log file in data directory
+	logFile, err := os.OpenFile("./data/whatsapp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open log file: %w", err)
+	}
+
+	// Create base logger for stdout
+	baseLogger := waLog.Stdout("whatsapp", logLevel, true)
+
+	// Wrap with file logger
+	logger := &fileLogger{
+		base: baseLogger,
+		file: logFile,
+	}
+
+	logger.Infof("Initializing WhatsApp client with log level: %s (logging to ./data/whatsapp.log)", logLevel)
 
 	ctx := context.Background()
 
@@ -49,9 +97,10 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 	waClient := whatsmeow.NewClient(deviceStore, logger)
 
 	client := &Client{
-		wa:    waClient,
-		store: store,
-		log:   logger,
+		wa:      waClient,
+		store:   store,
+		log:     logger,
+		logFile: logFile,
 	}
 
 	waClient.AddEventHandler(client.eventHandler)
@@ -69,6 +118,9 @@ func (c *Client) Connect() error {
 
 func (c *Client) Disconnect() {
 	c.wa.Disconnect()
+	if c.logFile != nil {
+		c.logFile.Close()
+	}
 }
 
 func (c *Client) GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelItem, error) {

@@ -12,7 +12,9 @@ CREATE TABLE IF NOT EXISTS messages (
     chat_jid TEXT GENERATED ALWAYS AS (COALESCE(chat_jid_pn, chat_jid_lid)) STORED,
     sender_jid TEXT GENERATED ALWAYS AS (COALESCE(sender_jid_pn, sender_jid_lid)) STORED,
 
-    sender_name TEXT, -- Sender name at message time (PushName)
+    -- Message data
+    sender_push_name TEXT, -- Sender's WhatsApp display name at message time (from PushName)
+    sender_contact_name TEXT, -- Sender's saved contact name (from contact store)
     text TEXT, -- Text content (null for media)
     timestamp INTEGER NOT NULL, -- Unix timestamp
     is_from_me BOOLEAN NOT NULL, -- true if I sent it
@@ -43,7 +45,8 @@ CREATE TABLE IF NOT EXISTS chats (
     -- Canonical JID (PRIMARY KEY, auto-updated by trigger)
     jid TEXT PRIMARY KEY,
 
-    name TEXT, -- Contact/group name
+    push_name TEXT, -- Sender's WhatsApp display name (from PushName in messages)
+    contact_name TEXT, -- Saved contact name (from WhatsApp contact store)
     last_message_time INTEGER, -- Last message timestamp
     unread_count INTEGER DEFAULT 0,
     is_group BOOLEAN DEFAULT FALSE,

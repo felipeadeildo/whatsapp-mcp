@@ -10,6 +10,30 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// getDisplayName returns the best available name for a chat
+// Priority: ContactName > PushName > JID
+func getDisplayName(chat storage.Chat) string {
+	if chat.ContactName != "" {
+		return chat.ContactName
+	}
+	if chat.PushName != "" {
+		return chat.PushName
+	}
+	return chat.JID
+}
+
+// getSenderDisplayName returns the best available name for a message sender
+// Priority: ContactName > PushName > JID
+func getSenderDisplayName(msg storage.Message) string {
+	if msg.SenderContactName != "" {
+		return msg.SenderContactName
+	}
+	if msg.SenderPushName != "" {
+		return msg.SenderPushName
+	}
+	return msg.SenderJID
+}
+
 func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get limit parameter with default
 	limit := request.GetFloat("limit", 50.0)
@@ -34,8 +58,12 @@ func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolReq
 		}
 
 		jid := chat.JID
-		result.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, chatType, chat.Name))
+		displayName := getDisplayName(chat)
+		result.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, chatType, displayName))
 		result.WriteString(fmt.Sprintf("   JID: %s\n", jid))
+		if chat.ContactName != "" && chat.PushName != "" && chat.ContactName != chat.PushName {
+			result.WriteString(fmt.Sprintf("   (Contact: %s, Push: %s)\n", chat.ContactName, chat.PushName))
+		}
 		result.WriteString(fmt.Sprintf("   Last message: %s\n", chat.LastMessageTime.Format("2006-01-02 15:04:05")))
 		if chat.UnreadCount > 0 {
 			result.WriteString(fmt.Sprintf("   Unread: %d\n", chat.UnreadCount))
@@ -73,10 +101,7 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 
 	for i := len(messages) - 1; i >= 0; i-- { // reverse to show oldest first
 		msg := messages[i]
-		sender := msg.SenderName
-		if sender == "" {
-			sender = msg.SenderJID
-		}
+		sender := getSenderDisplayName(msg)
 
 		direction := "←"
 		if msg.IsFromMe {
@@ -119,10 +144,7 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 	result.WriteString(fmt.Sprintf("Found %d messages matching '%s':\n\n", len(messages), query))
 
 	for i, msg := range messages {
-		sender := msg.SenderName
-		if sender == "" {
-			sender = msg.SenderJID
-		}
+		sender := getSenderDisplayName(msg)
 
 		if msg.IsFromMe {
 			sender = "You"
@@ -157,7 +179,10 @@ func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequ
 	var matches []storage.Chat
 	searchLower := strings.ToLower(search)
 	for _, chat := range chats {
-		if strings.Contains(strings.ToLower(chat.Name), searchLower) ||
+		displayName := getDisplayName(chat)
+		if strings.Contains(strings.ToLower(displayName), searchLower) ||
+			strings.Contains(strings.ToLower(chat.ContactName), searchLower) ||
+			strings.Contains(strings.ToLower(chat.PushName), searchLower) ||
 			strings.Contains(strings.ToLower(chat.JID), searchLower) {
 			matches = append(matches, chat)
 		}
@@ -173,8 +198,13 @@ func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequ
 			chatType = "Group"
 		}
 
-		result.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, chatType, chat.Name))
-		result.WriteString(fmt.Sprintf("   JID: %s\n\n", chat.JID))
+		displayName := getDisplayName(chat)
+		result.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, chatType, displayName))
+		result.WriteString(fmt.Sprintf("   JID: %s\n", chat.JID))
+		if chat.ContactName != "" && chat.PushName != "" && chat.ContactName != chat.PushName {
+			result.WriteString(fmt.Sprintf("   (Contact: %s, Push: %s)\n", chat.ContactName, chat.PushName))
+		}
+		result.WriteString("\n")
 	}
 
 	return mcp.NewToolResultText(result.String()), nil

@@ -1,3 +1,4 @@
 data/*.db*
+data/*.log
 qr.png
 .env
