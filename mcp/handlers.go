@@ -24,7 +24,7 @@ func getDisplayName(chat storage.Chat) string {
 
 // getSenderDisplayName returns the best available name for a message sender
 // Priority: ContactName > PushName > JID
-func getSenderDisplayName(msg storage.Message) string {
+func getSenderDisplayName(msg storage.MessageWithNames) string {
 	if msg.SenderContactName != "" {
 		return msg.SenderContactName
 	}
@@ -89,8 +89,8 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 
 	offset := request.GetFloat("offset", 0.0)
 
-	// query database
-	messages, err := m.store.GetChatMessages(chatJID, int(limit), int(offset))
+	// query database (with sender names from view)
+	messages, err := m.store.GetChatMessagesWithNames(chatJID, int(limit), int(offset))
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
 	}
@@ -133,8 +133,8 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 		limit = 200
 	}
 
-	// search database
-	messages, err := m.store.SearchMessages(query, int(limit))
+	// search database (with sender names from view)
+	messages, err := m.store.SearchMessagesWithNames(query, int(limit))
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}

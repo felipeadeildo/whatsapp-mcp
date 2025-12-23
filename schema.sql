@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_jid TEXT GENERATED ALWAYS AS (COALESCE(sender_jid_pn, sender_jid_lid)) STORED,
 
     -- Message data
-    sender_push_name TEXT, -- Sender's WhatsApp display name at message time (from PushName)
-    sender_contact_name TEXT, -- Sender's saved contact name (from contact store)
+    -- Note: sender names are retrieved via JOIN with push_names and chats tables
+    -- This ensures we always show current names and eliminates data duplication
     text TEXT, -- Text content (null for media)
     timestamp INTEGER NOT NULL, -- Unix timestamp
     is_from_me BOOLEAN NOT NULL, -- true if I sent it
@@ -116,3 +116,38 @@ END;
 -- Indexes for group participants
 CREATE INDEX IF NOT EXISTS idx_group_participants_pn ON group_participants(participant_jid_pn) WHERE participant_jid_pn IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_group_participants_lid ON group_participants(participant_jid_lid) WHERE participant_jid_lid IS NOT NULL;
+
+-- View for querying messages with sender names (current names from push_names and chats)
+CREATE VIEW IF NOT EXISTS messages_with_names AS
+SELECT
+    m.id,
+    m.chat_jid_pn,
+    m.chat_jid_lid,
+    m.chat_jid,
+    m.sender_jid_pn,
+    m.sender_jid_lid,
+    m.sender_jid,
+
+    -- Get sender's current push name (WhatsApp display name)
+    COALESCE(p.push_name, '') as sender_push_name,
+
+    -- Get sender's current contact name (saved contact)
+    COALESCE(c_sender.contact_name, '') as sender_contact_name,
+
+    -- Get chat name (for display)
+    COALESCE(
+        c_chat.contact_name,  -- Saved contact name for DMs
+        c_chat.push_name,     -- Push name for DMs or group name for groups
+        m.chat_jid            -- Fallback to JID
+    ) as chat_name,
+
+    -- Original message fields
+    m.text,
+    m.timestamp,
+    m.is_from_me,
+    m.message_type,
+    m.created_at
+FROM messages m
+LEFT JOIN push_names p ON m.sender_jid = p.jid
+LEFT JOIN chats c_sender ON m.sender_jid = c_sender.jid
+LEFT JOIN chats c_chat ON m.chat_jid = c_chat.jid;

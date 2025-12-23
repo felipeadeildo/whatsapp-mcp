@@ -157,14 +157,20 @@ func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text strin
 		return err
 	}
 
+	// Extract JID pairs for storage
+	chatPN, chatLID := c.extractJIDPair(targetJID, types.EmptyJID)
+	senderPN, senderLID := c.extractJIDPair(resp.Sender, types.EmptyJID)
+
 	c.store.SaveMessage(storage.Message{
-		ID:          resp.ID,
-		ChatJID:     chatJID,
-		SenderJID:   resp.Sender.String(),
-		Text:        text,
-		Timestamp:   resp.Timestamp,
-		IsFromMe:    true,
-		MessageType: "text",
+		ID:           resp.ID,
+		ChatJIDPN:    chatPN,
+		ChatJIDLID:   chatLID,
+		SenderJIDPN:  senderPN,
+		SenderJIDLID: senderLID,
+		Text:         text,
+		Timestamp:    resp.Timestamp,
+		IsFromMe:     true,
+		MessageType:  "text",
 	})
 
 	return nil

@@ -174,36 +174,18 @@ func (c *Client) handleMessage(evt *events.Message) {
 		return
 	}
 
-	// Get ACTUAL saved contact name from contact store (for messages table)
-	var senderContactName string
-	if !info.IsFromMe {
-		contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, info.Sender)
-		if err == nil {
-			// Priority: FullName (saved contact) > FirstName > BusinessName
-			// NEVER use PushName here - that's the WhatsApp display name!
-			if contactInfo.FullName != "" {
-				senderContactName = contactInfo.FullName
-			} else if contactInfo.FirstName != "" {
-				senderContactName = contactInfo.FirstName
-			} else if contactInfo.BusinessName != "" {
-				senderContactName = contactInfo.BusinessName
-			}
-		}
-	}
-
 	msg := storage.Message{
-		ID:                info.ID,
-		ChatJIDPN:         chatPN,
-		ChatJIDLID:        chatLID,
-		SenderJIDPN:       senderPN,
-		SenderJIDLID:      senderLID,
-		SenderPushName:    info.PushName,
-		SenderContactName: senderContactName,
-		Text:              text,
-		Timestamp:         info.Timestamp,
-		IsFromMe:          info.IsFromMe,
-		MessageType:       msgType,
+		ID:           info.ID,
+		ChatJIDPN:    chatPN,
+		ChatJIDLID:   chatLID,
+		SenderJIDPN:  senderPN,
+		SenderJIDLID: senderLID,
+		Text:         text,
+		Timestamp:    info.Timestamp,
+		IsFromMe:     info.IsFromMe,
+		MessageType:  msgType,
 	}
+	// Note: push names are still captured and saved to push_names table below
 
 	if err := c.store.SaveMessage(msg); err != nil {
 		computedChatJID := computeCanonicalJID(chatPN, chatLID)
@@ -487,25 +469,19 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 				msgType := getMessageType(msg.GetMessage())
 
-				// For DMs, use conversation-level contact name; for groups, leave empty
-				var msgSenderContactName string
-				if !isGroup && !fromMe {
-					msgSenderContactName = dmContactName
-				}
-
 				allMessages = append(allMessages, storage.Message{
-					ID:                messageID,
-					ChatJIDPN:         chatPN,
-					ChatJIDLID:        chatLID,
-					SenderJIDPN:       senderPN,
-					SenderJIDLID:      senderLID,
-					SenderPushName:    senderName,
-					SenderContactName: msgSenderContactName,
-					Text:              text,
-					Timestamp:         timestamp,
-					IsFromMe:          fromMe,
-					MessageType:       msgType,
+					ID:           messageID,
+					ChatJIDPN:    chatPN,
+					ChatJIDLID:   chatLID,
+					SenderJIDPN:  senderPN,
+					SenderJIDLID: senderLID,
+					Text:         text,
+					Timestamp:    timestamp,
+					IsFromMe:     fromMe,
+					MessageType:  msgType,
 				})
+				// Note: senderName and msgSenderContactName are still captured
+				// and used to update push_names and chats tables
 				continue
 			}
 
@@ -621,25 +597,19 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 			msgType := getMessageType(msg.GetMessage())
 
-			// For DMs, use conversation-level contact name; for groups, leave empty
-			var msgSenderContactName string
-			if !isGroup && !fromMe {
-				msgSenderContactName = dmContactName
-			}
-
 			allMessages = append(allMessages, storage.Message{
-				ID:                messageID,
-				ChatJIDPN:         chatPN,
-				ChatJIDLID:        chatLID,
-				SenderJIDPN:       senderPN,
-				SenderJIDLID:      senderLID,
-				SenderPushName:    senderName,
-				SenderContactName: msgSenderContactName,
-				Text:              text,
-				Timestamp:         timestamp,
-				IsFromMe:          fromMe,
-				MessageType:       msgType,
+				ID:           messageID,
+				ChatJIDPN:    chatPN,
+				ChatJIDLID:   chatLID,
+				SenderJIDPN:  senderPN,
+				SenderJIDLID: senderLID,
+				Text:         text,
+				Timestamp:    timestamp,
+				IsFromMe:     fromMe,
+				MessageType:  msgType,
 			})
+			// Note: senderName and msgSenderContactName are still captured
+			// and used to update push_names and chats tables
 		}
 	}
 
