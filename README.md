@@ -45,7 +45,7 @@ graph TB
         F[WhatsApp Servers]
     end
 
-    A -->|HTTP + Bearer Auth| B
+    A -->|HTTP + API Key Auth| B
 
     style A fill:#4A90E2,stroke:#2E5C8A,stroke-width:2px,color:#000
     style B fill:#F5A623,stroke:#C67E1B,stroke-width:2px,color:#000
@@ -161,9 +161,9 @@ The MCP server exposes an HTTP endpoint that any MCP-compatible client can conne
 
 ### Endpoint Configuration
 
-- **URL:** `http://localhost:8080/mcp`
+- **URL:** `http://localhost:8080/mcp/{API_KEY}`
 - **Transport:** HTTP with SSE (Server-Sent Events)
-- **Authentication:** Bearer token via `Authorization` header
+- **Authentication:** API key in URL path
 
 ### Client Configuration
 
@@ -171,10 +171,7 @@ Configure your MCP client to connect to the server:
 
 ```json
 {
-  "url": "http://localhost:8080/mcp",
-  "headers": {
-    "Authorization": "Bearer your-secret-api-key-here"
-  },
+  "url": "http://localhost:8080/mcp/your-secret-api-key-here",
   "transport": "http"
 }
 ```
@@ -196,7 +193,7 @@ Configure your MCP client to connect to the server:
 - **WhatsApp Integration** - Full WhatsApp client via whatsmeow library
 - **MCP Server** - HTTP-based MCP server with some core tools
 - **Docker Deployment** - Containerized setup for easy deployment
-- **Authentication** - Bearer token API authentication
+- **Authentication** - API key in URL path authentication
 - **Health Monitoring** - Health check endpoint for status monitoring
 
 ### 🚧 Planned Features

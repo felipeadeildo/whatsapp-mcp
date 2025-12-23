@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -105,21 +106,30 @@ func main() {
 	streamableServer := server.NewStreamableHTTPServer(
 		mcpServer.GetServer(),
 		server.WithEndpointPath("/mcp"),
-		server.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
-			// validate API key from Authorization header
-			auth := r.Header.Get("Authorization")
-			expectedAuth := "Bearer " + apiKey
-
-			if auth != expectedAuth {
-				// mark as unauthorized in context
-				return context.WithValue(ctx, "unauthorized", true)
-			}
-
-			return ctx
-		}),
 	)
 
-	mux.Handle("/mcp", streamableServer)
+	// MCP endpoint with API key in path
+	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
+		// Extract API key from URL path: /mcp/{apiKey}
+		path := strings.TrimPrefix(r.URL.Path, "/mcp/")
+		providedKey := strings.Split(path, "/")[0] // Get first segment after /mcp/
+
+		if providedKey != apiKey {
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte("Unauthorized: Invalid API key"))
+			return
+		}
+
+		// Create a new request with the remaining path
+		remainingPath := strings.TrimPrefix(path, providedKey)
+		if !strings.HasPrefix(remainingPath, "/") {
+			remainingPath = "/" + remainingPath
+		}
+		r.URL.Path = "/mcp" + remainingPath
+
+		// Serve the MCP request
+		streamableServer.ServeHTTP(w, r)
+	})
 
 	httpServer := &http.Server{
 		Addr:    ":" + httpPort,
@@ -130,7 +140,7 @@ func main() {
 	go func() {
 		log.Printf("Starting server on http://0.0.0.0:%s", httpPort)
 		log.Printf("- Health check: http://0.0.0.0:%s/health", httpPort)
-		log.Printf("- MCP endpoint: http://0.0.0.0:%s/mcp", httpPort)
+		log.Printf("- MCP endpoint: http://0.0.0.0:%s/mcp/{API_KEY}", httpPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
