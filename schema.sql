@@ -74,6 +74,13 @@ END;
 CREATE INDEX IF NOT EXISTS idx_chats_jid_pn ON chats(jid_pn) WHERE jid_pn IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_chats_jid_lid ON chats(jid_lid) WHERE jid_lid IS NOT NULL;
 
+-- Push names table (WhatsApp display names)
+CREATE TABLE IF NOT EXISTS push_names (
+    jid TEXT PRIMARY KEY, -- User JID (any format)
+    push_name TEXT NOT NULL, -- WhatsApp display name
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')) -- Last update timestamp
+);
+
 -- Group participants table (optional)
 CREATE TABLE IF NOT EXISTS group_participants (
     group_jid TEXT NOT NULL,
