@@ -53,10 +53,10 @@ func (m *MCPServer) registerTools() {
 	// 4. find chat by name or JID
 	m.server.AddTool(
 		mcp.NewTool("find_chat",
-			mcp.WithDescription("find a specific chat by name or JID"),
+			mcp.WithDescription("find chats by fuzzy search on contact names, push names, or JIDs (case-insensitive substring matching)"),
 			mcp.WithString("search",
 				mcp.Required(),
-				mcp.Description("name or JID to search for (partial matches supported for names)"),
+				mcp.Description("search term to match against chat names or JIDs (supports partial matches and emojis)"),
 			),
 		),
 		m.handleFindChat,

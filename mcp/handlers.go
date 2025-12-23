@@ -169,30 +169,17 @@ func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequ
 		return mcp.NewToolResultError("search parameter is required"), nil
 	}
 
-	// list all chats and filter
-	chats, err := m.store.ListChats(100)
+	// search chats in database with fuzzy matching
+	chats, err := m.store.SearchChats(search, 100)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to search chats: %v", err)), nil
 	}
 
-	// filter by name or JID
-	var matches []storage.Chat
-	searchLower := strings.ToLower(search)
-	for _, chat := range chats {
-		displayName := getDisplayName(chat)
-		if strings.Contains(strings.ToLower(displayName), searchLower) ||
-			strings.Contains(strings.ToLower(chat.ContactName), searchLower) ||
-			strings.Contains(strings.ToLower(chat.PushName), searchLower) ||
-			strings.Contains(strings.ToLower(chat.JID), searchLower) {
-			matches = append(matches, chat)
-		}
-	}
-
 	// format response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d matching chats:\n\n", len(matches)))
+	result.WriteString(fmt.Sprintf("Found %d matching chats:\n\n", len(chats)))
 
-	for i, chat := range matches {
+	for i, chat := range chats {
 		chatType := "DM"
 		if chat.IsGroup {
 			chatType = "Group"

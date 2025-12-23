@@ -176,3 +176,46 @@ func (s *MessageStore) ListChats(limit int) ([]Chat, error) {
 
 	return chats, rows.Err()
 }
+
+// search chats by name or JID with fuzzy matching
+func (s *MessageStore) SearchChats(search string, limit int) ([]Chat, error) {
+	query := `
+	SELECT jid_pn, jid_lid, jid, push_name, contact_name, last_message_time, unread_count, is_group
+	FROM chats
+	WHERE push_name LIKE ? OR contact_name LIKE ? OR jid LIKE ?
+	ORDER BY last_message_time DESC
+	LIMIT ?
+	`
+
+	searchPattern := "%" + search + "%"
+	rows, err := s.db.Query(query, searchPattern, searchPattern, searchPattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var chats []Chat
+	for rows.Next() {
+		var chat Chat
+		var lastMsgUnix int64
+
+		err := rows.Scan(
+			&chat.JIDPN,
+			&chat.JIDLID,
+			&chat.JID,
+			&chat.PushName,
+			&chat.ContactName,
+			&lastMsgUnix,
+			&chat.UnreadCount,
+			&chat.IsGroup,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		chat.LastMessageTime = time.Unix(lastMsgUnix, 0)
+		chats = append(chats, chat)
+	}
+
+	return chats, rows.Err()
+}
