@@ -8,7 +8,6 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
-	waStore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
@@ -95,16 +94,7 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 		return nil, fmt.Errorf("failed to get  device: %w", err)
 	}
 
-	// Configure browser session and device settings for realistic WhatsApp Web appearance
-	waStore.BaseClientPayload.UserAgent.Device = proto.String("Whatsapp MCP")
-	waStore.BaseClientPayload.UserAgent.Manufacturer = proto.String("Google Inc.")
-	waStore.BaseClientPayload.UserAgent.OsVersion = proto.String("Linux x86_64")
-	waStore.DeviceProps.Os = proto.String("Linux")
-
 	waClient := whatsmeow.NewClient(deviceStore, logger)
-
-	// Set display name
-	waClient.Store.PushName = "Whatsapp MCP"
 
 	client := &Client{
 		wa:      waClient,
@@ -167,20 +157,14 @@ func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text strin
 		return err
 	}
 
-	// Extract JID pairs for storage
-	chatPN, chatLID := c.extractJIDPair(targetJID, types.EmptyJID)
-	senderPN, senderLID := c.extractJIDPair(resp.Sender, types.EmptyJID)
-
 	c.store.SaveMessage(storage.Message{
-		ID:           resp.ID,
-		ChatJIDPN:    chatPN,
-		ChatJIDLID:   chatLID,
-		SenderJIDPN:  senderPN,
-		SenderJIDLID: senderLID,
-		Text:         text,
-		Timestamp:    resp.Timestamp,
-		IsFromMe:     true,
-		MessageType:  "text",
+		ID:          resp.ID,
+		ChatJID:     chatJID,
+		SenderJID:   resp.Sender.String(),
+		Text:        text,
+		Timestamp:   resp.Timestamp,
+		IsFromMe:    true,
+		MessageType: "text",
 	})
 
 	return nil
