@@ -586,64 +586,36 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	}
 }
 
-func extractText(msg any) string {
+// extracts text content from a WhatsApp message
+// checks extended text (replies, URLs) first, then plain text, then media captions
+func extractText(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
 	}
 
-	// plain text conversation
-	type conversationGetter interface {
-		GetConversation() string
-	}
-	if conv, ok := msg.(conversationGetter); ok {
-		if text := conv.GetConversation(); text != "" {
-			return text
-		}
+	// check for extended text message first (replies, URLs, etc.)
+	if extended := msg.GetExtendedTextMessage(); extended != nil {
+		return extended.GetText()
 	}
 
-	type extendedTextGetter interface {
-		GetExtendedTextMessage() interface{ GetText() string }
-	}
-	if ext, ok := msg.(extendedTextGetter); ok {
-		if extMsg := ext.GetExtendedTextMessage(); extMsg != nil {
-			if text := extMsg.GetText(); text != "" {
-				return text
-			}
-		}
+	// fall back to plain conversation text
+	if text := msg.GetConversation(); text != "" {
+		return text
 	}
 
-	type imageGetter interface {
-		GetImageMessage() interface{ GetCaption() string }
-	}
-	if img, ok := msg.(imageGetter); ok {
-		if imgMsg := img.GetImageMessage(); imgMsg != nil {
-			if caption := imgMsg.GetCaption(); caption != "" {
-				return caption
-			}
-		}
+	// image caption
+	if img := msg.GetImageMessage(); img != nil {
+		return img.GetCaption()
 	}
 
-	type videoGetter interface {
-		GetVideoMessage() interface{ GetCaption() string }
-	}
-	if vid, ok := msg.(videoGetter); ok {
-		if vidMsg := vid.GetVideoMessage(); vidMsg != nil {
-			if caption := vidMsg.GetCaption(); caption != "" {
-				return caption
-			}
-		}
+	// video caption
+	if vid := msg.GetVideoMessage(); vid != nil {
+		return vid.GetCaption()
 	}
 
 	// document caption
-	type documentGetter interface {
-		GetDocumentMessage() interface{ GetCaption() string }
-	}
-	if doc, ok := msg.(documentGetter); ok {
-		if docMsg := doc.GetDocumentMessage(); docMsg != nil {
-			if caption := docMsg.GetCaption(); caption != "" {
-				return caption
-			}
-		}
+	if doc := msg.GetDocumentMessage(); doc != nil {
+		return doc.GetCaption()
 	}
 
 	return ""
