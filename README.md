@@ -185,6 +185,236 @@ Configure your MCP client to connect to the server:
 - **Firewall** - Don't expose port 8080 directly to the internet
 - **Session data** - Keep `whatsapp_auth.db` secure (file permissions 600) and backed up
 
+## Development
+
+### Requirements
+
+- **Go 1.23+** - The project uses modern Go features
+- **SQLite 3** - For local message storage
+- **Git** - For version control
+- **Goose** - Database migration tool (installed automatically with `go mod download`)
+
+### Project Structure
+
+```
+whatsapp-mcp/
+├── main.go                 # Application entry point
+├── storage/                # Database layer
+│   ├── models.go          # GORM model definitions
+│   ├── db.go              # Database initialization
+│   ├── messages.go        # Message operations
+│   ├── chats.go           # Chat operations
+│   └── push_names.go      # Push name operations
+├── migrations/            # Database migrations (Goose)
+│   └── 00001_initial_schema.go
+├── whatsapp/              # WhatsApp client integration
+│   ├── client.go          # WhatsApp client wrapper
+│   └── handlers.go        # Event handlers
+├── mcp/                   # MCP server implementation
+│   ├── server.go          # MCP tools and server setup
+│   └── tools.go           # Tool implementations
+└── data/                  # Runtime data (gitignored)
+    ├── messages.db        # SQLite database
+    └── whatsapp_auth.db   # WhatsApp session data
+```
+
+### Tech Stack
+
+- **[GORM](https://gorm.io/)** - ORM for database operations
+- **[Goose](https://github.com/pressly/goose)** - Database migrations
+- **[whatsmeow](https://github.com/tulir/whatsmeow)** - WhatsApp Web multidevice library
+- **[mcp-go](https://github.com/mark3labs/mcp-go)** - Model Context Protocol server
+- **SQLite** - Embedded database for message storage
+
+### Database Migrations
+
+This project uses **Goose** for database migrations with GORM models.
+
+#### How Migrations Work
+
+1. **Automatic on Startup**: Migrations run automatically when the app starts
+2. **GORM Integration**: Migrations use GORM's AutoMigrate to create tables
+3. **Version Tracking**: Goose tracks applied migrations in `goose_db_version` table
+
+#### Creating a New Migration
+
+```bash
+# Install goose CLI (if not already installed)
+go install github.com/pressly/goose/v3/cmd/goose@latest
+
+# Create a new migration
+~/go/bin/goose -s create add_new_feature go
+
+# This creates migrations/0000X_add_new_feature.go
+```
+
+Edit the generated file:
+
+```go
+package migrations
+
+import (
+    "context"
+    "database/sql"
+    "whatsapp-mcp/storage"
+
+    "github.com/pressly/goose/v3"
+    "gorm.io/driver/sqlite"
+    "gorm.io/gorm"
+)
+
+func init() {
+    goose.AddMigrationContext(upAddNewFeature, downAddNewFeature)
+}
+
+func upAddNewFeature(ctx context.Context, tx *sql.Tx) error {
+    gormDB, err := gorm.Open(sqlite.Dialector{Conn: tx}, &gorm.Config{})
+    if err != nil {
+        return err
+    }
+
+    // Add your migration logic here
+    return gormDB.AutoMigrate(&storage.YourNewModel{})
+}
+
+func downAddNewFeature(ctx context.Context, tx *sql.Tx) error {
+    // Add rollback logic here
+    _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS your_new_table")
+    return err
+}
+```
+
+#### Migration Commands (CLI)
+
+```bash
+# Check migration status
+~/go/bin/goose sqlite3 ./data/messages.db status
+
+# Apply all pending migrations
+~/go/bin/goose sqlite3 ./data/messages.db up
+
+# Rollback last migration
+~/go/bin/goose sqlite3 ./data/messages.db down
+
+# Reset all migrations (⚠️ careful!)
+~/go/bin/goose sqlite3 ./data/messages.db reset
+```
+
+**Note:** The app automatically runs migrations on startup, so you rarely need to run these manually.
+
+### Development Workflow
+
+1. **Clone and setup**
+   ```bash
+   git clone https://github.com/felipeadeildo/whatsapp-mcp
+   cd whatsapp-mcp
+   go mod download
+   ```
+
+2. **Configure environment**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your settings
+   ```
+
+3. **Run in development mode**
+   ```bash
+   go run main.go
+   ```
+
+4. **Build for production**
+   ```bash
+   go build -o whatsapp-mcp
+   ./whatsapp-mcp
+   ```
+
+### Adding a New GORM Model
+
+1. **Define the model** in `storage/models.go`:
+   ```go
+   type YourModel struct {
+       ID        uint      `gorm:"primaryKey"`
+       Name      string    `gorm:"type:text;not null"`
+       CreatedAt time.Time `gorm:"autoCreateTime"`
+   }
+   ```
+
+2. **Create a migration** (see "Creating a New Migration" above)
+
+3. **Add repository methods** in `storage/your_model.go`:
+   ```go
+   func (s *MessageStore) SaveYourModel(model YourModel) error {
+       return s.db.Create(&model).Error
+   }
+   ```
+
+4. **Run the app** - migrations will apply automatically
+
+### Testing
+
+```bash
+# Run tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run specific package tests
+go test ./storage
+```
+
+### Contributing
+
+**This is a personal project I use daily, so I have limited time for contributions.** However, if you'd like to contribute:
+
+#### How to Contribute
+
+1. **Fork the repository**
+2. **Create a feature branch**
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+3. **Make your changes**
+   - Follow existing code style
+   - Add tests if applicable
+   - Update documentation
+4. **Test your changes**
+   ```bash
+   go test ./...
+   go build
+   ```
+5. **Commit with clear messages**
+   ```bash
+   git commit -m "feat: add support for media messages"
+   ```
+6. **Push and create a PR**
+   ```bash
+   git push origin feature/your-feature-name
+   ```
+
+#### Contribution Guidelines
+
+- **Code Style**: Follow standard Go conventions (`gofmt`, `golint`)
+- **Commits**: Use conventional commits (feat, fix, docs, refactor, etc.)
+- **PRs**: Keep them focused and include a clear description
+- **Documentation**: Update README if adding new features
+- **Dependencies**: Minimize new dependencies unless absolutely necessary
+
+#### What I'm Looking For
+
+- Bug fixes
+- Performance improvements
+- Documentation improvements
+- Well-tested new features
+
+#### What I'm NOT Looking For
+
+- Large architectural changes without discussion
+- Features that add significant complexity
+- Breaking changes to existing APIs
+
+**Note:** I may not respond immediately to PRs/issues. Feel free to fork and adapt for your own use!
+
 ## Roadmap
 
 ### ✅ Implemented

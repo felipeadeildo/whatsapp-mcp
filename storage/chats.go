@@ -1,162 +1,76 @@
 package storage
 
 import (
-	"database/sql"
+	"errors"
 	"fmt"
-	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// represents a conversation
-type Chat struct {
-	JID             string // canonical JID (required)
-	PushName        string // sender's WhatsApp display name (from PushName in messages)
-	ContactName     string // saved contact name (from WhatsApp contact store)
-	LastMessageTime time.Time
-	UnreadCount     int
-	IsGroup         bool
-}
-
-// retrieves a chat by its canonical JID
-// returns the chat if found, nil otherwise
-func (s *MessageStore) GetChatByJID(jid string) (*Chat, error) {
-	query := `
-	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
-	FROM chats
-	WHERE jid = ?
-	`
-
-	row := s.db.QueryRow(query, jid)
-
-	var chat Chat
-	var lastMsgUnix int64
-
-	err := row.Scan(
-		&chat.JID,
-		&chat.PushName,
-		&chat.ContactName,
-		&lastMsgUnix,
-		&chat.UnreadCount,
-		&chat.IsGroup,
-	)
-
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	chat.LastMessageTime = time.Unix(lastMsgUnix, 0)
-	return &chat, nil
-}
-
-// saves/updates chat information
+// SaveChat saves or updates a chat (with COALESCE logic to preserve non-empty values)
 func (s *MessageStore) SaveChat(chat Chat) error {
 	if chat.JID == "" {
 		return fmt.Errorf("chat JID cannot be empty")
 	}
 
-	query := `
-	INSERT INTO chats (jid, push_name, contact_name, last_message_time, unread_count, is_group)
-	VALUES (?, ?, ?, ?, ?, ?)
-	ON CONFLICT(jid) DO UPDATE SET
-	    push_name = COALESCE(NULLIF(excluded.push_name, ''), chats.push_name),
-	    contact_name = COALESCE(NULLIF(excluded.contact_name, ''), chats.contact_name),
-	    last_message_time = excluded.last_message_time,
-	    unread_count = excluded.unread_count,
-	    is_group = excluded.is_group
-	`
-
-	_, err := s.db.Exec(
-		query,
-		chat.JID,
-		chat.PushName,
-		chat.ContactName,
-		chat.LastMessageTime.Unix(),
-		chat.UnreadCount,
-		chat.IsGroup,
-	)
-
-	return err
+	return s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "jid"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"push_name":         gorm.Expr("CASE WHEN excluded.push_name != '' THEN excluded.push_name ELSE chats.push_name END"),
+			"contact_name":      gorm.Expr("CASE WHEN excluded.contact_name != '' THEN excluded.contact_name ELSE chats.contact_name END"),
+			"last_message_time": clause.Column{Name: "last_message_time"},
+			"unread_count":      clause.Column{Name: "unread_count"},
+			"is_group":          clause.Column{Name: "is_group"},
+		}),
+	}).Create(&chat).Error
 }
 
-// return all chats ordered by last message timestamp
+// GetChatByJID retrieves a chat by JID
+func (s *MessageStore) GetChatByJID(jid string) (*Chat, error) {
+	var chat Chat
+	err := s.db.Where("jid = ?", jid).First(&chat).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return &chat, nil
+}
+
+// ListChats returns all chats ordered by last message time
 func (s *MessageStore) ListChats(limit int) ([]Chat, error) {
-	query := `
-	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
-	FROM chats
-	ORDER BY last_message_time DESC
-	LIMIT ?
-	`
+	var chats []Chat
 
-	rows, err := s.db.Query(query, limit)
+	err := s.db.
+		Order("last_message_time DESC").
+		Limit(limit).
+		Find(&chats).Error
+
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var chats []Chat
-	for rows.Next() {
-		var chat Chat
-		var lastMsgUnix int64
-
-		err := rows.Scan(
-			&chat.JID,
-			&chat.PushName,
-			&chat.ContactName,
-			&lastMsgUnix,
-			&chat.UnreadCount,
-			&chat.IsGroup,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		chat.LastMessageTime = time.Unix(lastMsgUnix, 0)
-		chats = append(chats, chat)
-	}
-
-	return chats, rows.Err()
+	return chats, nil
 }
 
-// search chats by name or JID with fuzzy matching
+// SearchChats searches chats by name or JID
 func (s *MessageStore) SearchChats(search string, limit int) ([]Chat, error) {
-	query := `
-	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
-	FROM chats
-	WHERE push_name LIKE ? OR contact_name LIKE ? OR jid LIKE ?
-	ORDER BY last_message_time DESC
-	LIMIT ?
-	`
-
+	var chats []Chat
 	searchPattern := "%" + search + "%"
-	rows, err := s.db.Query(query, searchPattern, searchPattern, searchPattern, limit)
+
+	err := s.db.
+		Where("push_name LIKE ? OR contact_name LIKE ? OR jid LIKE ?",
+			searchPattern, searchPattern, searchPattern).
+		Order("last_message_time DESC").
+		Limit(limit).
+		Find(&chats).Error
+
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var chats []Chat
-	for rows.Next() {
-		var chat Chat
-		var lastMsgUnix int64
-
-		err := rows.Scan(
-			&chat.JID,
-			&chat.PushName,
-			&chat.ContactName,
-			&lastMsgUnix,
-			&chat.UnreadCount,
-			&chat.IsGroup,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		chat.LastMessageTime = time.Unix(lastMsgUnix, 0)
-		chats = append(chats, chat)
-	}
-
-	return chats, rows.Err()
+	return chats, nil
 }
