@@ -2,10 +2,10 @@ package whatsapp
 
 import (
 	"context"
-	"strings"
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
@@ -19,6 +19,10 @@ func (c *Client) eventHandler(evt interface{}) {
 		c.handleMessage(v)
 	case *events.HistorySync:
 		c.handleHistorySync(v)
+	case *events.Contact:
+		c.handleContact(v)
+	case *events.PushName:
+		c.handlePushName(v)
 	case *events.Connected:
 		c.log.Infof("Connected to WhatsApp (JID: %s)", c.wa.Store.ID)
 	case *events.Disconnected:
@@ -32,61 +36,269 @@ func (c *Client) eventHandler(evt interface{}) {
 	}
 }
 
-// computeCanonicalJID returns the first non-nil JID value (PN takes precedence)
-func computeCanonicalJID(pn, lid *string) string {
-	if pn != nil {
-		return *pn
+// normalizeJID converts any JID to canonical string format
+// groups/broadcasts/newsletters return as-is
+// user JIDs are normalized to non-AD format
+func (c *Client) normalizeJID(jid types.JID) string {
+	if jid.IsEmpty() {
+		return ""
 	}
-	if lid != nil {
-		return *lid
+
+	// groups, broadcasts, and newsletters don't have PN/LID variations
+	if jid.Server == "g.us" || jid.Server == "broadcast" || jid.Server == "newsletter" {
+		return jid.String()
 	}
+
+	// for user JIDs, normalize to non-AD format
+	// this handles both PN (@s.whatsapp.net) and LID (@lid) formats
+	return jid.ToNonAD().String()
+}
+
+// messageData holds parsed message information for processing
+type messageData struct {
+	MessageID   string
+	ChatJID     types.JID
+	SenderJID   types.JID
+	Text        string
+	Timestamp   time.Time
+	IsFromMe    bool
+	MessageType string
+	PushName    string // sender's WhatsApp display name from message
+	IsGroup     bool
+}
+
+// fetches group info with database caching to avoid excessive API calls
+func (c *Client) getGroupInfoCached(ctx context.Context, groupJID types.JID) (string, error) {
+	// try to load from database first
+	chatJID := c.normalizeJID(groupJID)
+	existingChat, err := c.store.GetChatByJID(chatJID)
+	if err == nil && existingChat != nil && existingChat.PushName != "" {
+		// use cached name
+		c.log.Debugf("Using cached group name for %s: %s", groupJID, existingChat.PushName)
+		return existingChat.PushName, nil
+	}
+
+	// fetch from API if not cached or empty
+	groupInfo, err := c.wa.GetGroupInfo(ctx, groupJID)
+	if err != nil {
+		return "", err
+	}
+
+	return groupInfo.Name, nil
+}
+
+// gets sender's WhatsApp display name with fallbacks
+// priority: PushName from message > Contact store (for groups only)
+func (c *Client) getSenderPushName(ctx context.Context, senderJID types.JID, messagePushName string, isGroup bool, isFromMe bool) string {
+	if isFromMe {
+		return ""
+	}
+
+	if messagePushName != "" {
+		return messagePushName
+	}
+
+	// for group messages, try contact store as fallback
+	if isGroup && c.wa.Store.Contacts != nil {
+		contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, senderJID)
+		if err == nil && contactInfo.Found {
+			// priority: PushName > FullName > BusinessName
+			if contactInfo.PushName != "" {
+				return contactInfo.PushName
+			} else if contactInfo.FullName != "" {
+				return contactInfo.FullName
+			} else if contactInfo.BusinessName != "" {
+				return contactInfo.BusinessName
+			}
+		}
+	}
+
 	return ""
 }
 
-// extractJIDPair extracts both PN and LID representations from JID objects
-// returns (pnPtr, lidPtr) for storage
-// for groups (@g.us), stores group JID in PN column, LID as nil
-// ALWAYS returns at least one non-nil value to satisfy CHECK constraint
-func (c *Client) extractJIDPair(canonical types.JID, alternative types.JID) (*string, *string) {
-	canonicalStr := canonical.String()
-
-	// groups don't have PN/LID variations - store group JID as PN
-	if canonical.Server == "g.us" || canonical.Server == "broadcast" {
-		groupJID := canonicalStr
-		return &groupJID, nil
+// gets chat display names (both push name and contact name for DMs)
+func (c *Client) getChatInfo(ctx context.Context, chatJID types.JID, isGroup bool, messagePushName string) (pushName string, contactName string) {
+	if isGroup {
+		// for groups, fetch group name (with caching)
+		groupName, err := c.getGroupInfoCached(ctx, chatJID)
+		if err != nil {
+			c.log.Debugf("Failed to get group info for %s: %v", chatJID, err)
+			return "", ""
+		}
+		return groupName, ""
 	}
 
-	var pnJID, lidJID *string
-
-	if strings.HasSuffix(canonicalStr, "@s.whatsapp.net") {
-		// canonical is PN format
-		pn := canonicalStr
-		pnJID = &pn
-		if alternative.User != "" {
-			lid := alternative.String()
-			lidJID = &lid
+	// for DMs, get contact name from contact store
+	if c.wa.Store.Contacts != nil {
+		contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, chatJID)
+		if err == nil && contactInfo.Found {
+			// priority: FullName (saved contact) > FirstName > BusinessName
+			if contactInfo.FullName != "" {
+				contactName = contactInfo.FullName
+			} else if contactInfo.FirstName != "" {
+				contactName = contactInfo.FirstName
+			} else if contactInfo.BusinessName != "" {
+				contactName = contactInfo.BusinessName
+			}
 		}
-	} else if strings.HasSuffix(canonicalStr, "@lid") {
-		// canonical is LID format
-		lid := canonicalStr
-		lidJID = &lid
-		if alternative.User != "" {
-			pn := alternative.String()
-			pnJID = &pn
-		}
-	} else if canonicalStr != "" {
-		// for unknown formats (newsletters, status, etc), store in PN column as fallback
-		// this ensures at least one JID is non-nil to satisfy CHECK constraint
-		fallback := canonicalStr
-		pnJID = &fallback
 	}
 
-	return pnJID, lidJID
+	// for DMs, push name comes from the message (if not from me)
+	if messagePushName != "" {
+		pushName = messagePushName
+	}
+
+	return pushName, contactName
+}
+
+// handles the common logic for saving messages and chats
+// returns error if save fails
+func (c *Client) processMessageData(ctx context.Context, data messageData) error {
+	// normalize JIDs to canonical format
+	chatJID := c.normalizeJID(data.ChatJID)
+	senderJID := c.normalizeJID(data.SenderJID)
+
+	// get chat info (group name or DM contact/push names)
+	chatPushName, chatContactName := c.getChatInfo(ctx, data.ChatJID, data.IsGroup, data.PushName)
+
+	// save/update chat BEFORE message (for foreign key constraint)
+	chat := storage.Chat{
+		JID:             chatJID,
+		PushName:        chatPushName,
+		ContactName:     chatContactName,
+		LastMessageTime: data.Timestamp,
+		IsGroup:         data.IsGroup,
+	}
+
+	if err := c.store.SaveChat(chat); err != nil {
+		c.log.Errorf("Failed to save chat %s: %v", chatJID, err)
+		return err
+	}
+
+	// save message
+	msg := storage.Message{
+		ID:          data.MessageID,
+		ChatJID:     chatJID,
+		SenderJID:   senderJID,
+		Text:        data.Text,
+		Timestamp:   data.Timestamp,
+		IsFromMe:    data.IsFromMe,
+		MessageType: data.MessageType,
+	}
+
+	if err := c.store.SaveMessage(msg); err != nil {
+		c.log.Errorf("Failed to save message %s in chat %s: %v",
+			data.MessageID, chatJID, err)
+		return err
+	}
+
+	// get and save sender push name
+	senderPushName := c.getSenderPushName(ctx, data.SenderJID, data.PushName, data.IsGroup, data.IsFromMe)
+	if senderPushName != "" {
+		pushNames := map[string]string{data.SenderJID.String(): senderPushName}
+		if err := c.store.SavePushNames(pushNames); err != nil {
+			c.log.Debugf("Failed to save push name for %s: %v", data.SenderJID, err)
+		}
+	}
+
+	c.log.Infof("Saved message %s from %s (IsFromMe=%v, Type=%s)",
+		data.MessageID, data.SenderJID, data.IsFromMe, data.MessageType)
+
+	return nil
+}
+
+// parses a WebMessageInfo from history sync into messageData
+// returns nil if message cannot be parsed
+func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInfo, pushNameMap map[string]string) *messageData {
+	// try ParseWebMessage first
+	parsedMsg, parseErr := c.wa.ParseWebMessage(chatJID, msg)
+	if parseErr == nil {
+		// successfully parsed - use the parsed info
+		info := parsedMsg.Info
+
+		// get push name from parsed message or pushNameMap
+		pushName := info.PushName
+		if pushName == "" {
+			pushName = pushNameMap[info.Sender.String()]
+		}
+
+		text := extractText(msg.GetMessage())
+		if text == "" {
+			text = "[Media or unknown]"
+		}
+
+		return &messageData{
+			MessageID:   info.ID,
+			ChatJID:     chatJID,
+			SenderJID:   info.Sender,
+			Text:        text,
+			Timestamp:   info.Timestamp,
+			IsFromMe:    info.IsFromMe,
+			MessageType: getMessageType(msg.GetMessage()),
+			PushName:    pushName,
+			IsGroup:     chatJID.Server == "g.us",
+		}
+	}
+
+	// fallback to manual parsing
+	key := msg.GetKey()
+	if key == nil {
+		return nil
+	}
+
+	messageID := key.GetID()
+	fromMe := key.GetFromMe()
+	timestamp := time.Unix(int64(msg.GetMessageTimestamp()), 0)
+
+	// determine sender JID
+	var senderJID types.JID
+	if fromMe {
+		senderJID = *c.wa.Store.ID
+	} else if key.GetParticipant() != "" {
+		var err error
+		senderJID, err = types.ParseJID(key.GetParticipant())
+		if err != nil {
+			c.log.Debugf("Failed to parse participant JID: %v", err)
+			return nil
+		}
+	} else {
+		// DM
+		var err error
+		senderJID, err = types.ParseJID(key.GetRemoteJID())
+		if err != nil {
+			c.log.Debugf("Failed to parse remote JID: %v", err)
+			return nil
+		}
+	}
+
+	// get push name from WebMessageInfo or from pushNameMap
+	pushName := msg.GetPushName()
+	if pushName == "" {
+		pushName = pushNameMap[senderJID.String()]
+	}
+
+	text := extractText(msg.GetMessage())
+	if text == "" {
+		text = "[Media or unknown]"
+	}
+
+	return &messageData{
+		MessageID:   messageID,
+		ChatJID:     chatJID,
+		SenderJID:   senderJID,
+		Text:        text,
+		Timestamp:   timestamp,
+		IsFromMe:    fromMe,
+		MessageType: getMessageType(msg.GetMessage()),
+		PushName:    pushName,
+		IsGroup:     chatJID.Server == "g.us",
+	}
 }
 
 // process incoming messages
 func (c *Client) handleMessage(evt *events.Message) {
 	info := evt.Info
+	ctx := context.Background()
 
 	c.log.Debugf("Received message: %s from %s in %s",
 		info.ID, info.Sender, info.Chat)
@@ -106,114 +318,31 @@ func (c *Client) handleMessage(evt *events.Message) {
 		}
 	}
 
-	msgType := getMessageType(evt.Message)
-
-	// extract sender JID with alternatives using Info.SenderAlt
-	senderPN, senderLID := c.extractJIDPair(info.Sender, info.SenderAlt)
-
-	// extract chat JID with alternatives
-	// for DMs (not groups), get alternative JID from store
-	ctx := context.Background()
-	var chatAltJID types.JID
-	if info.Chat.Server != "g.us" {
-		var err error
-		chatAltJID, err = c.wa.Store.GetAltJID(ctx, info.Chat)
-		if err != nil {
-			c.log.Debugf("No alt JID for chat %s: %v", info.Chat, err)
-		}
-	}
-	chatPN, chatLID := c.extractJIDPair(info.Chat, chatAltJID)
-
-	// save/update chat BEFORE saving message (for foreign key constraint)
-	isGroup := info.Chat.Server == "g.us"
-	var pushName, contactName string
-
-	if isGroup {
-		// for groups, fetch group info to get the name
-		ctx := context.Background()
-		groupInfo, err := c.wa.GetGroupInfo(ctx, info.Chat)
-		if err != nil {
-			c.log.Debugf("Failed to get group info for %s: %v", info.Chat, err)
-		} else {
-			pushName = groupInfo.Name
-		}
-	} else {
-		// for DMs, capture push name from message
-		if info.PushName != "" && !info.IsFromMe {
-			pushName = info.PushName
-		}
-
-		// get ACTUAL saved contact name from contact store
-		ctx := context.Background()
-		contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, info.Chat)
-		if err == nil {
-			// Priority: FullName (saved contact) > FirstName > BusinessName
-			// NEVER use PushName here - that's the WhatsApp display name!
-			if contactInfo.FullName != "" {
-				contactName = contactInfo.FullName
-			} else if contactInfo.FirstName != "" {
-				contactName = contactInfo.FirstName
-			} else if contactInfo.BusinessName != "" {
-				contactName = contactInfo.BusinessName
-			}
-		}
+	data := messageData{
+		MessageID:   info.ID,
+		ChatJID:     info.Chat,
+		SenderJID:   info.Sender,
+		Text:        text,
+		Timestamp:   info.Timestamp,
+		IsFromMe:    info.IsFromMe,
+		MessageType: getMessageType(evt.Message),
+		PushName:    info.PushName,
+		IsGroup:     info.Chat.Server == "g.us",
 	}
 
-	chat := storage.Chat{
-		JIDPN:           chatPN,
-		JIDLID:          chatLID,
-		PushName:        pushName,
-		ContactName:     contactName,
-		LastMessageTime: info.Timestamp,
-		IsGroup:         isGroup,
-	}
-
-	if err := c.store.SaveChat(chat); err != nil {
-		c.log.Errorf("Failed to save chat %s (PN=%v, LID=%v, IsFromMe=%v): %v",
-			info.Chat, chatPN, chatLID, info.IsFromMe, err)
+	if err := c.processMessageData(ctx, data); err != nil {
 		return
 	}
-
-	msg := storage.Message{
-		ID:           info.ID,
-		ChatJIDPN:    chatPN,
-		ChatJIDLID:   chatLID,
-		SenderJIDPN:  senderPN,
-		SenderJIDLID: senderLID,
-		Text:         text,
-		Timestamp:    info.Timestamp,
-		IsFromMe:     info.IsFromMe,
-		MessageType:  msgType,
-	}
-
-	if err := c.store.SaveMessage(msg); err != nil {
-		computedChatJID := computeCanonicalJID(chatPN, chatLID)
-		c.log.Errorf("Failed to save message %s in chat %s: %v (ChatJID computed as: %s)",
-			info.ID, info.Chat, err, computedChatJID)
-		return
-	}
-
-	// save push name to database if available
-	if info.PushName != "" && !info.IsFromMe {
-		pushNames := map[string]string{info.Sender.String(): info.PushName}
-		if err := c.store.SavePushNames(pushNames); err != nil {
-			c.log.Debugf("Failed to save push name for %s: %v", info.Sender, err)
-		}
-	}
-
-	c.log.Infof("Saved message %s from %s (IsFromMe=%v, Type=%s)",
-		info.ID, info.Sender, info.IsFromMe, msgType)
 }
 
-// handle group info updates (name, topic, settings changes)
+// handles group info updates (name, topic, settings changes)
 func (c *Client) handleGroupInfo(evt *events.GroupInfo) {
 	// update group name if changed
 	if evt.Name != nil {
-		groupPN, groupLID := c.extractJIDPair(evt.JID, types.EmptyJID)
+		groupJID := c.normalizeJID(evt.JID)
 
 		chat := storage.Chat{
-			JIDPN:           groupPN,
-			JIDLID:          groupLID,
+			JID:             groupJID,
 			PushName:        evt.Name.Name, // group name goes in PushName
 			LastMessageTime: evt.Timestamp,
 			IsGroup:         true,
@@ -228,12 +357,26 @@ func (c *Client) handleGroupInfo(evt *events.GroupInfo) {
 	}
 }
 
+// handles contact info updates from app state sync
+func (c *Client) handleContact(evt *events.Contact) {
+	c.log.Debugf("Contact info updated: %s (FullName: %s, FirstName: %s)",
+		evt.JID, evt.Action.GetFullName(), evt.Action.GetFirstName())
+	// contact info is automatically stored by whatsmeow in the contact store
+	// no additional action needed - getChatInfo() will retrieve it
+}
+
+// handles push name updates
+func (c *Client) handlePushName(evt *events.PushName) {
+	c.log.Debugf("Push name updated: %s -> %s", evt.JID, evt.NewPushName)
+	// push name is automatically stored by whatsmeow in the contact store
+	// no additional action needed - getChatInfo() will retrieve it
+}
+
 func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	c.log.Infof("Starting history sync: %d conversations to process", len(evt.Data.GetConversations()))
 
 	ctx := context.Background()
 
-	// load existing push names from database
 	pushNameMap, err := c.store.LoadAllPushNames()
 	if err != nil {
 		c.log.Errorf("Failed to load existing push names: %v", err)
@@ -267,63 +410,15 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	additionalPushNames := make(map[string]string) // collect push names from messages
 
 	for idx, conv := range evt.Data.GetConversations() {
-		chatJIDObject, err := types.ParseJID(conv.GetID())
+		chatJID, err := types.ParseJID(conv.GetID())
 		if err != nil {
 			c.log.Errorf("Failed to parse JID: %v", err)
 			continue
 		}
 
-		// get alternative JID for chat (if not a group)
-		var chatAltJID types.JID
-		if chatJIDObject.Server != "g.us" {
-			chatAltJID, err = c.wa.Store.GetAltJID(ctx, chatJIDObject)
-			if err != nil {
-				c.log.Debugf("No alt JID for chat %s: %v", chatJIDObject, err)
-			}
-		}
-
-		chatPN, chatLID := c.extractJIDPair(chatJIDObject, chatAltJID)
-		isGroup := chatJIDObject.Server == "g.us"
-
-		// fetch group name if this is a group
-		var groupName string
-		if isGroup {
-			groupInfo, err := c.wa.GetGroupInfo(ctx, chatJIDObject)
-			if err != nil {
-				c.log.Debugf("Failed to get group info for %s: %v", chatJIDObject, err)
-			} else {
-				groupName = groupInfo.Name
-			}
-		}
-
-		// For DMs, get both contact name AND push name for the chat
-		var dmContactName, dmPushName string
-		if !isGroup {
-			contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, chatJIDObject)
-			if err == nil {
-				// Contact name: FullName (saved contact) > FirstName > BusinessName
-				if contactInfo.FullName != "" {
-					dmContactName = contactInfo.FullName
-				} else if contactInfo.FirstName != "" {
-					dmContactName = contactInfo.FirstName
-				} else if contactInfo.BusinessName != "" {
-					dmContactName = contactInfo.BusinessName
-				}
-			}
-
-			// Push name: from pushNameMap (WhatsApp display name)
-			if pushName := pushNameMap[chatJIDObject.String()]; pushName != "" {
-				dmPushName = pushName
-			}
-
-			if dmContactName != "" || dmPushName != "" {
-				c.log.Infof("Found DM names - contact: %s, push: %s", dmContactName, dmPushName)
-			}
-		}
-
 		c.log.Infof("Processing chat [%d/%d]: %s (%d messages)",
 			idx+1, len(evt.Data.GetConversations()),
-			chatJIDObject.String(), len(conv.GetMessages()))
+			chatJID.String(), len(conv.GetMessages()))
 
 		for _, histMsg := range conv.GetMessages() {
 			msg := histMsg.GetMessage()
@@ -331,279 +426,58 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				continue
 			}
 
-			// use ParseWebMessage to properly extract message info including PushName
-			parsedMsg, parseErr := c.wa.ParseWebMessage(chatJIDObject, msg)
-			if parseErr != nil {
-				c.log.Debugf("Failed to parse web message: %v", parseErr)
-				// Fallback to manual parsing if ParseWebMessage fails
-				key := msg.GetKey()
-				if key == nil {
-					continue
-				}
-
-				messageID := key.GetID()
-				fromMe := key.GetFromMe()
-				timestamp := time.Unix(int64(msg.GetMessageTimestamp()), 0)
-
-				// determine sender JID object
-				var senderJIDObject types.JID
-				if fromMe {
-					senderJIDObject = *c.wa.Store.ID
-				} else if key.GetParticipant() != "" {
-					senderJIDObject, parseErr = types.ParseJID(key.GetParticipant())
-					if parseErr != nil {
-						c.log.Debugf("Failed to parse participant JID: %v", parseErr)
-						continue
-					}
-				} else {
-					// DM
-					senderJIDObject, parseErr = types.ParseJID(key.GetRemoteJID())
-					if parseErr != nil {
-						c.log.Debugf("Failed to parse remote JID: %v", parseErr)
-						continue
-					}
-				}
-
-				// get alternative JID for sender
-				var senderAltJID types.JID
-				if senderJIDObject.Server != "g.us" {
-					senderAltJID, err = c.wa.Store.GetAltJID(ctx, senderJIDObject)
-					if err != nil {
-						c.log.Debugf("No alt JID for sender %s: %v", senderJIDObject, err)
-					}
-				}
-
-				senderPN, senderLID := c.extractJIDPair(senderJIDObject, senderAltJID)
-
-				// get push name from WebMessageInfo or from pushNameMap
-				// This is the sender's WhatsApp display name
-				senderName := msg.GetPushName()
-				if senderName == "" {
-					senderName = pushNameMap[senderJIDObject.String()]
-				}
-
-				// collect push names to save to database
-				if senderName != "" && !fromMe {
-					additionalPushNames[senderJIDObject.String()] = senderName
-				}
-
-				// For group messages, look up individual sender contact if needed
-				// For DMs, don't contaminate senderName with contact store data
-				if senderName == "" && isGroup {
-					contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, senderJIDObject)
-					if err == nil {
-						if contactInfo.PushName != "" {
-							senderName = contactInfo.PushName
-						} else if contactInfo.BusinessName != "" {
-							senderName = contactInfo.BusinessName
-						} else if contactInfo.FullName != "" {
-							senderName = contactInfo.FullName
-						}
-					}
-				}
-
-				// track ALL chats (for foreign key constraint)
-				chatKey := computeCanonicalJID(chatPN, chatLID)
-
-				if chatKey != "" {
-					// check if chat already exists in map
-					existingChat, exists := chatMap[chatKey]
-					if exists {
-						// update last message time if this message is newer
-						if timestamp.After(existingChat.LastMessageTime) {
-							existingChat.LastMessageTime = timestamp
-						}
-						// update names if we have them and existing doesn't
-						if isGroup && groupName != "" && existingChat.PushName == "" {
-							existingChat.PushName = groupName
-						} else if !isGroup {
-							// Update contact name from contact store
-							if dmContactName != "" && existingChat.ContactName == "" {
-								existingChat.ContactName = dmContactName
-								c.log.Infof("Fallback: Updated DM contact name: %s -> %s", chatKey, dmContactName)
-							}
-							// Update push name from conversation-level lookup
-							if dmPushName != "" && existingChat.PushName == "" {
-								existingChat.PushName = dmPushName
-								c.log.Infof("Fallback: Updated DM push name from conv: %s -> %s", chatKey, dmPushName)
-							} else if senderName != "" && !fromMe && existingChat.PushName == "" {
-								// Fallback to message-level if conversation-level not available
-								existingChat.PushName = senderName
-								c.log.Infof("Fallback: Updated DM push name from msg: %s -> %s", chatKey, senderName)
-							}
-						}
-					} else {
-						// create new chat entry
-						var pushNameVal, contactNameVal string
-						if isGroup {
-							// use group name fetched from API
-							pushNameVal = groupName
-						} else {
-							// For DMs: use conversation-level names
-							contactNameVal = dmContactName
-							pushNameVal = dmPushName
-							// Fallback: try to get push name from this message if not set
-							if pushNameVal == "" && senderName != "" && !fromMe {
-								pushNameVal = senderName
-							}
-							if contactNameVal != "" || pushNameVal != "" {
-								c.log.Infof("Fallback: Creating new DM chat - contact: %s, push: %s", contactNameVal, pushNameVal)
-							}
-						}
-						chatMap[chatKey] = &storage.Chat{
-							JIDPN:           chatPN,
-							JIDLID:          chatLID,
-							PushName:        pushNameVal,
-							ContactName:     contactNameVal,
-							LastMessageTime: timestamp,
-							IsGroup:         isGroup,
-						}
-					}
-				}
-
-				text := extractText(msg.GetMessage())
-				if text == "" {
-					text = "[Media or unknown]"
-				}
-
-				msgType := getMessageType(msg.GetMessage())
-
-				allMessages = append(allMessages, storage.Message{
-					ID:           messageID,
-					ChatJIDPN:    chatPN,
-					ChatJIDLID:   chatLID,
-					SenderJIDPN:  senderPN,
-					SenderJIDLID: senderLID,
-					Text:         text,
-					Timestamp:    timestamp,
-					IsFromMe:     fromMe,
-					MessageType:  msgType,
-				})
+			// parse message using helper function
+			msgData := c.parseHistoryMessage(chatJID, msg, pushNameMap)
+			if msgData == nil {
+				c.log.Debugf("Failed to parse message, skipping")
 				continue
 			}
 
-			// Successfully parsed with ParseWebMessage - use the parsed info
-			info := parsedMsg.Info
-			messageID := info.ID
-			timestamp := info.Timestamp
-			fromMe := info.IsFromMe
-			senderJIDObject := info.Sender
+			// normalize JIDs to canonical format
+			normalizedChatJID := c.normalizeJID(msgData.ChatJID)
+			normalizedSenderJID := c.normalizeJID(msgData.SenderJID)
 
-			// get alternative JID for sender
-			var senderAltJID types.JID
-			if senderJIDObject.Server != "g.us" {
-				senderAltJID, err = c.wa.Store.GetAltJID(ctx, senderJIDObject)
-				if err != nil {
-					c.log.Debugf("No alt JID for sender %s: %v", senderJIDObject, err)
-				}
+			// collect push name for later saving
+			if msgData.PushName != "" && !msgData.IsFromMe {
+				additionalPushNames[msgData.SenderJID.String()] = msgData.PushName
 			}
 
-			senderPN, senderLID := c.extractJIDPair(senderJIDObject, senderAltJID)
-
-			// Use PushName from parsed message
-			// This is the sender's WhatsApp display name
-			senderName := info.PushName
-			if senderName == "" {
-				senderName = pushNameMap[senderJIDObject.String()]
+			// get enhanced sender push name (with contact fallback for groups)
+			senderPushName := c.getSenderPushName(ctx, msgData.SenderJID, msgData.PushName, msgData.IsGroup, msgData.IsFromMe)
+			if senderPushName != "" && !msgData.IsFromMe {
+				additionalPushNames[msgData.SenderJID.String()] = senderPushName
 			}
 
-			// collect push names to save to database
-			if senderName != "" && !fromMe {
-				additionalPushNames[senderJIDObject.String()] = senderName
-			}
-
-			// For group messages, look up individual sender contact if needed
-			// For DMs, don't contaminate senderName with contact store data
-			if senderName == "" && isGroup {
-				contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, senderJIDObject)
-				if err == nil {
-					if contactInfo.PushName != "" {
-						senderName = contactInfo.PushName
-					} else if contactInfo.BusinessName != "" {
-						senderName = contactInfo.BusinessName
-					} else if contactInfo.FullName != "" {
-						senderName = contactInfo.FullName
-					}
-				}
-			}
-
-			// track ALL chats (for foreign key constraint)
-			chatKey := computeCanonicalJID(chatPN, chatLID)
-
-			if chatKey != "" {
-				// check if chat already exists in map
-				existingChat, exists := chatMap[chatKey]
+			// track chat for batch saving
+			if normalizedChatJID != "" {
+				existingChat, exists := chatMap[normalizedChatJID]
 				if exists {
-					// update last message time if this message is newer
-					if timestamp.After(existingChat.LastMessageTime) {
-						existingChat.LastMessageTime = timestamp
-					}
-					// update names if we have them and existing doesn't
-					if isGroup && groupName != "" && existingChat.PushName == "" {
-						existingChat.PushName = groupName
-						c.log.Infof("Updated group chat name: %s -> %s", chatKey, groupName)
-					} else if !isGroup {
-						// update contact name from contact store
-						if dmContactName != "" && existingChat.ContactName == "" {
-							existingChat.ContactName = dmContactName
-							c.log.Infof("Updated DM contact name: %s -> %s", chatKey, dmContactName)
-						}
-						// Update push name from conversation-level lookup
-						if dmPushName != "" && existingChat.PushName == "" {
-							existingChat.PushName = dmPushName
-							c.log.Infof("Updated DM push name from conv: %s -> %s", chatKey, dmPushName)
-						} else if senderName != "" && !fromMe && existingChat.PushName == "" {
-							// Fallback to message-level if conversation-level not available
-							existingChat.PushName = senderName
-							c.log.Infof("Updated DM push name from msg: %s -> %s", chatKey, senderName)
-						}
+					// update last message time if newer
+					if msgData.Timestamp.After(existingChat.LastMessageTime) {
+						existingChat.LastMessageTime = msgData.Timestamp
 					}
 				} else {
-					// create new chat entry
-					var pushNameVal, contactNameVal string
-					if isGroup {
-						// use group name fetched from API
-						pushNameVal = groupName
-					} else {
-						// For DMs: use conversation-level names
-						contactNameVal = dmContactName
-						pushNameVal = dmPushName
-						// Fallback: try to get push name from this message if not set
-						if pushNameVal == "" && senderName != "" && !fromMe {
-							pushNameVal = senderName
-						}
-						if contactNameVal != "" || pushNameVal != "" {
-							c.log.Infof("Creating new DM chat - contact: %s, push: %s", contactNameVal, pushNameVal)
-						}
-					}
-					chatMap[chatKey] = &storage.Chat{
-						JIDPN:           chatPN,
-						JIDLID:          chatLID,
-						PushName:        pushNameVal,
-						ContactName:     contactNameVal,
-						LastMessageTime: timestamp,
-						IsGroup:         isGroup,
+					// create new chat entry (will be saved in batch later)
+					chatPushName, chatContactName := c.getChatInfo(ctx, msgData.ChatJID, msgData.IsGroup, msgData.PushName)
+					chatMap[normalizedChatJID] = &storage.Chat{
+						JID:             normalizedChatJID,
+						PushName:        chatPushName,
+						ContactName:     chatContactName,
+						LastMessageTime: msgData.Timestamp,
+						IsGroup:         msgData.IsGroup,
 					}
 				}
 			}
 
-			text := extractText(msg.GetMessage())
-			if text == "" {
-				text = "[Media or unknown]"
-			}
-
-			msgType := getMessageType(msg.GetMessage())
-
+			// add message to batch
 			allMessages = append(allMessages, storage.Message{
-				ID:           messageID,
-				ChatJIDPN:    chatPN,
-				ChatJIDLID:   chatLID,
-				SenderJIDPN:  senderPN,
-				SenderJIDLID: senderLID,
-				Text:         text,
-				Timestamp:    timestamp,
-				IsFromMe:     fromMe,
-				MessageType:  msgType,
+				ID:          msgData.MessageID,
+				ChatJID:     normalizedChatJID,
+				SenderJID:   normalizedSenderJID,
+				Text:        msgData.Text,
+				Timestamp:   msgData.Timestamp,
+				IsFromMe:    msgData.IsFromMe,
+				MessageType: msgData.MessageType,
 			})
 		}
 	}
@@ -613,8 +487,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 		c.log.Infof("Updating %d chat names from history sync", len(chatMap))
 		for _, chat := range chatMap {
 			if err := c.store.SaveChat(*chat); err != nil {
-				c.log.Warnf("Failed to update chat (PN=%v, LID=%v): %v",
-					chat.JIDPN, chat.JIDLID, err)
+				c.log.Warnf("Failed to update chat %s: %v", chat.JID, err)
 			}
 		}
 	}
@@ -641,7 +514,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	}
 }
 
-func extractText(msg interface{}) string {
+func extractText(msg any) string {
 	if msg == nil {
 		return ""
 	}
@@ -704,7 +577,7 @@ func extractText(msg interface{}) string {
 	return ""
 }
 
-// getTypeFromMessage returns the high-level message type (text, media, reaction, poll)
+// returns the high-level message type (text, media, reaction, poll)
 // based on whatsmeow's internal implementation
 func getTypeFromMessage(msg *waE2E.Message) string {
 	if msg == nil {
@@ -735,7 +608,7 @@ func getTypeFromMessage(msg *waE2E.Message) string {
 	}
 }
 
-// getMediaTypeFromMessage returns the specific media type (image, video, audio, etc.)
+// returns the specific media type (image, video, audio, etc.)
 // based on whatsmeow's internal implementation
 func getMediaTypeFromMessage(msg *waE2E.Message) string {
 	if msg == nil {
@@ -792,8 +665,8 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
 	}
 }
 
-// getMessageType returns a user-friendly message type string
-// This wraps the whatsmeow-style functions for backward compatibility
+// returns a user-friendly message type string
+// this wraps the whatsmeow-style functions for backward compatibility
 func getMessageType(msg *waE2E.Message) string {
 	msgType := getTypeFromMessage(msg)
 
