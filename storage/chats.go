@@ -8,34 +8,29 @@ import (
 
 // represents a conversation
 type Chat struct {
-	JIDPN           *string // JID in PN format (nullable)
-	JIDLID          *string // JID in LID format (nullable)
-	JID             string  // canonical JID (auto-generated, read-only)
-	PushName        string  // Sender's WhatsApp display name (from PushName in messages)
-	ContactName     string  // Saved contact name (from WhatsApp contact store)
+	JID             string // canonical JID (required)
+	PushName        string // sender's WhatsApp display name (from PushName in messages)
+	ContactName     string // saved contact name (from WhatsApp contact store)
 	LastMessageTime time.Time
 	UnreadCount     int
 	IsGroup         bool
 }
 
-// findExistingChat checks if a chat already exists with either PN or LID format
-// returns the existing chat if found, nil otherwise
-func (s *MessageStore) findExistingChat(jidPN, jidLID string) (*Chat, error) {
+// retrieves a chat by its canonical JID
+// returns the chat if found, nil otherwise
+func (s *MessageStore) GetChatByJID(jid string) (*Chat, error) {
 	query := `
-	SELECT jid_pn, jid_lid, jid, push_name, contact_name, last_message_time, unread_count, is_group
+	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
 	FROM chats
-	WHERE jid_pn = ? OR jid_pn = ? OR jid_lid = ? OR jid_lid = ? OR jid = ? OR jid = ?
-	LIMIT 1
+	WHERE jid = ?
 	`
 
-	row := s.db.QueryRow(query, jidPN, jidLID, jidPN, jidLID, jidPN, jidLID)
+	row := s.db.QueryRow(query, jid)
 
 	var chat Chat
 	var lastMsgUnix int64
 
 	err := row.Scan(
-		&chat.JIDPN,
-		&chat.JIDLID,
 		&chat.JID,
 		&chat.PushName,
 		&chat.ContactName,
@@ -56,76 +51,26 @@ func (s *MessageStore) findExistingChat(jidPN, jidLID string) (*Chat, error) {
 	return &chat, nil
 }
 
-// saves/updates chat information with deduplication
+// saves/updates chat information
 func (s *MessageStore) SaveChat(chat Chat) error {
-	// check for existing chat in any format to avoid duplicates
-	pn := ""
-	if chat.JIDPN != nil {
-		pn = *chat.JIDPN
-	}
-	lid := ""
-	if chat.JIDLID != nil {
-		lid = *chat.JIDLID
-	}
-
-	// validate: at least one JID must be provided (CHECK constraint)
-	if chat.JIDPN == nil && chat.JIDLID == nil {
-		return fmt.Errorf("chat must have at least one JID (PN or LID)")
-	}
-
-	existing, err := s.findExistingChat(pn, lid)
-	if err != nil {
-		return err
-	}
-
-	// if found, merge with existing (prefer non-empty names)
-	if existing != nil {
-		// keep existing JID formats if they have them
-		if existing.JIDPN != nil && chat.JIDPN == nil {
-			chat.JIDPN = existing.JIDPN
-		}
-		if existing.JIDLID != nil && chat.JIDLID == nil {
-			chat.JIDLID = existing.JIDLID
-		}
-		// prefer non-empty names for both fields
-		if chat.PushName == "" && existing.PushName != "" {
-			chat.PushName = existing.PushName
-		}
-		if chat.ContactName == "" && existing.ContactName != "" {
-			chat.ContactName = existing.ContactName
-		}
-	}
-
-	// compute canonical JID (COALESCE of PN and LID)
-	canonicalJID := ""
-	if chat.JIDPN != nil {
-		canonicalJID = *chat.JIDPN
-	} else if chat.JIDLID != nil {
-		canonicalJID = *chat.JIDLID
-	}
-
-	// double-check: canonical JID must not be empty
-	if canonicalJID == "" {
-		return fmt.Errorf("canonical JID cannot be empty")
+	if chat.JID == "" {
+		return fmt.Errorf("chat JID cannot be empty")
 	}
 
 	query := `
-	INSERT INTO chats (jid, jid_pn, jid_lid, push_name, contact_name, last_message_time, unread_count, is_group)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO chats (jid, push_name, contact_name, last_message_time, unread_count, is_group)
+	VALUES (?, ?, ?, ?, ?, ?)
 	ON CONFLICT(jid) DO UPDATE SET
-	    jid_pn = COALESCE(excluded.jid_pn, chats.jid_pn),
-	    jid_lid = COALESCE(excluded.jid_lid, chats.jid_lid),
 	    push_name = COALESCE(NULLIF(excluded.push_name, ''), chats.push_name),
 	    contact_name = COALESCE(NULLIF(excluded.contact_name, ''), chats.contact_name),
 	    last_message_time = excluded.last_message_time,
+	    unread_count = excluded.unread_count,
 	    is_group = excluded.is_group
 	`
 
-	_, err = s.db.Exec(
+	_, err := s.db.Exec(
 		query,
-		canonicalJID,
-		chat.JIDPN,
-		chat.JIDLID,
+		chat.JID,
 		chat.PushName,
 		chat.ContactName,
 		chat.LastMessageTime.Unix(),
@@ -139,7 +84,7 @@ func (s *MessageStore) SaveChat(chat Chat) error {
 // return all chats ordered by last message timestamp
 func (s *MessageStore) ListChats(limit int) ([]Chat, error) {
 	query := `
-	SELECT jid_pn, jid_lid, jid, push_name, contact_name, last_message_time, unread_count, is_group
+	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
 	FROM chats
 	ORDER BY last_message_time DESC
 	LIMIT ?
@@ -157,8 +102,6 @@ func (s *MessageStore) ListChats(limit int) ([]Chat, error) {
 		var lastMsgUnix int64
 
 		err := rows.Scan(
-			&chat.JIDPN,
-			&chat.JIDLID,
 			&chat.JID,
 			&chat.PushName,
 			&chat.ContactName,
@@ -180,7 +123,7 @@ func (s *MessageStore) ListChats(limit int) ([]Chat, error) {
 // search chats by name or JID with fuzzy matching
 func (s *MessageStore) SearchChats(search string, limit int) ([]Chat, error) {
 	query := `
-	SELECT jid_pn, jid_lid, jid, push_name, contact_name, last_message_time, unread_count, is_group
+	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
 	FROM chats
 	WHERE push_name LIKE ? OR contact_name LIKE ? OR jid LIKE ?
 	ORDER BY last_message_time DESC
@@ -200,8 +143,6 @@ func (s *MessageStore) SearchChats(search string, limit int) ([]Chat, error) {
 		var lastMsgUnix int64
 
 		err := rows.Scan(
-			&chat.JIDPN,
-			&chat.JIDLID,
 			&chat.JID,
 			&chat.PushName,
 			&chat.ContactName,
