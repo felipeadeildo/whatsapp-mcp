@@ -236,6 +236,11 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 		text := extractText(msg.GetMessage())
 		if text == "" {
 			message := msg.GetMessage()
+			// skip nil messages (can happen with deleted or corrupted messages, idk TODO: check)
+			if message == nil {
+				c.log.Debugf("Skipping nil message in history")
+				return nil
+			}
 			if message.GetImageMessage() != nil {
 				text = "[Image]"
 			} else if message.GetVideoMessage() != nil {
@@ -244,6 +249,16 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 				text = "[Audio]"
 			} else if message.GetDocumentMessage() != nil {
 				text = "[Document]"
+			} else if message.GetStickerMessage() != nil {
+				text = "[Sticker]"
+			} else if message.GetContactMessage() != nil || message.GetContactsArrayMessage() != nil {
+				text = "[Contact]"
+			} else if message.GetLocationMessage() != nil || message.GetLiveLocationMessage() != nil {
+				text = "[Location]"
+			} else if message.GetReactionMessage() != nil || message.GetEncReactionMessage() != nil {
+				text = "[Reaction]"
+			} else if message.GetProtocolMessage() != nil {
+				text = "[Protocol]"
 			} else {
 				c.log.Warnf("unknown message type in history: %v", message)
 				text = "[Unknown message type]"
@@ -342,8 +357,18 @@ func (c *Client) handleMessage(evt *events.Message) {
 			text = "[Audio]"
 		} else if evt.Message.GetDocumentMessage() != nil {
 			text = "[Document]"
+		} else if evt.Message.GetStickerMessage() != nil {
+			text = "[Sticker]"
+		} else if evt.Message.GetContactMessage() != nil || evt.Message.GetContactsArrayMessage() != nil {
+			text = "[Contact]"
+		} else if evt.Message.GetLocationMessage() != nil || evt.Message.GetLiveLocationMessage() != nil {
+			text = "[Location]"
+		} else if evt.Message.GetReactionMessage() != nil || evt.Message.GetEncReactionMessage() != nil {
+			text = "[Reaction]"
+		} else if evt.Message.GetProtocolMessage() != nil {
+			text = "[Protocol]"
 		} else {
-			// log the actual message for debugging unknown types
+			// log the actual message for debugging truly unknown types
 			c.log.Warnf("unknown message type: %v", evt.Message)
 			text = "[Unknown message type]"
 		}
