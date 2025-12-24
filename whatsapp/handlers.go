@@ -38,7 +38,7 @@ func (c *Client) eventHandler(evt interface{}) {
 
 // normalizeJID converts any JID to canonical string format
 // groups/broadcasts/newsletters return as-is
-// user JIDs are normalized to non-AD format
+// user JIDs: always prefer phone number (PN) format over LID to prevent duplicate contacts
 func (c *Client) normalizeJID(jid types.JID) string {
 	if jid.IsEmpty() {
 		return ""
@@ -49,8 +49,19 @@ func (c *Client) normalizeJID(jid types.JID) string {
 		return jid.String()
 	}
 
-	// for user JIDs, normalize to non-AD format
-	// this handles both PN (@s.whatsapp.net) and LID (@lid) formats
+	// for LID JIDs (@lid), try to convert to phone number (PN) format
+	// this prevents duplicate contacts for the same person
+	if jid.Server == "lid" {
+		ctx := context.Background()
+		pnJID, err := c.wa.Store.LIDs.GetPNForLID(ctx, jid)
+		if err == nil && !pnJID.IsEmpty() {
+			// successfully converted LID to PN, use PN instead
+			jid = pnJID
+		}
+		// if conversion fails, fall through to use LID
+	}
+
+	// normalize to non-AD format (removes companion device suffix)
 	return jid.ToNonAD().String()
 }
 
@@ -224,7 +235,19 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 
 		text := extractText(msg.GetMessage())
 		if text == "" {
-			text = "[Media or unknown]"
+			message := msg.GetMessage()
+			if message.GetImageMessage() != nil {
+				text = "[Image]"
+			} else if message.GetVideoMessage() != nil {
+				text = "[Video]"
+			} else if message.GetAudioMessage() != nil {
+				text = "[Audio]"
+			} else if message.GetDocumentMessage() != nil {
+				text = "[Document]"
+			} else {
+				c.log.Warnf("unknown message type in history: %v", message)
+				text = "[Unknown message type]"
+			}
 		}
 
 		return &messageData{
@@ -320,6 +343,8 @@ func (c *Client) handleMessage(evt *events.Message) {
 		} else if evt.Message.GetDocumentMessage() != nil {
 			text = "[Document]"
 		} else {
+			// log the actual message for debugging unknown types
+			c.log.Warnf("unknown message type: %v", evt.Message)
 			text = "[Unknown message type]"
 		}
 	}
