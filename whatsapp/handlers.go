@@ -336,6 +336,12 @@ func (c *Client) handleMessage(evt *events.Message) {
 		IsGroup:     info.Chat.Server == "g.us",
 	}
 
+	// skip saving poll-related messages
+	if data.MessageType == "poll" {
+		c.log.Debugf("Skipping poll message (not implemented)")
+		return
+	}
+
 	if err := c.processMessageData(ctx, data); err != nil {
 		return
 	}
@@ -441,6 +447,11 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			msgData := c.parseHistoryMessage(chatJID, msg, pushNameMap)
 			if msgData == nil {
 				c.log.Debugf("Failed to parse message, skipping")
+				continue
+			}
+
+			// skip saving poll-related messages
+			if msgData.MessageType == "poll" {
 				continue
 			}
 
@@ -608,7 +619,8 @@ func (c *Client) getTypeFromMessage(msg *waE2E.Message) string {
 		return c.getTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
 	case msg.ReactionMessage != nil, msg.EncReactionMessage != nil:
 		return "reaction"
-	case msg.PollCreationMessage != nil, msg.PollUpdateMessage != nil:
+	// TODO: implement poll parse and poll update message events
+	case msg.PollCreationMessage != nil, msg.PollCreationMessageV3 != nil, msg.PollUpdateMessage != nil:
 		return "poll"
 	case getMediaTypeFromMessage(msg) != "":
 		return "media"
