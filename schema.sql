@@ -13,8 +13,6 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_jid TEXT GENERATED ALWAYS AS (COALESCE(sender_jid_pn, sender_jid_lid)) STORED,
 
     -- Message data
-    -- Note: sender names are retrieved via JOIN with push_names and chats tables
-    -- This ensures we always show current names and eliminates data duplication
     text TEXT, -- Text content (null for media)
     timestamp INTEGER NOT NULL, -- Unix timestamp
     is_from_me BOOLEAN NOT NULL, -- true if I sent it

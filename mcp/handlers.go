@@ -49,7 +49,7 @@ func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolReq
 
 	// format response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d chats:\n\n", len(chats)))
+	fmt.Fprintf(&result, "Found %d chats:\n\n", len(chats))
 
 	for i, chat := range chats {
 		chatType := "DM"
@@ -59,14 +59,14 @@ func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolReq
 
 		jid := chat.JID
 		displayName := getDisplayName(chat)
-		result.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, chatType, displayName))
-		result.WriteString(fmt.Sprintf("   JID: %s\n", jid))
+		fmt.Fprintf(&result, "%d. [%s] %s\n", i+1, chatType, displayName)
+		fmt.Fprintf(&result, "   JID: %s\n", jid)
 		if chat.ContactName != "" && chat.PushName != "" && chat.ContactName != chat.PushName {
-			result.WriteString(fmt.Sprintf("   (Contact: %s, Push: %s)\n", chat.ContactName, chat.PushName))
+			fmt.Fprintf(&result, "   (Contact: %s, Push: %s)\n", chat.ContactName, chat.PushName)
 		}
-		result.WriteString(fmt.Sprintf("   Last message: %s\n", chat.LastMessageTime.Format("2006-01-02 15:04:05")))
+		fmt.Fprintf(&result, "   Last message: %s\n", chat.LastMessageTime.Format("2006-01-02 15:04:05"))
 		if chat.UnreadCount > 0 {
-			result.WriteString(fmt.Sprintf("   Unread: %d\n", chat.UnreadCount))
+			fmt.Fprintf(&result, "   Unread: %d\n", chat.UnreadCount)
 		}
 		result.WriteString("\n")
 	}
@@ -97,7 +97,7 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 
 	// format response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Retrieved %d messages from chat %s:\n\n", len(messages), chatJID))
+	fmt.Fprintf(&result, "Retrieved %d messages from chat %s:\n\n", len(messages), chatJID)
 
 	for i := len(messages) - 1; i >= 0; i-- { // reverse to show oldest first
 		msg := messages[i]
@@ -109,12 +109,11 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 			sender = "You"
 		}
 
-		result.WriteString(fmt.Sprintf("[%s] %s %s: %s\n",
+		fmt.Fprintf(&result, "[%s] %s %s: %s\n",
 			msg.Timestamp.Format("15:04:05"),
 			direction,
 			sender,
-			msg.Text,
-		))
+			msg.Text)
 	}
 
 	return mcp.NewToolResultText(result.String()), nil
@@ -141,7 +140,7 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 
 	// format response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d messages matching '%s':\n\n", len(messages), query))
+	fmt.Fprintf(&result, "Found %d messages matching '%s':\n\n", len(messages), query)
 
 	for i, msg := range messages {
 		sender := getSenderDisplayName(msg)
@@ -150,12 +149,11 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 			sender = "You"
 		}
 
-		result.WriteString(fmt.Sprintf("%d. [%s] %s in chat %s:\n",
+		fmt.Fprintf(&result, "%d. [%s] %s in chat %s:\n",
 			i+1,
 			msg.Timestamp.Format("2006-01-02 15:04"),
 			sender,
-			msg.ChatJID,
-		))
+			msg.ChatJID)
 		result.WriteString(fmt.Sprintf("   %s\n\n", msg.Text))
 	}
 
@@ -177,7 +175,7 @@ func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequ
 
 	// format response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d matching chats:\n\n", len(chats)))
+	fmt.Fprintf(&result, "Found %d matching chats:\n\n", len(chats))
 
 	for i, chat := range chats {
 		chatType := "DM"
@@ -186,10 +184,10 @@ func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequ
 		}
 
 		displayName := getDisplayName(chat)
-		result.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, chatType, displayName))
-		result.WriteString(fmt.Sprintf("   JID: %s\n", chat.JID))
+		fmt.Fprintf(&result, "%d. [%s] %s\n", i+1, chatType, displayName)
+		fmt.Fprintf(&result, "   JID: %s\n", chat.JID)
 		if chat.ContactName != "" && chat.PushName != "" && chat.ContactName != chat.PushName {
-			result.WriteString(fmt.Sprintf("   (Contact: %s, Push: %s)\n", chat.ContactName, chat.PushName))
+			fmt.Fprintf(&result, "   (Contact: %s, Push: %s)\n", chat.ContactName, chat.PushName)
 		}
 		result.WriteString("\n")
 	}

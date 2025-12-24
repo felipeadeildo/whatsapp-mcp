@@ -185,7 +185,6 @@ func (c *Client) handleMessage(evt *events.Message) {
 		IsFromMe:     info.IsFromMe,
 		MessageType:  msgType,
 	}
-	// Note: push names are still captured and saved to push_names table below
 
 	if err := c.store.SaveMessage(msg); err != nil {
 		computedChatJID := computeCanonicalJID(chatPN, chatLID)
@@ -480,8 +479,6 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 					IsFromMe:     fromMe,
 					MessageType:  msgType,
 				})
-				// Note: senderName and msgSenderContactName are still captured
-				// and used to update push_names and chats tables
 				continue
 			}
 
@@ -608,8 +605,6 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				IsFromMe:     fromMe,
 				MessageType:  msgType,
 			})
-			// Note: senderName and msgSenderContactName are still captured
-			// and used to update push_names and chats tables
 		}
 	}
 

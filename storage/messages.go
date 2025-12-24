@@ -15,11 +15,10 @@ type Message struct {
 	SenderJIDPN  *string // Sender JID in PN format (nullable)
 	SenderJIDLID *string // Sender JID in LID format (nullable)
 	SenderJID    string  // Canonical JID auto-generated (read-only)
-	// Note: sender names removed - retrieve via JOIN with push_names and chats tables
-	Text        string
-	Timestamp   time.Time
-	IsFromMe    bool
-	MessageType string
+	Text         string
+	Timestamp    time.Time
+	IsFromMe     bool
+	MessageType  string
 }
 
 // represents a message with sender names (from view)
