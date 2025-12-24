@@ -234,7 +234,7 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 			Text:        text,
 			Timestamp:   info.Timestamp,
 			IsFromMe:    info.IsFromMe,
-			MessageType: getMessageType(msg.GetMessage()),
+			MessageType: c.getMessageType(msg.GetMessage()),
 			PushName:    pushName,
 			IsGroup:     chatJID.Server == "g.us",
 		}
@@ -289,7 +289,7 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 		Text:        text,
 		Timestamp:   timestamp,
 		IsFromMe:    fromMe,
-		MessageType: getMessageType(msg.GetMessage()),
+		MessageType: c.getMessageType(msg.GetMessage()),
 		PushName:    pushName,
 		IsGroup:     chatJID.Server == "g.us",
 	}
@@ -302,6 +302,12 @@ func (c *Client) handleMessage(evt *events.Message) {
 
 	c.log.Debugf("Received message: %s from %s in %s",
 		info.ID, info.Sender, info.Chat)
+
+	// skip internal protocol messages (encryption key distribution)
+	if evt.Message.GetSenderKeyDistributionMessage() != nil {
+		c.log.Debugf("Skipping sender key distribution message (internal protocol)")
+		return
+	}
 
 	text := extractText(evt.Message)
 	if text == "" {
@@ -325,7 +331,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 		Text:        text,
 		Timestamp:   info.Timestamp,
 		IsFromMe:    info.IsFromMe,
-		MessageType: getMessageType(evt.Message),
+		MessageType: c.getMessageType(evt.Message),
 		PushName:    info.PushName,
 		IsGroup:     info.Chat.Server == "g.us",
 	}
@@ -423,6 +429,11 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 		for _, histMsg := range conv.GetMessages() {
 			msg := histMsg.GetMessage()
 			if msg == nil {
+				continue
+			}
+
+			// skip internal protocol messages (encryption key distribution)
+			if msg.GetMessage().GetSenderKeyDistributionMessage() != nil {
 				continue
 			}
 
@@ -579,22 +590,22 @@ func extractText(msg any) string {
 
 // returns the high-level message type (text, media, reaction, poll)
 // based on whatsmeow's internal implementation
-func getTypeFromMessage(msg *waE2E.Message) string {
+func (c *Client) getTypeFromMessage(msg *waE2E.Message) string {
 	if msg == nil {
 		return "unknown"
 	}
 
 	switch {
 	case msg.ViewOnceMessage != nil:
-		return getTypeFromMessage(msg.ViewOnceMessage.Message)
+		return c.getTypeFromMessage(msg.ViewOnceMessage.Message)
 	case msg.ViewOnceMessageV2 != nil:
-		return getTypeFromMessage(msg.ViewOnceMessageV2.Message)
+		return c.getTypeFromMessage(msg.ViewOnceMessageV2.Message)
 	case msg.ViewOnceMessageV2Extension != nil:
-		return getTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
+		return c.getTypeFromMessage(msg.ViewOnceMessageV2Extension.Message)
 	case msg.EphemeralMessage != nil:
-		return getTypeFromMessage(msg.EphemeralMessage.Message)
+		return c.getTypeFromMessage(msg.EphemeralMessage.Message)
 	case msg.DocumentWithCaptionMessage != nil:
-		return getTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
+		return c.getTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
 	case msg.ReactionMessage != nil, msg.EncReactionMessage != nil:
 		return "reaction"
 	case msg.PollCreationMessage != nil, msg.PollUpdateMessage != nil:
@@ -604,6 +615,7 @@ func getTypeFromMessage(msg *waE2E.Message) string {
 	case msg.Conversation != nil, msg.ExtendedTextMessage != nil, msg.ProtocolMessage != nil:
 		return "text"
 	default:
+		c.log.Warnf("unknown message type: %v", msg)
 		return "unknown"
 	}
 }
@@ -667,8 +679,8 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
 
 // returns a user-friendly message type string
 // this wraps the whatsmeow-style functions for backward compatibility
-func getMessageType(msg *waE2E.Message) string {
-	msgType := getTypeFromMessage(msg)
+func (c *Client) getMessageType(msg *waE2E.Message) string {
+	msgType := c.getTypeFromMessage(msg)
 
 	// If it's media, return the specific media type
 	if msgType == "media" {
