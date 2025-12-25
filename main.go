@@ -15,8 +15,11 @@ import (
 	"whatsapp-mcp/storage"
 	"whatsapp-mcp/whatsapp"
 
+	_ "whatsapp-mcp/migrations" // Load migrations
+
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/mdp/qrterminal/v3"
+	"github.com/pressly/goose/v3"
 	"github.com/skip2/go-qrcode"
 )
 
@@ -46,7 +49,22 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to init DB:", err)
 	}
-	defer db.Close()
+
+	// Get underlying sql.DB for cleanup and migrations
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatal("Failed to get underlying DB:", err)
+	}
+	defer sqlDB.Close()
+
+	// Run database migrations
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		log.Fatal("Failed to set goose dialect:", err)
+	}
+	if err := goose.Up(sqlDB, "migrations"); err != nil {
+		log.Fatal("Failed to run migrations:", err)
+	}
+	log.Println("Database migrations completed")
 
 	store := storage.NewMessageStore(db)
 	log.Println("Message storage initialized")

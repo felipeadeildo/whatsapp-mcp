@@ -1,278 +1,134 @@
 package storage
 
 import (
-	"database/sql"
-	"fmt"
-	"time"
+	"errors"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-// represents a whatsapp message
-type Message struct {
-	ID          string
-	ChatJID     string // Canonical JID
-	SenderJID   string // Canonical JID
-	Text        string
-	Timestamp   time.Time
-	IsFromMe    bool
-	MessageType string
-}
-
-// represents a message with sender names (from view)
-type MessageWithNames struct {
-	Message
-	SenderPushName    string // Current WhatsApp display name (from push_names table)
-	SenderContactName string // Current saved contact name (from chats table)
-	ChatName          string // Current chat name (for display)
-}
-
-// messages operations manager
+// MessageStore manages message operations using GORM
 type MessageStore struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-// message store constructor
-func NewMessageStore(db *sql.DB) *MessageStore {
+// NewMessageStore creates a new message store
+func NewMessageStore(db *gorm.DB) *MessageStore {
 	return &MessageStore{db: db}
 }
 
-// saves a WhatsApp message to database
+// SaveMessage saves or updates a message using UPSERT
 func (s *MessageStore) SaveMessage(msg Message) error {
-	query := `
-	INSERT OR REPLACE INTO messages
-	(id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
-	`
-
-	_, err := s.db.Exec(
-		query,
-		msg.ID,
-		msg.ChatJID,
-		msg.SenderJID,
-		msg.Text,
-		msg.Timestamp.Unix(),
-		msg.IsFromMe,
-		msg.MessageType,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to save message: %w", err)
-	}
-
-	return nil
+	return s.db.Clauses(clause.OnConflict{
+		UpdateAll: true, // Update all columns on conflict
+	}).Create(&msg).Error
 }
 
-// saves multiple messages (optimized for history sync)
+// SaveBulk saves multiple messages in a transaction (for history sync)
 func (s *MessageStore) SaveBulk(messages []Message) error {
-	tx, err := s.db.Begin()
-
-	if err != nil {
-		return err
+	if len(messages) == 0 {
+		return nil
 	}
 
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`
-	INSERT OR REPLACE INTO messages
-	(id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return err
-	}
-
-	defer stmt.Close()
-
-	for _, msg := range messages {
-		_, err := stmt.Exec(
-			msg.ID,
-			msg.ChatJID,
-			msg.SenderJID,
-			msg.Text,
-			msg.Timestamp.Unix(),
-			msg.IsFromMe,
-			msg.MessageType,
-		)
-
-		if err != nil {
-			return fmt.Errorf("failed to insert message %s: %w", msg.ID, err)
-		}
-	}
-
-	return tx.Commit()
-
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return tx.Clauses(clause.OnConflict{
+			UpdateAll: true,
+		}).CreateInBatches(messages, 100).Error
+	})
 }
 
-// get messages by text
-func (s *MessageStore) SearchMessages(q string, limit int) ([]Message, error) {
-	query := `
-	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
-	FROM messages
-	WHERE text LIKE ?
-	ORDER BY timestamp DESC
-	LIMIT ?
-	`
-
-	rows, err := s.db.Query(query, "%"+q+"%", limit)
-	if err != nil {
-		return nil, err
-	}
-
-	defer rows.Close()
-
-	return s.scanMessages(rows)
-}
-
-// get messages from a chat
-func (s *MessageStore) GetChatMessages(chatJID string, limit int, offset int) ([]Message, error) {
-	query := `
-	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
-	FROM messages
-	WHERE chat_jid = ?
-	ORDER BY timestamp DESC
-	LIMIT ? OFFSET ?
-	`
-
-	rows, err := s.db.Query(query, chatJID, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return s.scanMessages(rows)
-}
-
-// get a message by id
+// GetMessageByID retrieves a single message by ID
 func (s *MessageStore) GetMessageByID(messageID string) (*Message, error) {
-	query := `
-	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
-	FROM messages
-	WHERE id = ?
-	`
-
-	row := s.db.QueryRow(query, messageID)
-
 	var msg Message
-	var timestampUnix int64
-
-	err := row.Scan(
-		&msg.ID,
-		&msg.ChatJID,
-		&msg.SenderJID,
-		&msg.Text,
-		&timestampUnix,
-		&msg.IsFromMe,
-		&msg.MessageType,
-	)
-
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-
+	err := s.db.Where("id = ?", messageID).First(&msg).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
-
-	msg.Timestamp = time.Unix(timestampUnix, 0)
 
 	return &msg, nil
 }
 
-// helper to convert rows cursor into actual message objects
-func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
+// GetChatMessages retrieves messages for a chat with pagination
+func (s *MessageStore) GetChatMessages(chatJID string, limit int, offset int) ([]Message, error) {
 	var messages []Message
 
-	for rows.Next() {
-		var msg Message
-		var timestampUnix int64
+	err := s.db.
+		Where("chat_jid = ?", chatJID).
+		Order("timestamp DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&messages).Error
 
-		err := rows.Scan(
-			&msg.ID,
-			&msg.ChatJID,
-			&msg.SenderJID,
-			&msg.Text,
-			&timestampUnix,
-			&msg.IsFromMe,
-			&msg.MessageType,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		msg.Timestamp = time.Unix(timestampUnix, 0)
-		messages = append(messages, msg)
-	}
-
-	return messages, rows.Err()
-}
-
-// SearchMessagesWithNames searches messages and includes sender names from view
-func (s *MessageStore) SearchMessagesWithNames(q string, limit int) ([]MessageWithNames, error) {
-	query := `
-	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-	       text, timestamp, is_from_me, message_type
-	FROM messages_with_names
-	WHERE text LIKE ?
-	ORDER BY timestamp DESC
-	LIMIT ?
-	`
-
-	rows, err := s.db.Query(query, "%"+q+"%", limit)
 	if err != nil {
 		return nil, err
 	}
 
-	defer rows.Close()
-
-	return s.scanMessagesWithNames(rows)
+	return messages, nil
 }
 
-// GetChatMessagesWithNames gets chat messages and includes sender names from view
+// SearchMessages searches messages by text content
+func (s *MessageStore) SearchMessages(q string, limit int) ([]Message, error) {
+	var messages []Message
+
+	err := s.db.
+		Where("text LIKE ?", "%"+q+"%").
+		Order("timestamp DESC").
+		Limit(limit).
+		Find(&messages).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return messages, nil
+}
+
+// GetChatMessagesWithNames retrieves messages with sender/chat names (replaces messages_with_names view)
 func (s *MessageStore) GetChatMessagesWithNames(chatJID string, limit int, offset int) ([]MessageWithNames, error) {
-	query := `
-	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-	       text, timestamp, is_from_me, message_type
-	FROM messages_with_names
-	WHERE chat_jid = ?
-	ORDER BY timestamp DESC
-	LIMIT ? OFFSET ?
-	`
+	var results []MessageWithNames
 
-	rows, err := s.db.Query(query, chatJID, limit, offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	err := s.db.
+		Table("messages").
+		Select(`
+			messages.*,
+			COALESCE(push_names.push_name, '') as sender_push_name,
+			COALESCE(sender_chat.contact_name, '') as sender_contact_name,
+			COALESCE(chat.contact_name, chat.push_name, messages.chat_jid) as chat_name
+		`).
+		Joins("LEFT JOIN push_names ON messages.sender_jid = push_names.jid").
+		Joins("LEFT JOIN chats AS sender_chat ON messages.sender_jid = sender_chat.jid").
+		Joins("LEFT JOIN chats AS chat ON messages.chat_jid = chat.jid").
+		Where("messages.chat_jid = ?", chatJID).
+		Order("messages.timestamp DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&results).Error
 
-	return s.scanMessagesWithNames(rows)
+	return results, err
 }
 
-// helper to scan messages with names from view
-func (s *MessageStore) scanMessagesWithNames(rows *sql.Rows) ([]MessageWithNames, error) {
-	var messages []MessageWithNames
+// SearchMessagesWithNames searches messages with sender/chat names
+func (s *MessageStore) SearchMessagesWithNames(q string, limit int) ([]MessageWithNames, error) {
+	var results []MessageWithNames
 
-	for rows.Next() {
-		var msg MessageWithNames
-		var timestampUnix int64
+	err := s.db.
+		Table("messages").
+		Select(`
+			messages.*,
+			COALESCE(push_names.push_name, '') as sender_push_name,
+			COALESCE(sender_chat.contact_name, '') as sender_contact_name,
+			COALESCE(chat.contact_name, chat.push_name, messages.chat_jid) as chat_name
+		`).
+		Joins("LEFT JOIN push_names ON messages.sender_jid = push_names.jid").
+		Joins("LEFT JOIN chats AS sender_chat ON messages.sender_jid = sender_chat.jid").
+		Joins("LEFT JOIN chats AS chat ON messages.chat_jid = chat.jid").
+		Where("messages.text LIKE ?", "%"+q+"%").
+		Order("messages.timestamp DESC").
+		Limit(limit).
+		Scan(&results).Error
 
-		err := rows.Scan(
-			&msg.ID,
-			&msg.ChatJID,
-			&msg.SenderJID,
-			&msg.SenderPushName,
-			&msg.SenderContactName,
-			&msg.ChatName,
-			&msg.Text,
-			&timestampUnix,
-			&msg.IsFromMe,
-			&msg.MessageType,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		msg.Timestamp = time.Unix(timestampUnix, 0)
-		messages = append(messages, msg)
-	}
-
-	return messages, rows.Err()
+	return results, err
 }
