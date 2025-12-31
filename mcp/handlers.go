@@ -50,6 +50,30 @@ func (m *MCPServer) formatTime(t time.Time) string {
 	return m.toLocalTime(t).Format("15:04:05")
 }
 
+// parseTimestamp converts ISO 8601 timestamp string to time.Time in server's timezone
+// supports formats: "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"
+func (m *MCPServer) parseTimestamp(timestampStr string) (time.Time, error) {
+	formats := []string{
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+
+	for _, format := range formats {
+		if t, err := time.ParseInLocation(format, timestampStr, m.timezone); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("invalid timestamp format: %s (expected ISO 8601 like '2006-01-02T15:04:05' or '2006-01-02')", timestampStr)
+}
+
+// detectPatternType determines if a search query should use GLOB
+// Returns true if query contains glob wildcards: * ? [
+func detectPatternType(query string) bool {
+	return strings.ContainsAny(query, "*?[")
+}
+
 func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get limit parameter with default
 	limit := request.GetFloat("limit", 50.0)
@@ -97,23 +121,73 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 		return mcp.NewToolResultError("chat_jid parameter is required"), nil
 	}
 
-	// get optional limit and offset
+	// get optional limit
 	limit := request.GetFloat("limit", 50.0)
 	if limit > 200 {
 		limit = 200
 	}
 
-	offset := request.GetFloat("offset", 0.0)
+	// get optional timestamp filters
+	var beforeTime *time.Time
+	var afterTime *time.Time
 
-	// query database (with sender names from view)
-	messages, err := m.store.GetChatMessagesWithNames(chatJID, int(limit), int(offset))
+	beforeStr := request.GetString("before_timestamp", "")
+	if beforeStr != "" {
+		t, err := m.parseTimestamp(beforeStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid before_timestamp: %v", err)), nil
+		}
+		beforeTime = &t
+	}
+
+	afterStr := request.GetString("after_timestamp", "")
+	if afterStr != "" {
+		t, err := m.parseTimestamp(afterStr)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid after_timestamp: %v", err)), nil
+		}
+		afterTime = &t
+	}
+
+	// get optional sender filter
+	senderJID := request.GetString("from", "")
+
+	// query database
+	var messages []storage.MessageWithNames
+
+	if beforeTime != nil || afterTime != nil || senderJID != "" {
+		// use new filtered method
+		messages, err = m.store.GetChatMessagesWithNamesFiltered(
+			chatJID,
+			int(limit),
+			beforeTime,
+			afterTime,
+			senderJID,
+		)
+	} else {
+		// backward compatibility: use offset if no timestamp filters
+		offset := request.GetFloat("offset", 0.0)
+		messages, err = m.store.GetChatMessagesWithNames(chatJID, int(limit), int(offset))
+	}
+
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to get messages: %v", err)), nil
 	}
 
 	// format response
 	var result strings.Builder
-	fmt.Fprintf(&result, "Retrieved %d messages from chat %s:\n\n", len(messages), chatJID)
+	fmt.Fprintf(&result, "Retrieved %d messages from chat %s", len(messages), chatJID)
+
+	if senderJID != "" {
+		fmt.Fprintf(&result, " (filtered by sender: %s)", senderJID)
+	}
+	if beforeTime != nil {
+		fmt.Fprintf(&result, " (before: %s)", m.formatDateTime(*beforeTime))
+	}
+	if afterTime != nil {
+		fmt.Fprintf(&result, " (after: %s)", m.formatDateTime(*afterTime))
+	}
+	result.WriteString(":\n\n")
 
 	for i := len(messages) - 1; i >= 0; i-- { // reverse to show oldest first
 		msg := messages[i]
@@ -136,11 +210,8 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 }
 
 func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// get required query
-	query, err := request.RequireString("query")
-	if err != nil {
-		return mcp.NewToolResultError("query parameter is required"), nil
-	}
+	// get query (can be empty when using 'from' parameter)
+	query := request.GetString("query", "")
 
 	// get optional limit
 	limit := request.GetFloat("limit", 50.0)
@@ -148,15 +219,33 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 		limit = 200
 	}
 
-	// search database (with sender names from view)
-	messages, err := m.store.SearchMessagesWithNames(query, int(limit))
+	// get optional sender filter
+	senderJID := request.GetString("from", "")
+
+	// validate: must have either query or from
+	if query == "" && senderJID == "" {
+		return mcp.NewToolResultError("must provide either 'query' (text to search) or 'from' (sender JID) or both"), nil
+	}
+
+	// detect pattern type
+	useGlob := detectPatternType(query)
+
+	// search database
+	messages, err := m.store.SearchMessagesWithNamesFiltered(query, useGlob, senderJID, int(limit))
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
 	// format response
 	var result strings.Builder
-	fmt.Fprintf(&result, "Found %d messages matching '%s':\n\n", len(messages), query)
+	fmt.Fprintf(&result, "Found %d messages matching '%s'", len(messages), query)
+	if senderJID != "" {
+		fmt.Fprintf(&result, " from sender %s", senderJID)
+	}
+	if useGlob {
+		result.WriteString(" (using pattern matching)")
+	}
+	result.WriteString(":\n\n")
 
 	for i, msg := range messages {
 		sender := getSenderDisplayName(msg)
@@ -170,7 +259,7 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 			m.formatDateTime(msg.Timestamp),
 			sender,
 			msg.ChatJID)
-		result.WriteString(fmt.Sprintf("   %s\n\n", msg.Text))
+		fmt.Fprintf(&result, "   %s\n\n", msg.Text)
 	}
 
 	return mcp.NewToolResultText(result.String()), nil
@@ -183,15 +272,22 @@ func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequ
 		return mcp.NewToolResultError("search parameter is required"), nil
 	}
 
-	// search chats in database with fuzzy matching
-	chats, err := m.store.SearchChats(search, 100)
+	// detect pattern type
+	useGlob := detectPatternType(search)
+
+	// search chats in database
+	chats, err := m.store.SearchChatsFiltered(search, useGlob, 100)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to search chats: %v", err)), nil
 	}
 
 	// format response
 	var result strings.Builder
-	fmt.Fprintf(&result, "Found %d matching chats:\n\n", len(chats))
+	fmt.Fprintf(&result, "Found %d matching chats", len(chats))
+	if useGlob {
+		result.WriteString(" (using pattern matching)")
+	}
+	result.WriteString(":\n\n")
 
 	for i, chat := range chats {
 		chatType := "DM"

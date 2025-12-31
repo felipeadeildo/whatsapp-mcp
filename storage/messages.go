@@ -235,6 +235,52 @@ func (s *MessageStore) GetChatMessagesOlderThan(chatJID string, timestamp time.T
 	return s.scanMessagesWithNames(rows)
 }
 
+// retrieves chat messages with advanced filtering
+func (s *MessageStore) GetChatMessagesWithNamesFiltered(
+	chatJID string,
+	limit int,
+	beforeTimestamp *time.Time,
+	afterTimestamp *time.Time,
+	senderJID string,
+) ([]MessageWithNames, error) {
+	query := `
+	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
+	       text, timestamp, is_from_me, message_type
+	FROM messages_with_names
+	WHERE chat_jid = ?
+	`
+
+	args := []any{chatJID}
+
+	// add timestamp filters
+	if beforeTimestamp != nil {
+		query += " AND timestamp < ?"
+		args = append(args, beforeTimestamp.Unix())
+	}
+
+	if afterTimestamp != nil {
+		query += " AND timestamp > ?"
+		args = append(args, afterTimestamp.Unix())
+	}
+
+	// add sender filter
+	if senderJID != "" {
+		query += " AND sender_jid = ?"
+		args = append(args, senderJID)
+	}
+
+	query += " ORDER BY timestamp DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanMessagesWithNames(rows)
+}
+
 // helper to convert rows cursor into actual message objects
 func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
 	var messages []Message
@@ -261,6 +307,53 @@ func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
 	}
 
 	return messages, rows.Err()
+}
+
+// searches messages with pattern matching and sender filtering
+func (s *MessageStore) SearchMessagesWithNamesFiltered(
+	query string,
+	useGlob bool,
+	senderJID string,
+	limit int,
+) ([]MessageWithNames, error) {
+	var sqlQuery string
+	var args []any
+
+	// choose LIKE or GLOB based on pattern type
+	if useGlob {
+		sqlQuery = `
+		SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
+		       text, timestamp, is_from_me, message_type
+		FROM messages_with_names
+		WHERE text GLOB ?
+		`
+		args = append(args, query)
+	} else {
+		sqlQuery = `
+		SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
+		       text, timestamp, is_from_me, message_type
+		FROM messages_with_names
+		WHERE text LIKE ?
+		`
+		args = append(args, "%"+query+"%")
+	}
+
+	// add sender filter
+	if senderJID != "" {
+		sqlQuery += " AND sender_jid = ?"
+		args = append(args, senderJID)
+	}
+
+	sqlQuery += " ORDER BY timestamp DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanMessagesWithNames(rows)
 }
 
 // SearchMessagesWithNames searches messages and includes sender names from view
