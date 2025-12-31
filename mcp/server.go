@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"log"
+	"time"
 
 	"whatsapp-mcp/storage"
 	"whatsapp-mcp/whatsapp"
@@ -10,13 +11,14 @@ import (
 )
 
 type MCPServer struct {
-	server *server.MCPServer
-	wa     *whatsapp.Client
-	store  *storage.MessageStore
-	log    *log.Logger
+	server   *server.MCPServer
+	wa       *whatsapp.Client
+	store    *storage.MessageStore
+	log      *log.Logger
+	timezone *time.Location
 }
 
-func NewMCPServer(wa *whatsapp.Client, store *storage.MessageStore) *MCPServer {
+func NewMCPServer(wa *whatsapp.Client, store *storage.MessageStore, timezone *time.Location) *MCPServer {
 	s := server.NewMCPServer(
 		"WhatsApp MCP",
 		"1.0.0",
@@ -25,10 +27,11 @@ func NewMCPServer(wa *whatsapp.Client, store *storage.MessageStore) *MCPServer {
 	)
 
 	m := &MCPServer{
-		server: s,
-		wa:     wa,
-		store:  store,
-		log:    log.Default(),
+		server:   s,
+		wa:       wa,
+		store:    store,
+		log:      log.Default(),
+		timezone: timezone,
 	}
 
 	// register all tools

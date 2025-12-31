@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"whatsapp-mcp/storage"
 
@@ -32,6 +33,21 @@ func getSenderDisplayName(msg storage.MessageWithNames) string {
 		return msg.SenderPushName
 	}
 	return msg.SenderJID
+}
+
+// converts a UTC timestamp to the configured timezone
+func (m *MCPServer) toLocalTime(t time.Time) time.Time {
+	return t.In(m.timezone)
+}
+
+// formats a timestamp in the configured timezone (for date + time display)
+func (m *MCPServer) formatDateTime(t time.Time) string {
+	return m.toLocalTime(t).Format("2006-01-02 15:04:05")
+}
+
+// formats a timestamp in the configured timezone (for time-only display)
+func (m *MCPServer) formatTime(t time.Time) string {
+	return m.toLocalTime(t).Format("15:04:05")
 }
 
 func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -64,7 +80,7 @@ func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolReq
 		if chat.ContactName != "" && chat.PushName != "" && chat.ContactName != chat.PushName {
 			fmt.Fprintf(&result, "   (Contact: %s, Push: %s)\n", chat.ContactName, chat.PushName)
 		}
-		fmt.Fprintf(&result, "   Last message: %s\n", chat.LastMessageTime.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(&result, "   Last message: %s\n", m.formatDateTime(chat.LastMessageTime))
 		if chat.UnreadCount > 0 {
 			fmt.Fprintf(&result, "   Unread: %d\n", chat.UnreadCount)
 		}
@@ -110,7 +126,7 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 		}
 
 		fmt.Fprintf(&result, "[%s] %s %s: %s\n",
-			msg.Timestamp.Format("15:04:05"),
+			m.formatTime(msg.Timestamp),
 			direction,
 			sender,
 			msg.Text)
@@ -151,7 +167,7 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 
 		fmt.Fprintf(&result, "%d. [%s] %s in chat %s:\n",
 			i+1,
-			msg.Timestamp.Format("2006-01-02 15:04"),
+			m.formatDateTime(msg.Timestamp),
 			sender,
 			msg.ChatJID)
 		result.WriteString(fmt.Sprintf("   %s\n\n", msg.Text))
@@ -269,7 +285,7 @@ func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.Call
 			}
 
 			fmt.Fprintf(&result, "[%s] %s %s: %s\n",
-				msg.Timestamp.Format("15:04:05"),
+				m.formatTime(msg.Timestamp),
 				direction,
 				sender,
 				msg.Text)

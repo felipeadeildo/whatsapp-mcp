@@ -41,6 +41,18 @@ func main() {
 	}
 	log.Printf("Log level: %s", logLevel)
 
+	// get timezone from environment
+	timezoneName := os.Getenv("TIMEZONE")
+	if timezoneName == "" {
+		timezoneName = "UTC"
+	}
+	timezone, err := time.LoadLocation(timezoneName)
+	if err != nil {
+		log.Printf("Warning: Invalid timezone '%s', using UTC: %v", timezoneName, err)
+		timezone = time.UTC
+	}
+	log.Printf("Timezone: %s", timezone.String())
+
 	// initialize database
 	db, err := storage.InitDB("./data/messages.db")
 	if err != nil {
@@ -88,7 +100,7 @@ func main() {
 	}
 
 	// initialize MCP server
-	mcpServer := mcp.NewMCPServer(waClient, store)
+	mcpServer := mcp.NewMCPServer(waClient, store, timezone)
 	log.Println("MCP server initialized")
 
 	mux := http.NewServeMux()
