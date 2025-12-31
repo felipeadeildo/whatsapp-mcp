@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waWeb"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -435,7 +436,13 @@ func (c *Client) handlePushName(evt *events.PushName) {
 }
 
 func (c *Client) handleHistorySync(evt *events.HistorySync) {
-	c.log.Infof("Starting history sync: %d conversations to process", len(evt.Data.GetConversations()))
+	// check if this is an ON_DEMAND sync
+	isOnDemand := evt.Data.GetSyncType() == waHistorySync.HistorySync_ON_DEMAND
+	if isOnDemand {
+		c.log.Infof("Received ON_DEMAND history sync: %d conversations", len(evt.Data.GetConversations()))
+	} else {
+		c.log.Infof("Starting history sync: %d conversations to process", len(evt.Data.GetConversations()))
+	}
 
 	ctx := context.Background()
 
@@ -583,6 +590,27 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 		} else {
 			c.log.Infof("Saved %d additional push names from messages", len(additionalPushNames))
 		}
+	}
+
+	// signal waiting synchronous requests for ON_DEMAND syncs
+	if isOnDemand {
+		c.historySyncMux.Lock()
+		for _, conv := range evt.Data.GetConversations() {
+			chatJID, err := types.ParseJID(conv.GetID())
+			if err != nil {
+				continue
+			}
+			normalizedJID := c.normalizeJID(chatJID)
+			if syncChan, exists := c.historySyncChans[normalizedJID]; exists {
+				select {
+				case syncChan <- true:
+					c.log.Debugf("Signaled completion for chat %s", normalizedJID)
+				default:
+				}
+				delete(c.historySyncChans, normalizedJID)
+			}
+		}
+		c.historySyncMux.Unlock()
 	}
 }
 

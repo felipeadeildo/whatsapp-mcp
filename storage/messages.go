@@ -177,6 +177,64 @@ func (s *MessageStore) GetMessageByID(messageID string) (*Message, error) {
 	return &msg, nil
 }
 
+// get the oldest message from a specific chat (for history sync requests)
+func (s *MessageStore) GetOldestMessage(chatJID string) (*Message, error) {
+	query := `
+	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
+	FROM messages
+	WHERE chat_jid = ?
+	ORDER BY timestamp ASC
+	LIMIT 1
+	`
+
+	row := s.db.QueryRow(query, chatJID)
+
+	var msg Message
+	var timestampUnix int64
+
+	err := row.Scan(
+		&msg.ID,
+		&msg.ChatJID,
+		&msg.SenderJID,
+		&msg.Text,
+		&timestampUnix,
+		&msg.IsFromMe,
+		&msg.MessageType,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	msg.Timestamp = time.Unix(timestampUnix, 0)
+
+	return &msg, nil
+}
+
+// get messages older than a specific timestamp (for retrieving newly loaded messages)
+func (s *MessageStore) GetChatMessagesOlderThan(chatJID string, timestamp time.Time, limit int) ([]MessageWithNames, error) {
+	query := `
+	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
+	       text, timestamp, is_from_me, message_type
+	FROM messages_with_names
+	WHERE chat_jid = ? AND timestamp < ?
+	ORDER BY timestamp DESC
+	LIMIT ?
+	`
+
+	rows, err := s.db.Query(query, chatJID, timestamp.Unix(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanMessagesWithNames(rows)
+}
+
 // helper to convert rows cursor into actual message objects
 func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
 	var messages []Message

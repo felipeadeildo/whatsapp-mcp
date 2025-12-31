@@ -220,3 +220,63 @@ func (m *MCPServer) handleSendMessage(ctx context.Context, request mcp.CallToolR
 
 	return mcp.NewToolResultText(fmt.Sprintf("Message sent successfully to %s", chatJID)), nil
 }
+
+func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// get required chat_jid
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+
+	// get optional count (default 50, max 200)
+	count := int(request.GetFloat("count", 50.0))
+	if count > 200 {
+		count = 200
+	}
+	if count < 1 {
+		count = 1
+	}
+
+	// get optional wait_for_sync (default true)
+	waitForSync := request.GetBool("wait_for_sync", true)
+
+	// check WhatsApp connection
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	// request history sync
+	messages, err := m.wa.RequestHistorySync(ctx, chatJID, count, waitForSync)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load messages: %v", err)), nil
+	}
+
+	// format response
+	var result strings.Builder
+
+	if waitForSync {
+		fmt.Fprintf(&result, "Loaded %d additional messages from chat %s:\n\n", len(messages), chatJID)
+
+		// format messages (oldest first, like get_chat_messages)
+		for i := len(messages) - 1; i >= 0; i-- {
+			msg := messages[i]
+			sender := getSenderDisplayName(msg)
+
+			direction := "←"
+			if msg.IsFromMe {
+				direction = "→"
+				sender = "You"
+			}
+
+			fmt.Fprintf(&result, "[%s] %s %s: %s\n",
+				msg.Timestamp.Format("15:04:05"),
+				direction,
+				sender,
+				msg.Text)
+		}
+	} else {
+		fmt.Fprintf(&result, "History sync request sent for chat %s (%d messages). Messages will load in the background. Use get_chat_messages to see them once loaded.", chatJID, count)
+	}
+
+	return mcp.NewToolResultText(result.String()), nil
+}

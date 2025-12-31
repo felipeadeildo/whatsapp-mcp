@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
+	"time"
 	"whatsapp-mcp/storage"
 
 	"go.mau.fi/whatsmeow"
@@ -15,10 +17,12 @@ import (
 )
 
 type Client struct {
-	wa      *whatsmeow.Client
-	store   *storage.MessageStore
-	log     waLog.Logger
-	logFile *os.File
+	wa               *whatsmeow.Client
+	store            *storage.MessageStore
+	log              waLog.Logger
+	logFile          *os.File
+	historySyncChans map[string]chan bool // tracks pending sync requests by chat JID
+	historySyncMux   sync.Mutex           // protects the map
 }
 
 type fileLogger struct {
@@ -97,10 +101,11 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 	waClient := whatsmeow.NewClient(deviceStore, logger)
 
 	client := &Client{
-		wa:      waClient,
-		store:   store,
-		log:     logger,
-		logFile: logFile,
+		wa:               waClient,
+		store:            store,
+		log:              logger,
+		logFile:          logFile,
+		historySyncChans: make(map[string]chan bool),
 	}
 
 	waClient.AddEventHandler(client.eventHandler)
@@ -168,4 +173,86 @@ func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text strin
 	})
 
 	return nil
+}
+
+// requests additional message history from WhatsApp on-demand
+func (c *Client) RequestHistorySync(ctx context.Context, chatJID string, count int, waitForSync bool) ([]storage.MessageWithNames, error) {
+	// parse the chatJID string to types.JID
+	parsedJID, err := types.ParseJID(chatJID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid chat JID: %w", err)
+	}
+
+	normalizedJID := c.normalizeJID(parsedJID)
+
+	oldestMessage, err := c.store.GetOldestMessage(normalizedJID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get oldest message: %w", err)
+	}
+
+	if oldestMessage == nil {
+		return nil, fmt.Errorf("no messages in database for this chat. Please wait for initial history sync")
+	}
+
+	lastKnownMessageInfo := &types.MessageInfo{
+		MessageSource: types.MessageSource{
+			Chat:     parsedJID,
+			IsFromMe: oldestMessage.IsFromMe,
+		},
+		ID:        oldestMessage.ID,
+		Timestamp: oldestMessage.Timestamp,
+	}
+
+	reqMsg := c.wa.BuildHistorySyncRequest(lastKnownMessageInfo, count)
+
+	if waitForSync {
+		oldestTimestamp := oldestMessage.Timestamp
+
+		syncChan := make(chan bool, 1)
+
+		c.historySyncMux.Lock()
+		c.historySyncChans[normalizedJID] = syncChan
+		c.historySyncMux.Unlock()
+
+		_, err = c.wa.SendMessage(ctx, c.wa.Store.ID.ToNonAD(), reqMsg, whatsmeow.SendRequestExtra{Peer: true})
+		if err != nil {
+			// clean up the channel on error
+			c.historySyncMux.Lock()
+			delete(c.historySyncChans, normalizedJID)
+			c.historySyncMux.Unlock()
+			return nil, fmt.Errorf("failed to send history sync request: %w", err)
+		}
+
+		c.log.Infof("Sent ON_DEMAND history sync request for chat %s (count: %d)", normalizedJID, count)
+
+		// wait for signal with timeout (30 seconds)
+		select {
+		case <-syncChan:
+			c.log.Debugf("History sync completed for chat %s", normalizedJID)
+		case <-time.After(30 * time.Second):
+			// clean up on timeout
+			c.historySyncMux.Lock()
+			delete(c.historySyncChans, normalizedJID)
+			c.historySyncMux.Unlock()
+			return nil, fmt.Errorf("timeout waiting for history sync. Try using wait_for_sync=false for async mode")
+		}
+
+		// retrieve newly loaded messages from database
+		messages, err := c.store.GetChatMessagesOlderThan(normalizedJID, oldestTimestamp, count)
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve newly loaded messages: %w", err)
+		}
+
+		c.log.Infof("Retrieved %d newly loaded messages for chat %s", len(messages), normalizedJID)
+		return messages, nil
+	} else {
+		// asynchronous mode - send request and return immediately
+		_, err = c.wa.SendMessage(ctx, c.wa.Store.ID.ToNonAD(), reqMsg, whatsmeow.SendRequestExtra{Peer: true})
+		if err != nil {
+			return nil, fmt.Errorf("failed to send history sync request: %w", err)
+		}
+
+		c.log.Infof("Sent ON_DEMAND history sync request for chat %s (count: %d, async mode)", normalizedJID, count)
+		return []storage.MessageWithNames{}, nil
+	}
 }

@@ -77,4 +77,22 @@ func (m *MCPServer) registerTools() {
 		),
 		m.handleSendMessage,
 	)
+
+	// 6. load more messages on-demand
+	m.server.AddTool(
+		mcp.NewTool("load_more_messages",
+			mcp.WithDescription("fetch additional message history from WhatsApp for a specific chat. This requests messages from your primary WhatsApp device that haven't been synced yet. Use wait_for_sync=true (recommended) for immediate results, or wait_for_sync=false to load messages in the background. Note: Only works if you have messages already in the database for this chat."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("chat JID to fetch history for (can be PN or LID format)"),
+			),
+			mcp.WithNumber("count",
+				mcp.Description("number of messages to fetch (default: 50, max: 200)"),
+			),
+			mcp.WithBoolean("wait_for_sync",
+				mcp.Description("IMPORTANT: if true (default), waits for messages to arrive before returning (recommended for immediate results, takes 2-10 seconds). If false, messages load in background and you must call get_chat_messages again to see them (use for non-urgent bulk loading)."),
+			),
+		),
+		m.handleLoadMoreMessages,
+	)
 }
