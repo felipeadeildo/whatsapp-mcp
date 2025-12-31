@@ -26,22 +26,22 @@ type fileLogger struct {
 	file *os.File
 }
 
-func (l *fileLogger) Errorf(msg string, args ...interface{}) {
+func (l *fileLogger) Errorf(msg string, args ...any) {
 	l.base.Errorf(msg, args...)
 	fmt.Fprintf(l.file, "[ERROR] "+msg+"\n", args...)
 }
 
-func (l *fileLogger) Warnf(msg string, args ...interface{}) {
+func (l *fileLogger) Warnf(msg string, args ...any) {
 	l.base.Warnf(msg, args...)
 	fmt.Fprintf(l.file, "[WARN] "+msg+"\n", args...)
 }
 
-func (l *fileLogger) Infof(msg string, args ...interface{}) {
+func (l *fileLogger) Infof(msg string, args ...any) {
 	l.base.Infof(msg, args...)
 	fmt.Fprintf(l.file, "[INFO] "+msg+"\n", args...)
 }
 
-func (l *fileLogger) Debugf(msg string, args ...interface{}) {
+func (l *fileLogger) Debugf(msg string, args ...any) {
 	l.base.Debugf(msg, args...)
 	fmt.Fprintf(l.file, "[DEBUG] "+msg+"\n", args...)
 }

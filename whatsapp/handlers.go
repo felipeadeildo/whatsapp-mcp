@@ -13,7 +13,7 @@ import (
 )
 
 // process all whatsapp events
-func (c *Client) eventHandler(evt interface{}) {
+func (c *Client) eventHandler(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
 		c.handleMessage(v)
