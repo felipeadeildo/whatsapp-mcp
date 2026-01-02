@@ -22,6 +22,42 @@ CREATE INDEX IF NOT EXISTS idx_chat_timestamp ON messages(chat_jid, timestamp DE
 CREATE INDEX IF NOT EXISTS idx_text_search ON messages(text) WHERE text IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender_jid);
 
+-- Media metadata table
+CREATE TABLE IF NOT EXISTS media_metadata (
+    message_id TEXT PRIMARY KEY,
+
+    -- File information
+    file_path TEXT,                   -- Relative path from data/media/ (null if not downloaded)
+    file_name TEXT NOT NULL,          -- Original filename from WhatsApp
+    file_size INTEGER NOT NULL,       -- Size in bytes
+    mime_type TEXT NOT NULL,          -- MIME type (image/jpeg, video/mp4, etc.)
+
+    -- Media-specific metadata
+    width INTEGER,                    -- For images/videos
+    height INTEGER,                   -- For images/videos
+    duration INTEGER,                 -- For audio/video (seconds)
+
+    -- WhatsApp metadata (for download)
+    media_key BLOB,
+    direct_path TEXT,
+    file_sha256 BLOB,
+    file_enc_sha256 BLOB,
+
+    -- Download tracking
+    download_status TEXT NOT NULL DEFAULT 'pending',  -- pending, downloaded, failed, expired
+    download_timestamp INTEGER,
+    download_error TEXT,
+
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+);
+
+-- Indexes for media queries
+CREATE INDEX IF NOT EXISTS idx_media_message ON media_metadata(message_id);
+CREATE INDEX IF NOT EXISTS idx_media_status ON media_metadata(download_status);
+CREATE INDEX IF NOT EXISTS idx_media_type ON media_metadata(mime_type);
+
 -- Chats table (conversations)
 CREATE TABLE IF NOT EXISTS chats (
     jid TEXT PRIMARY KEY NOT NULL, -- Canonical JID
@@ -78,8 +114,21 @@ SELECT
     m.timestamp,
     m.is_from_me,
     m.message_type,
-    m.created_at
+    m.created_at,
+
+    -- Media metadata fields (nullable)
+    media.file_path as media_file_path,
+    media.file_name as media_file_name,
+    media.file_size as media_file_size,
+    media.mime_type as media_mime_type,
+    media.width as media_width,
+    media.height as media_height,
+    media.duration as media_duration,
+    media.download_status as media_download_status,
+    media.download_timestamp as media_download_timestamp,
+    media.download_error as media_download_error
 FROM messages m
 LEFT JOIN push_names p ON m.sender_jid = p.jid
 LEFT JOIN chats c_sender ON m.sender_jid = c_sender.jid
-LEFT JOIN chats c_chat ON m.chat_jid = c_chat.jid;
+LEFT JOIN chats c_chat ON m.chat_jid = c_chat.jid
+LEFT JOIN media_metadata media ON m.id = media.message_id;
