@@ -11,8 +11,9 @@ import (
 	"time"
 	"unicode"
 
-	"go.mau.fi/whatsmeow/proto/waE2E"
 	"whatsapp-mcp/storage"
+
+	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
 // determines initial download status based on auto-download config
@@ -61,16 +62,16 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string, from
 		fileSize := int64(img.GetFileLength())
 
 		return &storage.MediaMetadata{
-			MessageID:     messageID,
-			FileName:      fileName,
-			FileSize:      fileSize,
-			MimeType:      img.GetMimetype(),
-			Width:         intPtr(int(img.GetWidth())),
-			Height:        intPtr(int(img.GetHeight())),
-			MediaKey:      img.GetMediaKey(),
-			DirectPath:    img.GetDirectPath(),
-			FileSHA256:    img.GetFileSHA256(),
-			FileEncSHA256: img.GetFileEncSHA256(),
+			MessageID:      messageID,
+			FileName:       fileName,
+			FileSize:       fileSize,
+			MimeType:       img.GetMimetype(),
+			Width:          intPtr(int(img.GetWidth())),
+			Height:         intPtr(int(img.GetHeight())),
+			MediaKey:       img.GetMediaKey(),
+			DirectPath:     img.GetDirectPath(),
+			FileSHA256:     img.GetFileSHA256(),
+			FileEncSHA256:  img.GetFileEncSHA256(),
 			DownloadStatus: c.getInitialDownloadStatus("image", fileSize, fromHistory),
 		}
 	}
@@ -82,17 +83,17 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string, from
 		fileSize := int64(vid.GetFileLength())
 
 		return &storage.MediaMetadata{
-			MessageID:     messageID,
-			FileName:      fileName,
-			FileSize:      fileSize,
-			MimeType:      vid.GetMimetype(),
-			Width:         intPtr(int(vid.GetWidth())),
-			Height:        intPtr(int(vid.GetHeight())),
-			Duration:      intPtr(int(vid.GetSeconds())),
-			MediaKey:      vid.GetMediaKey(),
-			DirectPath:    vid.GetDirectPath(),
-			FileSHA256:    vid.GetFileSHA256(),
-			FileEncSHA256: vid.GetFileEncSHA256(),
+			MessageID:      messageID,
+			FileName:       fileName,
+			FileSize:       fileSize,
+			MimeType:       vid.GetMimetype(),
+			Width:          intPtr(int(vid.GetWidth())),
+			Height:         intPtr(int(vid.GetHeight())),
+			Duration:       intPtr(int(vid.GetSeconds())),
+			MediaKey:       vid.GetMediaKey(),
+			DirectPath:     vid.GetDirectPath(),
+			FileSHA256:     vid.GetFileSHA256(),
+			FileEncSHA256:  vid.GetFileEncSHA256(),
 			DownloadStatus: c.getInitialDownloadStatus("video", fileSize, fromHistory),
 		}
 	}
@@ -109,15 +110,15 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string, from
 		fileSize := int64(aud.GetFileLength())
 
 		return &storage.MediaMetadata{
-			MessageID:     messageID,
-			FileName:      fileName,
-			FileSize:      fileSize,
-			MimeType:      aud.GetMimetype(),
-			Duration:      intPtr(int(aud.GetSeconds())),
-			MediaKey:      aud.GetMediaKey(),
-			DirectPath:    aud.GetDirectPath(),
-			FileSHA256:    aud.GetFileSHA256(),
-			FileEncSHA256: aud.GetFileEncSHA256(),
+			MessageID:      messageID,
+			FileName:       fileName,
+			FileSize:       fileSize,
+			MimeType:       aud.GetMimetype(),
+			Duration:       intPtr(int(aud.GetSeconds())),
+			MediaKey:       aud.GetMediaKey(),
+			DirectPath:     aud.GetDirectPath(),
+			FileSHA256:     aud.GetFileSHA256(),
+			FileEncSHA256:  aud.GetFileEncSHA256(),
 			DownloadStatus: c.getInitialDownloadStatus(mediaType, fileSize, fromHistory),
 		}
 	}
@@ -135,14 +136,14 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string, from
 		fileSize := int64(doc.GetFileLength())
 
 		return &storage.MediaMetadata{
-			MessageID:     messageID,
-			FileName:      fileName,
-			FileSize:      fileSize,
-			MimeType:      doc.GetMimetype(),
-			MediaKey:      doc.GetMediaKey(),
-			DirectPath:    doc.GetDirectPath(),
-			FileSHA256:    doc.GetFileSHA256(),
-			FileEncSHA256: doc.GetFileEncSHA256(),
+			MessageID:      messageID,
+			FileName:       fileName,
+			FileSize:       fileSize,
+			MimeType:       doc.GetMimetype(),
+			MediaKey:       doc.GetMediaKey(),
+			DirectPath:     doc.GetDirectPath(),
+			FileSHA256:     doc.GetFileSHA256(),
+			FileEncSHA256:  doc.GetFileEncSHA256(),
 			DownloadStatus: c.getInitialDownloadStatus("document", fileSize, fromHistory),
 		}
 	}

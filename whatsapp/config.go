@@ -8,11 +8,11 @@ import (
 
 // media download configuration
 type MediaConfig struct {
-	AutoDownloadEnabled         bool
-	AutoDownloadFromHistory     bool
-	AutoDownloadMaxSize         int64 // bytes
-	AutoDownloadTypes           map[string]bool
-	StoragePath                 string
+	AutoDownloadEnabled     bool
+	AutoDownloadFromHistory bool
+	AutoDownloadMaxSize     int64 // bytes
+	AutoDownloadTypes       map[string]bool
+	StoragePath             string
 }
 
 // media configuration from environment variables
