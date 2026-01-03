@@ -260,6 +260,7 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 			switch meta.DownloadStatus {
 			case "downloaded":
 				result.WriteString(" [Downloaded]")
+				fmt.Fprintf(&result, "\n   Resource: whatsapp://media/%s", msg.ID)
 			case "pending":
 				result.WriteString(" [Not downloaded]")
 			case "failed":
@@ -346,6 +347,7 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 			switch meta.DownloadStatus {
 			case "downloaded":
 				result.WriteString(" [Downloaded]")
+				fmt.Fprintf(&result, "\n   Resource: whatsapp://media/%s", msg.ID)
 			case "pending":
 				result.WriteString(" [Not downloaded]")
 			case "failed":
