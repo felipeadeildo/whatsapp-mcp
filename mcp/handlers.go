@@ -74,6 +74,41 @@ func detectPatternType(query string) bool {
 	return strings.ContainsAny(query, "*?[")
 }
 
+// converts bytes to human-readable size
+func formatFileSize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+
+	if bytes >= GB {
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
+	} else if bytes >= MB {
+		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
+	} else if bytes >= KB {
+		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
+	}
+	return fmt.Sprintf("%d B", bytes)
+}
+
+// returns formatted dimensions string
+func formatDimensions(width, height *int) string {
+	if width != nil && height != nil {
+		return fmt.Sprintf("%dx%d", *width, *height)
+	}
+	return ""
+}
+
+// converts seconds to MM:SS format
+func formatDuration(seconds *int) string {
+	if seconds == nil {
+		return ""
+	}
+	s := *seconds
+	return fmt.Sprintf("%d:%02d", s/60, s%60)
+}
+
 func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get limit parameter with default
 	limit := request.GetFloat("limit", 50.0)
@@ -204,6 +239,36 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 			direction,
 			sender,
 			msg.Text)
+
+		// show media metadata if present
+		if msg.MediaMetadata != nil {
+			meta := msg.MediaMetadata
+			fmt.Fprintf(&result, "   📎 %s (%s, %s)",
+				meta.FileName, meta.MimeType, formatFileSize(meta.FileSize))
+
+			// add dimensions if available
+			if dims := formatDimensions(meta.Width, meta.Height); dims != "" {
+				fmt.Fprintf(&result, ", %s", dims)
+			}
+
+			// add duration if available
+			if dur := formatDuration(meta.Duration); dur != "" {
+				fmt.Fprintf(&result, ", %s", dur)
+			}
+
+			// show download status
+			switch meta.DownloadStatus {
+			case "downloaded":
+				result.WriteString(" [Downloaded]")
+			case "pending":
+				result.WriteString(" [Not downloaded]")
+			case "failed":
+				result.WriteString(" [Download failed]")
+			case "expired":
+				result.WriteString(" [Expired]")
+			}
+			result.WriteString("\n")
+		}
 	}
 
 	return mcp.NewToolResultText(result.String()), nil
@@ -259,7 +324,39 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 			m.formatDateTime(msg.Timestamp),
 			sender,
 			msg.ChatJID)
-		fmt.Fprintf(&result, "   %s\n\n", msg.Text)
+		fmt.Fprintf(&result, "   %s\n", msg.Text)
+
+		// show media metadata if present
+		if msg.MediaMetadata != nil {
+			meta := msg.MediaMetadata
+			fmt.Fprintf(&result, "   📎 %s (%s, %s)",
+				meta.FileName, meta.MimeType, formatFileSize(meta.FileSize))
+
+			// add dimensions if available
+			if dims := formatDimensions(meta.Width, meta.Height); dims != "" {
+				fmt.Fprintf(&result, ", %s", dims)
+			}
+
+			// add duration if available
+			if dur := formatDuration(meta.Duration); dur != "" {
+				fmt.Fprintf(&result, ", %s", dur)
+			}
+
+			// show download status
+			switch meta.DownloadStatus {
+			case "downloaded":
+				result.WriteString(" [Downloaded]")
+			case "pending":
+				result.WriteString(" [Not downloaded]")
+			case "failed":
+				result.WriteString(" [Download failed]")
+			case "expired":
+				result.WriteString(" [Expired]")
+			}
+			result.WriteString("\n")
+		}
+
+		result.WriteString("\n")
 	}
 
 	return mcp.NewToolResultText(result.String()), nil
@@ -385,6 +482,36 @@ func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.Call
 				direction,
 				sender,
 				msg.Text)
+
+			// show media metadata if present
+			if msg.MediaMetadata != nil {
+				meta := msg.MediaMetadata
+				fmt.Fprintf(&result, "   📎 %s (%s, %s)",
+					meta.FileName, meta.MimeType, formatFileSize(meta.FileSize))
+
+				// add dimensions if available
+				if dims := formatDimensions(meta.Width, meta.Height); dims != "" {
+					fmt.Fprintf(&result, ", %s", dims)
+				}
+
+				// add duration if available
+				if dur := formatDuration(meta.Duration); dur != "" {
+					fmt.Fprintf(&result, ", %s", dur)
+				}
+
+				// show download status
+				switch meta.DownloadStatus {
+				case "downloaded":
+					result.WriteString(" [Downloaded]")
+				case "pending":
+					result.WriteString(" [Not downloaded]")
+				case "failed":
+					result.WriteString(" [Download failed]")
+				case "expired":
+					result.WriteString(" [Expired]")
+				}
+				result.WriteString("\n")
+			}
 		}
 	} else {
 		fmt.Fprintf(&result, "History sync request sent for chat %s (%d messages). Messages will load in the background. Use get_chat_messages to see them once loaded.", chatJID, count)
