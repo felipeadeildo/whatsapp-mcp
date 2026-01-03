@@ -175,9 +175,10 @@ func (c *Client) shouldAutoDownload(mediaType string, fileSize int64) bool {
 }
 
 // downloads media from WhatsApp and saves to disk
-func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) error {
+// returns the relative file path on success
+func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) (string, error) {
 	if msg == nil || meta == nil {
-		return fmt.Errorf("nil message or metadata")
+		return "", fmt.Errorf("nil message or metadata")
 	}
 
 	// get the appropriate downloadable message
@@ -194,25 +195,25 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 	} else if doc := msg.GetDocumentMessage(); doc != nil {
 		downloadable = doc
 	} else {
-		return fmt.Errorf("unsupported media type")
+		return "", fmt.Errorf("unsupported media type")
 	}
 
 	// generate unique file path
 	filePath, err := c.generateMediaFilePath(meta)
 	if err != nil {
-		return fmt.Errorf("failed to generate file path: %w", err)
+		return "", fmt.Errorf("failed to generate file path: %w", err)
 	}
 
 	// create directory if needed
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 
 	// create file
 	file, err := os.Create(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
+		return "", fmt.Errorf("failed to create file: %w", err)
 	}
 	defer file.Close()
 
@@ -230,39 +231,38 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 	case *waE2E.StickerMessage:
 		data, err = c.wa.Download(ctx, d)
 	default:
-		return fmt.Errorf("unknown downloadable type")
+		return "", fmt.Errorf("unknown downloadable type")
 	}
 
 	if err != nil {
-		return err
+		os.Remove(filePath)
+		return "", err
 	}
 
 	// write data to file
 	if _, err := file.Write(data); err != nil {
 		os.Remove(filePath)
-		return fmt.Errorf("failed to write file: %w", err)
+		return "", fmt.Errorf("failed to write file: %w", err)
 	}
 
 	// verify download
 	if err := c.verifyDownload(filePath, meta); err != nil {
 		os.Remove(filePath)
-		return fmt.Errorf("verification failed: %w", err)
+		return "", fmt.Errorf("verification failed: %w", err)
 	}
 
-	// update metadata with relative file path
+	// compute relative file path
 	relPath, err := filepath.Rel(c.mediaConfig.StoragePath, filePath)
 	if err != nil {
 		os.Remove(filePath)
-		return fmt.Errorf("failed to compute relative media path: %w", err)
+		return "", fmt.Errorf("failed to compute relative media path: %w", err)
 	}
-	meta.FilePath = relPath
-	meta.DownloadStatus = "downloaded"
-	now := time.Now()
-	meta.DownloadTimestamp = &now
 
 	c.log.Infof("Downloaded media %s to %s (%d bytes)", meta.MessageID, relPath, meta.FileSize)
 
-	return nil
+	// return the relative path - caller will update database
+	// no in-memory modifications to avoid data races
+	return relPath, nil
 }
 
 // creates unique file path based on metadata
@@ -320,15 +320,16 @@ func (c *Client) verifyDownload(filePath string, meta *storage.MediaMetadata) er
 }
 
 // downloads media with retry logic
-func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) error {
+// returns the relative file path on success
+func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) (string, error) {
 	maxRetries := 3
 	backoff := time.Second
 	var allErrors []string
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err := c.downloadMedia(ctx, msg, meta)
+		filePath, err := c.downloadMedia(ctx, msg, meta)
 		if err == nil {
-			return nil
+			return filePath, nil
 		}
 
 		allErrors = append(allErrors, fmt.Sprintf("attempt %d: %v", attempt, err))
@@ -337,7 +338,7 @@ func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message,
 		// 404/410 errors indicate expired/deleted media - don't retry
 		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
 			errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-			return err
+			return "", err
 		}
 
 		c.log.Warnf("Download attempt %d/%d failed: %v", attempt, maxRetries, err)
@@ -345,7 +346,7 @@ func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message,
 		if attempt < maxRetries {
 			select {
 			case <-ctx.Done():
-				return ctx.Err()
+				return "", ctx.Err()
 			case <-time.After(backoff):
 				backoff *= 2 // backoff
 			}
@@ -353,7 +354,7 @@ func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message,
 	}
 
 	// combine all errors into a single message
-	return fmt.Errorf("download failed after %d attempts: %s", maxRetries, strings.Join(allErrors, "; "))
+	return "", fmt.Errorf("download failed after %d attempts: %s", maxRetries, strings.Join(allErrors, "; "))
 }
 
 // helperssss

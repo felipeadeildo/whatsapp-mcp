@@ -155,10 +155,10 @@ func (s *MediaStore) GetMediaMetadata(messageID string) (*MediaMetadata, error) 
 }
 
 // updates download status and timestamp
-func (s *MediaStore) UpdateDownloadStatus(messageID, status string, downloadErr error) error {
+func (s *MediaStore) UpdateDownloadStatus(messageID, status string, filePath *string, downloadErr error) error {
 	query := `
 	UPDATE media_metadata
-	SET download_status = ?, download_timestamp = ?, download_error = ?
+	SET download_status = ?, file_path = COALESCE(?, file_path), download_timestamp = ?, download_error = ?
 	WHERE message_id = ?
 	`
 
@@ -169,7 +169,7 @@ func (s *MediaStore) UpdateDownloadStatus(messageID, status string, downloadErr 
 		errMsg = &msg
 	}
 
-	_, err := s.db.Exec(query, status, now, errMsg, messageID)
+	_, err := s.db.Exec(query, status, filePath, now, errMsg, messageID)
 	return err
 }
 

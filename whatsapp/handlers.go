@@ -423,17 +423,19 @@ func (c *Client) handleMessage(evt *events.Message) {
 					downloadCtx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
 					defer cancel()
 
-					if err := c.downloadMediaWithRetry(downloadCtx, evt.Message, mediaMetadata); err != nil {
+					filePath, err := c.downloadMediaWithRetry(downloadCtx, evt.Message, mediaMetadata)
+					if err != nil {
 						c.log.Errorf("Failed to download media %s: %v", info.ID, err)
 						// update status based on error type
 						if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
 							errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-							c.mediaStore.UpdateDownloadStatus(info.ID, "expired", err)
+							c.mediaStore.UpdateDownloadStatus(info.ID, "expired", nil, err)
 						} else {
-							c.mediaStore.UpdateDownloadStatus(info.ID, "failed", err)
+							c.mediaStore.UpdateDownloadStatus(info.ID, "failed", nil, err)
 						}
 					} else {
-						c.mediaStore.UpdateDownloadStatus(info.ID, "downloaded", nil)
+						// update status with file path on success
+						c.mediaStore.UpdateDownloadStatus(info.ID, "downloaded", &filePath, nil)
 					}
 				}()
 			} else {
@@ -692,17 +694,19 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 								actualMessage := msg.GetMessage()
 								if actualMessage != nil {
-									if err := c.downloadMediaWithRetry(downloadCtx, actualMessage, &meta); err != nil {
+									filePath, err := c.downloadMediaWithRetry(downloadCtx, actualMessage, &meta)
+									if err != nil {
 										c.log.Errorf("Failed to download history media %s: %v", meta.MessageID, err)
-										// update status based on error
+										// update status based on error type
 										if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
 											errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "expired", err)
+											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "expired", nil, err)
 										} else {
-											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "failed", err)
+											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "failed", nil, err)
 										}
 									} else {
-										c.mediaStore.UpdateDownloadStatus(meta.MessageID, "downloaded", nil)
+										// update status with file path on success
+										c.mediaStore.UpdateDownloadStatus(meta.MessageID, "downloaded", &filePath, nil)
 										c.log.Infof("Downloaded history media %s successfully", meta.MessageID)
 									}
 								}
