@@ -262,10 +262,13 @@ AI: [Uses search_keyword prompt]
 ### Local Storage
 
 All data is stored in `./data/`:
-- **`messages.db`** - SQLite database with messages and chats
-- **`whatsapp_auth.db`** - WhatsApp session credentials
+- **`db/`** - Database files
+  - `messages.db` - SQLite database with messages and chats
+  - `whatsapp_auth.db` - WhatsApp session credentials
+- **`media/`** - Downloaded media files
+- **`whatsapp.log`** - WhatsApp client logs
 
-**⚠️ Important:** These files contain sensitive data. Keep them secure (file permissions `600`) and backed up.
+**⚠️ Important:** Database files contain sensitive data. Keep them secure (file permissions `600`) and backed up.
 
 ## 🛣️ Roadmap
 

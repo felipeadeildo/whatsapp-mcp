@@ -3,13 +3,14 @@ package storage
 import (
 	"database/sql"
 	"os"
+	"whatsapp-mcp/paths"
 
 	_ "modernc.org/sqlite"
 )
 
 // init db and create schema
-func InitDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+func InitDB() (*sql.DB, error) {
+	db, err := sql.Open("sqlite", paths.MessagesDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 
 	if err != nil {
 		return nil, err

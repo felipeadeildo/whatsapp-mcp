@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"whatsapp-mcp/paths"
 )
 
 // media download configuration
@@ -21,7 +22,7 @@ func LoadMediaConfig() MediaConfig {
 		AutoDownloadEnabled:     getEnvBool("MEDIA_AUTO_DOWNLOAD_ENABLED", true),
 		AutoDownloadFromHistory: getEnvBool("MEDIA_AUTO_DOWNLOAD_FROM_HISTORY", false),
 		AutoDownloadMaxSize:     getEnvInt64("MEDIA_AUTO_DOWNLOAD_MAX_SIZE_MB", 10) * 1024 * 1024,
-		StoragePath:             getEnv("MEDIA_STORAGE_PATH", "./data/media"),
+		StoragePath:             paths.DataMediaDir,
 	}
 
 	// parse allowed types

@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"whatsapp-mcp/paths"
 	"whatsapp-mcp/storage"
 
 	"go.mau.fi/whatsmeow"
@@ -59,7 +60,7 @@ func (l *fileLogger) Sub(module string) waLog.Logger {
 	}
 }
 
-func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, dbPath string, logLevel string) (*Client, error) {
+func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, logLevel string) (*Client, error) {
 	// validate log level, default to INFO if invalid
 	validLevels := map[string]bool{
 		"DEBUG": true,
@@ -72,7 +73,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, dbPa
 	}
 
 	// create log file in data directory
-	logFile, err := os.OpenFile("./data/whatsapp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	logFile, err := os.OpenFile(paths.WhatsAppLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
@@ -86,7 +87,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, dbPa
 		file: logFile,
 	}
 
-	logger.Infof("Initializing WhatsApp client with log level: %s (logging to ./data/whatsapp.log)", logLevel)
+	logger.Infof("Initializing WhatsApp client with log level: %s (logging to %s)", logLevel, paths.WhatsAppLogPath)
 
 	// Load media configuration
 	mediaConfig := LoadMediaConfig()
@@ -97,7 +98,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, dbPa
 
 	ctx := context.Background()
 
-	container, err := sqlstore.New(ctx, "sqlite", "file:"+dbPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", logger)
+	container, err := sqlstore.New(ctx, "sqlite", "file:"+paths.WhatsAppAuthDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sqlstore: %w", err)
 	}

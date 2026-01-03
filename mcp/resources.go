@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"whatsapp-mcp/paths"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -890,7 +891,7 @@ func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourc
 	}
 
 	// construct full file path
-	fullPath := filepath.Join("./data/media", meta.FilePath)
+	fullPath := paths.GetMediaPath(meta.FilePath)
 
 	// verify file exists
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {

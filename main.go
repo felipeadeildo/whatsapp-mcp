@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"whatsapp-mcp/mcp"
+	"whatsapp-mcp/paths"
 	"whatsapp-mcp/storage"
 	"whatsapp-mcp/whatsapp"
 
@@ -59,8 +60,13 @@ func main() {
 	}
 	log.Printf("Timezone: %s", timezone.String())
 
+	// ensure data directories exist
+	if err := paths.EnsureDataDirectories(); err != nil {
+		log.Fatal("Failed to create data directories:", err)
+	}
+
 	// initialize database
-	db, err := storage.InitDB("./data/messages.db")
+	db, err := storage.InitDB()
 	if err != nil {
 		log.Fatal("Failed to init DB:", err)
 	}
@@ -73,7 +79,7 @@ func main() {
 	log.Println("Media storage initialized")
 
 	// initialize WhatsApp client
-	waClient, err := whatsapp.NewClient(store, mediaStore, "./data/whatsapp_auth.db", logLevel)
+	waClient, err := whatsapp.NewClient(store, mediaStore, logLevel)
 	if err != nil {
 		log.Fatal("Failed to create WhatsApp client:", err)
 	}
@@ -94,7 +100,7 @@ func main() {
 				fmt.Println("\nScan the QR code below:")
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 				fmt.Println("\nQR Code also saved to qr.png")
-				qrcode.WriteFile(evt.Code, qrcode.Low, 256, "./qr.png")
+				qrcode.WriteFile(evt.Code, qrcode.Low, 256, paths.QRCodePath)
 			} else {
 				log.Println("QR event:", evt.Event)
 			}
