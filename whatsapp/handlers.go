@@ -408,11 +408,11 @@ func (c *Client) handleMessage(evt *events.Message) {
 		if err := c.mediaStore.SaveMediaMetadata(*mediaMetadata); err != nil {
 			c.log.Errorf("Failed to save media metadata for %s: %v", info.ID, err)
 		} else {
-			c.log.Debugf("Saved media metadata for %s: type=%s, size=%d",
-				info.ID, mediaMetadata.MimeType, mediaMetadata.FileSize)
+			c.log.Debugf("Saved media metadata for %s: type=%s, size=%d, status=%s",
+				info.ID, mediaMetadata.MimeType, mediaMetadata.FileSize, mediaMetadata.DownloadStatus)
 
-			// should auto-download?
-			if c.shouldAutoDownload(mediaType, mediaMetadata.FileSize) {
+			// shoud auto-download?
+			if mediaMetadata.DownloadStatus == "pending" {
 				c.log.Infof("Auto-downloading %s media (%d bytes) from %s",
 					mediaType, mediaMetadata.FileSize, info.ID)
 
@@ -434,8 +434,8 @@ func (c *Client) handleMessage(evt *events.Message) {
 					}
 				}()
 			} else {
-				c.log.Debugf("Skipping auto-download for %s media (%d bytes) from %s",
-					mediaType, mediaMetadata.FileSize, info.ID)
+				c.log.Debugf("Skipping auto-download for %s media (%d bytes) from %s (status: %s)",
+					mediaType, mediaMetadata.FileSize, info.ID, mediaMetadata.DownloadStatus)
 			}
 		}
 	}

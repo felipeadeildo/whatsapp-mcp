@@ -15,6 +15,14 @@ import (
 	"whatsapp-mcp/storage"
 )
 
+// determines initial download status based on auto-download config
+func (c *Client) getInitialDownloadStatus(mediaType string, fileSize int64) string {
+	if c.shouldAutoDownload(mediaType, fileSize) {
+		return "pending"
+	}
+	return "skipped"
+}
+
 // extracts metadata from WhatsApp message
 func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *storage.MediaMetadata {
 	if msg == nil {
@@ -24,11 +32,12 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 	// sticker message
 	if sticker := msg.GetStickerMessage(); sticker != nil {
 		fileName := fmt.Sprintf("sticker_%s.webp", messageID[:8])
+		fileSize := int64(sticker.GetFileLength())
 
 		return &storage.MediaMetadata{
 			MessageID:      messageID,
 			FileName:       fileName,
-			FileSize:       int64(sticker.GetFileLength()),
+			FileSize:       fileSize,
 			MimeType:       sticker.GetMimetype(),
 			Width:          intPtr(int(sticker.GetWidth())),
 			Height:         intPtr(int(sticker.GetHeight())),
@@ -36,7 +45,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:     sticker.GetDirectPath(),
 			FileSHA256:     sticker.GetFileSHA256(),
 			FileEncSHA256:  sticker.GetFileEncSHA256(),
-			DownloadStatus: "pending",
+			DownloadStatus: c.getInitialDownloadStatus("sticker", fileSize),
 		}
 	}
 
@@ -44,11 +53,12 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 	if img := msg.GetImageMessage(); img != nil {
 		// * images don't have filename field, generate from message ID
 		fileName := fmt.Sprintf("image_%s.jpg", messageID[:min(8, len(messageID))])
+		fileSize := int64(img.GetFileLength())
 
 		return &storage.MediaMetadata{
 			MessageID:     messageID,
 			FileName:      fileName,
-			FileSize:      int64(img.GetFileLength()),
+			FileSize:      fileSize,
 			MimeType:      img.GetMimetype(),
 			Width:         intPtr(int(img.GetWidth())),
 			Height:        intPtr(int(img.GetHeight())),
@@ -56,7 +66,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:    img.GetDirectPath(),
 			FileSHA256:    img.GetFileSHA256(),
 			FileEncSHA256: img.GetFileEncSHA256(),
-			DownloadStatus: "pending",
+			DownloadStatus: c.getInitialDownloadStatus("image", fileSize),
 		}
 	}
 
@@ -64,11 +74,12 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 	if vid := msg.GetVideoMessage(); vid != nil {
 		// * videos don't have filename field, generate from message ID
 		fileName := fmt.Sprintf("video_%s.mp4", messageID[:min(8, len(messageID))])
+		fileSize := int64(vid.GetFileLength())
 
 		return &storage.MediaMetadata{
 			MessageID:     messageID,
 			FileName:      fileName,
-			FileSize:      int64(vid.GetFileLength()),
+			FileSize:      fileSize,
 			MimeType:      vid.GetMimetype(),
 			Width:         intPtr(int(vid.GetWidth())),
 			Height:        intPtr(int(vid.GetHeight())),
@@ -77,29 +88,32 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:    vid.GetDirectPath(),
 			FileSHA256:    vid.GetFileSHA256(),
 			FileEncSHA256: vid.GetFileEncSHA256(),
-			DownloadStatus: "pending",
+			DownloadStatus: c.getInitialDownloadStatus("video", fileSize),
 		}
 	}
 
 	// audio message
 	if aud := msg.GetAudioMessage(); aud != nil {
 		fileName := "audio.ogg"
+		mediaType := "audio"
 		if aud.GetPTT() {
 			fileName = "voice_note.ogg"
+			mediaType = "ptt"
 		}
 		fileName = fmt.Sprintf("%s_%s", messageID[:8], fileName)
+		fileSize := int64(aud.GetFileLength())
 
 		return &storage.MediaMetadata{
 			MessageID:     messageID,
 			FileName:      fileName,
-			FileSize:      int64(aud.GetFileLength()),
+			FileSize:      fileSize,
 			MimeType:      aud.GetMimetype(),
 			Duration:      intPtr(int(aud.GetSeconds())),
 			MediaKey:      aud.GetMediaKey(),
 			DirectPath:    aud.GetDirectPath(),
 			FileSHA256:    aud.GetFileSHA256(),
 			FileEncSHA256: aud.GetFileEncSHA256(),
-			DownloadStatus: "pending",
+			DownloadStatus: c.getInitialDownloadStatus(mediaType, fileSize),
 		}
 	}
 
@@ -113,17 +127,18 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 				fileName += ext
 			}
 		}
+		fileSize := int64(doc.GetFileLength())
 
 		return &storage.MediaMetadata{
 			MessageID:     messageID,
 			FileName:      fileName,
-			FileSize:      int64(doc.GetFileLength()),
+			FileSize:      fileSize,
 			MimeType:      doc.GetMimetype(),
 			MediaKey:      doc.GetMediaKey(),
 			DirectPath:    doc.GetDirectPath(),
 			FileSHA256:    doc.GetFileSHA256(),
 			FileEncSHA256: doc.GetFileEncSHA256(),
-			DownloadStatus: "pending",
+			DownloadStatus: c.getInitialDownloadStatus("document", fileSize),
 		}
 	}
 
