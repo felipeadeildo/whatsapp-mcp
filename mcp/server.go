@@ -11,14 +11,15 @@ import (
 )
 
 type MCPServer struct {
-	server   *server.MCPServer
-	wa       *whatsapp.Client
-	store    *storage.MessageStore
-	log      *log.Logger
-	timezone *time.Location
+	server     *server.MCPServer
+	wa         *whatsapp.Client
+	store      *storage.MessageStore
+	mediaStore *storage.MediaStore
+	log        *log.Logger
+	timezone   *time.Location
 }
 
-func NewMCPServer(wa *whatsapp.Client, store *storage.MessageStore, timezone *time.Location) *MCPServer {
+func NewMCPServer(wa *whatsapp.Client, store *storage.MessageStore, mediaStore *storage.MediaStore, timezone *time.Location) *MCPServer {
 	s := server.NewMCPServer(
 		"WhatsApp MCP",
 		"1.0.0",
@@ -31,16 +32,17 @@ JIDs are WhatsApp identifiers (e.g., 5511999999999@s.whatsapp.net).
 Use prompts for common workflows or resources for detailed guides.`),
 		server.WithToolCapabilities(true),
 		server.WithPromptCapabilities(true),
-		server.WithResourceCapabilities(true, false),
+		server.WithResourceCapabilities(true, true),
 		server.WithRecovery(),
 	)
 
 	m := &MCPServer{
-		server:   s,
-		wa:       wa,
-		store:    store,
-		log:      log.Default(),
-		timezone: timezone,
+		server:     s,
+		wa:         wa,
+		store:      store,
+		mediaStore: mediaStore,
+		log:        log.Default(),
+		timezone:   timezone,
 	}
 
 	// register all capabilities

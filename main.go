@@ -63,8 +63,11 @@ func main() {
 	store := storage.NewMessageStore(db)
 	log.Println("Message storage initialized")
 
+	mediaStore := storage.NewMediaStore(db)
+	log.Println("Media storage initialized")
+
 	// initialize WhatsApp client
-	waClient, err := whatsapp.NewClient(store, "./data/whatsapp_auth.db", logLevel)
+	waClient, err := whatsapp.NewClient(store, mediaStore, "./data/whatsapp_auth.db", logLevel)
 	if err != nil {
 		log.Fatal("Failed to create WhatsApp client:", err)
 	}
@@ -100,7 +103,7 @@ func main() {
 	}
 
 	// initialize MCP server
-	mcpServer := mcp.NewMCPServer(waClient, store, timezone)
+	mcpServer := mcp.NewMCPServer(waClient, store, mediaStore, timezone)
 	log.Println("MCP server initialized")
 
 	mux := http.NewServeMux()
