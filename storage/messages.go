@@ -20,9 +20,10 @@ type Message struct {
 // represents a message with sender names (from view)
 type MessageWithNames struct {
 	Message
-	SenderPushName    string // Current WhatsApp display name (from push_names table)
-	SenderContactName string // Current saved contact name (from chats table)
-	ChatName          string // Current chat name (for display)
+	SenderPushName    string         // Current WhatsApp display name (from push_names table)
+	SenderContactName string         // Current saved contact name (from chats table)
+	ChatName          string         // Current chat name (for display)
+	MediaMetadata     *MediaMetadata // Associated media metadata (null if no media)
 }
 
 // messages operations manager
@@ -219,7 +220,10 @@ func (s *MessageStore) GetOldestMessage(chatJID string) (*Message, error) {
 func (s *MessageStore) GetChatMessagesOlderThan(chatJID string, timestamp time.Time, limit int) ([]MessageWithNames, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-	       text, timestamp, is_from_me, message_type
+	       text, timestamp, is_from_me, message_type,
+	       media_file_path, media_file_name, media_file_size, media_mime_type,
+	       media_width, media_height, media_duration, media_download_status,
+	       media_download_timestamp, media_download_error
 	FROM messages_with_names
 	WHERE chat_jid = ? AND timestamp < ?
 	ORDER BY timestamp DESC
@@ -245,7 +249,10 @@ func (s *MessageStore) GetChatMessagesWithNamesFiltered(
 ) ([]MessageWithNames, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-	       text, timestamp, is_from_me, message_type
+	       text, timestamp, is_from_me, message_type,
+	       media_file_path, media_file_name, media_file_size, media_mime_type,
+	       media_width, media_height, media_duration, media_download_status,
+	       media_download_timestamp, media_download_error
 	FROM messages_with_names
 	WHERE chat_jid = ?
 	`
@@ -323,7 +330,10 @@ func (s *MessageStore) SearchMessagesWithNamesFiltered(
 	if useGlob {
 		sqlQuery = `
 		SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-		       text, timestamp, is_from_me, message_type
+		       text, timestamp, is_from_me, message_type,
+		       media_file_path, media_file_name, media_file_size, media_mime_type,
+		       media_width, media_height, media_duration, media_download_status,
+		       media_download_timestamp, media_download_error
 		FROM messages_with_names
 		WHERE text GLOB ?
 		`
@@ -331,7 +341,10 @@ func (s *MessageStore) SearchMessagesWithNamesFiltered(
 	} else {
 		sqlQuery = `
 		SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-		       text, timestamp, is_from_me, message_type
+		       text, timestamp, is_from_me, message_type,
+		       media_file_path, media_file_name, media_file_size, media_mime_type,
+		       media_width, media_height, media_duration, media_download_status,
+		       media_download_timestamp, media_download_error
 		FROM messages_with_names
 		WHERE text LIKE ?
 		`
@@ -360,7 +373,10 @@ func (s *MessageStore) SearchMessagesWithNamesFiltered(
 func (s *MessageStore) SearchMessagesWithNames(q string, limit int) ([]MessageWithNames, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-	       text, timestamp, is_from_me, message_type
+	       text, timestamp, is_from_me, message_type,
+	       media_file_path, media_file_name, media_file_size, media_mime_type,
+	       media_width, media_height, media_duration, media_download_status,
+	       media_download_timestamp, media_download_error
 	FROM messages_with_names
 	WHERE text LIKE ?
 	ORDER BY timestamp DESC
@@ -381,7 +397,10 @@ func (s *MessageStore) SearchMessagesWithNames(q string, limit int) ([]MessageWi
 func (s *MessageStore) GetChatMessagesWithNames(chatJID string, limit int, offset int) ([]MessageWithNames, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
-	       text, timestamp, is_from_me, message_type
+	       text, timestamp, is_from_me, message_type,
+	       media_file_path, media_file_name, media_file_size, media_mime_type,
+	       media_width, media_height, media_duration, media_download_status,
+	       media_download_timestamp, media_download_error
 	FROM messages_with_names
 	WHERE chat_jid = ?
 	ORDER BY timestamp DESC
@@ -405,6 +424,13 @@ func (s *MessageStore) scanMessagesWithNames(rows *sql.Rows) ([]MessageWithNames
 		var msg MessageWithNames
 		var timestampUnix int64
 
+		// nedia metadata fields (nullable)
+		var mediaFilePath, mediaFileName, mediaMimeType sql.NullString
+		var mediaFileSize sql.NullInt64
+		var mediaWidth, mediaHeight, mediaDuration sql.NullInt64
+		var mediaDownloadStatus, mediaDownloadError sql.NullString
+		var mediaDownloadTimestamp sql.NullInt64
+
 		err := rows.Scan(
 			&msg.ID,
 			&msg.ChatJID,
@@ -416,12 +442,63 @@ func (s *MessageStore) scanMessagesWithNames(rows *sql.Rows) ([]MessageWithNames
 			&timestampUnix,
 			&msg.IsFromMe,
 			&msg.MessageType,
+			// media metadata fields
+			&mediaFilePath,
+			&mediaFileName,
+			&mediaFileSize,
+			&mediaMimeType,
+			&mediaWidth,
+			&mediaHeight,
+			&mediaDuration,
+			&mediaDownloadStatus,
+			&mediaDownloadTimestamp,
+			&mediaDownloadError,
 		)
 		if err != nil {
 			return nil, err
 		}
 
 		msg.Timestamp = time.Unix(timestampUnix, 0)
+
+		// populate media metadata if present
+		if mediaFileName.Valid && mediaMimeType.Valid {
+			meta := &MediaMetadata{
+				MessageID:      msg.ID,
+				FileName:       mediaFileName.String,
+				FileSize:       mediaFileSize.Int64,
+				MimeType:       mediaMimeType.String,
+				DownloadStatus: "pending",
+			}
+
+			if mediaFilePath.Valid {
+				meta.FilePath = mediaFilePath.String
+			}
+			if mediaWidth.Valid {
+				w := int(mediaWidth.Int64)
+				meta.Width = &w
+			}
+			if mediaHeight.Valid {
+				h := int(mediaHeight.Int64)
+				meta.Height = &h
+			}
+			if mediaDuration.Valid {
+				d := int(mediaDuration.Int64)
+				meta.Duration = &d
+			}
+			if mediaDownloadStatus.Valid {
+				meta.DownloadStatus = mediaDownloadStatus.String
+			}
+			if mediaDownloadTimestamp.Valid {
+				ts := time.Unix(mediaDownloadTimestamp.Int64, 0)
+				meta.DownloadTimestamp = &ts
+			}
+			if mediaDownloadError.Valid {
+				meta.DownloadError = mediaDownloadError.String
+			}
+
+			msg.MediaMetadata = meta
+		}
+
 		messages = append(messages, msg)
 	}
 
