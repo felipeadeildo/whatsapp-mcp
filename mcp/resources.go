@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,13 +57,12 @@ func (m *MCPServer) registerResources() {
 		m.handleSearchPatternsGuide,
 	)
 
-	// dynamic media resource
-	m.server.AddResource(
-		mcp.NewResource(
+	// dynamic media resource template
+	m.server.AddResourceTemplate(
+		mcp.NewResourceTemplate(
 			"whatsapp://media/{message_id}",
 			"WhatsApp Media File",
-			mcp.WithResourceDescription("Access media file from a WhatsApp message (returns file path)"),
-			mcp.WithMIMEType("text/plain"),
+			mcp.WithTemplateDescription("Access media file from a WhatsApp message (image, video, audio, document)"),
 		),
 		m.handleMediaResource,
 	)
@@ -874,10 +874,19 @@ search_messages(query="budget*", from="558293093900@s.whatsapp.net", limit=50)
 
 // handles dynamic media resource requests
 func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
-	// extract message_id from URI
-	// URI format: whatsapp://media/{message_id}
 	uri := req.Params.URI
-	messageID := filepath.Base(uri) // Get the last part after the last /
+
+	var messageID string
+	if req.Params.Arguments != nil {
+		if messageIDs, ok := req.Params.Arguments["message_id"].([]string); ok && len(messageIDs) > 0 {
+			messageID = messageIDs[0]
+		}
+	}
+
+	// fallback to parsing from URI if arguments not available
+	if messageID == "" {
+		messageID = filepath.Base(uri)
+	}
 
 	// get media metadata
 	meta, err := m.mediaStore.GetMediaMetadata(messageID)
@@ -898,33 +907,21 @@ func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourc
 		return nil, fmt.Errorf("media file not found at: %s", fullPath)
 	}
 
-	// format metadata info
-	info := fmt.Sprintf(`Media File Path: %s
-
-Metadata:
-- Name: %s
-- Type: %s
-- Size: %s`,
-		fullPath,
-		meta.FileName,
-		meta.MimeType,
-		formatFileSize(meta.FileSize))
-
-	// add dimensions if available
-	if meta.Width != nil && meta.Height != nil {
-		info += fmt.Sprintf("\n- Dimensions: %dx%d", *meta.Width, *meta.Height)
+	// read the actual file data
+	fileData, err := os.ReadFile(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read media file: %w", err)
 	}
 
-	// add duration if available
-	if meta.Duration != nil {
-		info += fmt.Sprintf("\n- Duration: %d:%02d", *meta.Duration/60, *meta.Duration%60)
-	}
+	// encode to base64 for transmission
+	encodedData := base64.StdEncoding.EncodeToString(fileData)
 
+	// return the file as a blob so AI assistants can view it
 	return []mcp.ResourceContents{
-		mcp.TextResourceContents{
+		mcp.BlobResourceContents{
 			URI:      uri,
-			MIMEType: "text/plain",
-			Text:     info,
+			MIMEType: meta.MimeType,
+			Blob:     encodedData,
 		},
 	}, nil
 }
