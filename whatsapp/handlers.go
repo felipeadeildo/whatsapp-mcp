@@ -518,6 +518,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	}
 
 	var allMessages []storage.Message
+	var allMediaMetadata []storage.MediaMetadata
 	chatMap := make(map[string]*storage.Chat)      // track chats by canonical JID
 	additionalPushNames := make(map[string]string) // collect push names from messages
 
@@ -553,6 +554,18 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			// skip saving poll-related messages
 			if msgData.MessageType == "poll" {
 				continue
+			}
+
+			// extract media metadata from history message (if exists)
+			actualMessage := msg.GetMessage()
+			if actualMessage != nil {
+				mediaType := getMediaTypeFromMessage(actualMessage)
+				if mediaType != "" && mediaType != "vcard" && mediaType != "contact_array" {
+					mediaMetadata := c.extractMediaMetadata(actualMessage, msgData.MessageID)
+					if mediaMetadata != nil {
+						allMediaMetadata = append(allMediaMetadata, *mediaMetadata)
+					}
+				}
 			}
 
 			// normalize JIDs to canonical format
@@ -624,6 +637,73 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 		c.log.Infof("History sync complete: %d chats updated, %d messages saved",
 			len(chatMap), len(allMessages))
+	}
+
+	if len(allMediaMetadata) > 0 {
+		c.log.Infof("Saving %d media metadata records from history sync", len(allMediaMetadata))
+
+		savedCount := 0
+		pendingDownloads := []storage.MediaMetadata{}
+
+		for _, mediaMetadata := range allMediaMetadata {
+			if err := c.mediaStore.SaveMediaMetadata(mediaMetadata); err != nil {
+				c.log.Warnf("Failed to save media metadata for %s: %v", mediaMetadata.MessageID, err)
+			} else {
+				savedCount++
+				// collect media that needs auto-download
+				if mediaMetadata.DownloadStatus == "pending" {
+					pendingDownloads = append(pendingDownloads, mediaMetadata)
+				}
+			}
+		}
+
+		c.log.Infof("Saved %d/%d media metadata records", savedCount, len(allMediaMetadata))
+
+		// trigger async downloads for pending media
+		if len(pendingDownloads) > 0 {
+			c.log.Infof("Triggering downloads for %d media files from history sync", len(pendingDownloads))
+
+			for _, metadata := range pendingDownloads {
+				// need to get the original message for downloading
+				// find it in the conversations
+				go func(meta storage.MediaMetadata) {
+					// find the message in history sync data
+					for _, conv := range evt.Data.GetConversations() {
+						for _, histMsg := range conv.GetMessages() {
+							msg := histMsg.GetMessage()
+							if msg == nil {
+								continue
+							}
+
+							key := msg.GetKey()
+							if key != nil && key.GetID() == meta.MessageID {
+								// found the message, download media
+								downloadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+								defer cancel()
+
+								actualMessage := msg.GetMessage()
+								if actualMessage != nil {
+									if err := c.downloadMediaWithRetry(downloadCtx, actualMessage, &meta); err != nil {
+										c.log.Errorf("Failed to download history media %s: %v", meta.MessageID, err)
+										// update status based on error type
+										if err.Error() == "media expired or deleted" {
+											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "expired", err)
+										} else {
+											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "failed", err)
+										}
+									} else {
+										c.mediaStore.UpdateDownloadStatus(meta.MessageID, "downloaded", nil)
+										c.log.Infof("Downloaded history media %s successfully", meta.MessageID)
+									}
+								}
+								return
+							}
+						}
+					}
+					c.log.Warnf("Could not find message %s for download", meta.MessageID)
+				}(metadata)
+			}
+		}
 	}
 
 	// save additional push names collected from messages
