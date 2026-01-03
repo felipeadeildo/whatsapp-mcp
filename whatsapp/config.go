@@ -8,18 +8,20 @@ import (
 
 // media download configuration
 type MediaConfig struct {
-	AutoDownloadEnabled bool
-	AutoDownloadMaxSize int64 // bytes
-	AutoDownloadTypes   map[string]bool
-	StoragePath         string
+	AutoDownloadEnabled         bool
+	AutoDownloadFromHistory     bool
+	AutoDownloadMaxSize         int64 // bytes
+	AutoDownloadTypes           map[string]bool
+	StoragePath                 string
 }
 
 // media configuration from environment variables
 func LoadMediaConfig() MediaConfig {
 	config := MediaConfig{
-		AutoDownloadEnabled: getEnvBool("MEDIA_AUTO_DOWNLOAD_ENABLED", true),
-		AutoDownloadMaxSize: getEnvInt64("MEDIA_AUTO_DOWNLOAD_MAX_SIZE_MB", 10) * 1024 * 1024,
-		StoragePath:         getEnv("MEDIA_STORAGE_PATH", "./data/media"),
+		AutoDownloadEnabled:     getEnvBool("MEDIA_AUTO_DOWNLOAD_ENABLED", true),
+		AutoDownloadFromHistory: getEnvBool("MEDIA_AUTO_DOWNLOAD_FROM_HISTORY", false),
+		AutoDownloadMaxSize:     getEnvInt64("MEDIA_AUTO_DOWNLOAD_MAX_SIZE_MB", 10) * 1024 * 1024,
+		StoragePath:             getEnv("MEDIA_STORAGE_PATH", "./data/media"),
 	}
 
 	// parse allowed types

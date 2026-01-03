@@ -659,10 +659,16 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 
 		c.log.Infof("Saved %d/%d media metadata records", savedCount, len(allMediaMetadata))
 
-		// trigger async downloads for pending media
+		// trigger async downloads for pending media (if enabled)
 		if len(pendingDownloads) > 0 {
-			c.log.Infof("Triggering downloads for %d media files from history sync", len(pendingDownloads))
+			if c.mediaConfig.AutoDownloadFromHistory {
+				c.log.Infof("Triggering downloads for %d media files from history sync", len(pendingDownloads))
+			} else {
+				c.log.Infof("Skipping auto-download for %d history media files (MEDIA_AUTO_DOWNLOAD_FROM_HISTORY=false)", len(pendingDownloads))
+			}
+		}
 
+		if len(pendingDownloads) > 0 && c.mediaConfig.AutoDownloadFromHistory {
 			for _, metadata := range pendingDownloads {
 				// need to get the original message for downloading
 				// find it in the conversations
