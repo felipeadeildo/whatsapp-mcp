@@ -413,7 +413,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 			c.log.Debugf("Saved media metadata for %s: type=%s, size=%d, status=%s",
 				info.ID, mediaMetadata.MimeType, mediaMetadata.FileSize, mediaMetadata.DownloadStatus)
 
-			// shoud auto-download?
+			// should auto-download?
 			if mediaMetadata.DownloadStatus == "pending" {
 				c.log.Infof("Auto-downloading %s media (%d bytes) from %s",
 					mediaType, mediaMetadata.FileSize, info.ID)

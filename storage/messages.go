@@ -424,7 +424,7 @@ func (s *MessageStore) scanMessagesWithNames(rows *sql.Rows) ([]MessageWithNames
 		var msg MessageWithNames
 		var timestampUnix int64
 
-		// nedia metadata fields (nullable)
+		// media metadata fields (nullable)
 		var mediaFilePath, mediaFileName, mediaMimeType sql.NullString
 		var mediaFileSize sql.NullInt64
 		var mediaWidth, mediaHeight, mediaDuration sql.NullInt64
