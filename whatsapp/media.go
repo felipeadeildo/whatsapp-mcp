@@ -16,7 +16,12 @@ import (
 )
 
 // determines initial download status based on auto-download config
-func (c *Client) getInitialDownloadStatus(mediaType string, fileSize int64) string {
+func (c *Client) getInitialDownloadStatus(mediaType string, fileSize int64, fromHistory bool) string {
+	// check if auto-download is enabled based on source
+	if fromHistory && !c.mediaConfig.AutoDownloadFromHistory {
+		return "skipped"
+	}
+
 	if c.shouldAutoDownload(mediaType, fileSize) {
 		return "pending"
 	}
@@ -24,7 +29,7 @@ func (c *Client) getInitialDownloadStatus(mediaType string, fileSize int64) stri
 }
 
 // extracts metadata from WhatsApp message
-func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *storage.MediaMetadata {
+func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string, fromHistory bool) *storage.MediaMetadata {
 	if msg == nil {
 		return nil
 	}
@@ -45,7 +50,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:     sticker.GetDirectPath(),
 			FileSHA256:     sticker.GetFileSHA256(),
 			FileEncSHA256:  sticker.GetFileEncSHA256(),
-			DownloadStatus: c.getInitialDownloadStatus("sticker", fileSize),
+			DownloadStatus: c.getInitialDownloadStatus("sticker", fileSize, fromHistory),
 		}
 	}
 
@@ -66,7 +71,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:    img.GetDirectPath(),
 			FileSHA256:    img.GetFileSHA256(),
 			FileEncSHA256: img.GetFileEncSHA256(),
-			DownloadStatus: c.getInitialDownloadStatus("image", fileSize),
+			DownloadStatus: c.getInitialDownloadStatus("image", fileSize, fromHistory),
 		}
 	}
 
@@ -88,7 +93,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:    vid.GetDirectPath(),
 			FileSHA256:    vid.GetFileSHA256(),
 			FileEncSHA256: vid.GetFileEncSHA256(),
-			DownloadStatus: c.getInitialDownloadStatus("video", fileSize),
+			DownloadStatus: c.getInitialDownloadStatus("video", fileSize, fromHistory),
 		}
 	}
 
@@ -113,7 +118,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:    aud.GetDirectPath(),
 			FileSHA256:    aud.GetFileSHA256(),
 			FileEncSHA256: aud.GetFileEncSHA256(),
-			DownloadStatus: c.getInitialDownloadStatus(mediaType, fileSize),
+			DownloadStatus: c.getInitialDownloadStatus(mediaType, fileSize, fromHistory),
 		}
 	}
 
@@ -138,7 +143,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 			DirectPath:    doc.GetDirectPath(),
 			FileSHA256:    doc.GetFileSHA256(),
 			FileEncSHA256: doc.GetFileEncSHA256(),
-			DownloadStatus: c.getInitialDownloadStatus("document", fileSize),
+			DownloadStatus: c.getInitialDownloadStatus("document", fileSize, fromHistory),
 		}
 	}
 

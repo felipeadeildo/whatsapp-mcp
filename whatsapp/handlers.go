@@ -352,7 +352,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 	var mediaMetadata *storage.MediaMetadata
 	mediaType := getMediaTypeFromMessage(evt.Message)
 	if mediaType != "" && mediaType != "vcard" && mediaType != "contact_array" {
-		mediaMetadata = c.extractMediaMetadata(evt.Message, info.ID)
+		mediaMetadata = c.extractMediaMetadata(evt.Message, info.ID, false)
 	}
 
 	text := extractText(evt.Message)
@@ -561,7 +561,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			if actualMessage != nil {
 				mediaType := getMediaTypeFromMessage(actualMessage)
 				if mediaType != "" && mediaType != "vcard" && mediaType != "contact_array" {
-					mediaMetadata := c.extractMediaMetadata(actualMessage, msgData.MessageID)
+					mediaMetadata := c.extractMediaMetadata(actualMessage, msgData.MessageID, true)
 					if mediaMetadata != nil {
 						allMediaMetadata = append(allMediaMetadata, *mediaMetadata)
 					}
