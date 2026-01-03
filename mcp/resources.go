@@ -927,7 +927,8 @@ func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourc
 
 	// verify file exists
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("media file not found at: %s", absPath)
+		m.log.Printf("Media file not found at path: %s", absPath)
+		return nil, errors.New("media file not found")
 	}
 
 	// read the actual file data (use validated absolute path)
