@@ -15,12 +15,18 @@ import (
 	"whatsapp-mcp/storage"
 	"whatsapp-mcp/whatsapp"
 
+	"github.com/joho/godotenv"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/skip2/go-qrcode"
 )
 
 func main() {
+	// load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found, using environment variables only")
+	}
+
 	// get API key from environment
 	apiKey := os.Getenv("MCP_API_KEY")
 	if apiKey == "" {
