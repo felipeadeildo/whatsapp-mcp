@@ -9,6 +9,11 @@ services:
       - MCP_PORT=8080
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - TIMEZONE=${TIMEZONE:-UTC}
+      - MEDIA_AUTO_DOWNLOAD_ENABLED=${MEDIA_AUTO_DOWNLOAD_ENABLED:-true}
+      - MEDIA_AUTO_DOWNLOAD_FROM_HISTORY=${MEDIA_AUTO_DOWNLOAD_FROM_HISTORY:-false}
+      - MEDIA_AUTO_DOWNLOAD_MAX_SIZE_MB=${MEDIA_AUTO_DOWNLOAD_MAX_SIZE_MB:-10}
+      - MEDIA_AUTO_DOWNLOAD_TYPES=${MEDIA_AUTO_DOWNLOAD_TYPES:-image,audio,sticker}
+      - MEDIA_STORAGE_PATH=${MEDIA_STORAGE_PATH:-./data/media}
     volumes:
       # persist WhatsApp session and message database
       - ./data:/app/data
