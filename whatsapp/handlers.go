@@ -420,7 +420,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 
 				// download asynchronously to avoid blocking message processing
 				go func() {
-					downloadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+					downloadCtx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
 					defer cancel()
 
 					if err := c.downloadMediaWithRetry(downloadCtx, evt.Message, mediaMetadata); err != nil {
@@ -687,7 +687,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 							key := msg.GetKey()
 							if key != nil && key.GetID() == meta.MessageID {
 								// found the message, download media
-								downloadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+								downloadCtx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
 								defer cancel()
 
 								actualMessage := msg.GetMessage()

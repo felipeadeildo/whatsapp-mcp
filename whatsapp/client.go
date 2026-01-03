@@ -26,6 +26,8 @@ type Client struct {
 	logFile          *os.File
 	historySyncChans map[string]chan bool // tracks pending sync requests by chat JID
 	historySyncMux   sync.Mutex           // protects the map
+	ctx              context.Context      // client lifecycle context
+	cancel           context.CancelFunc   // cancel function to stop all goroutines
 }
 
 type fileLogger struct {
@@ -110,6 +112,9 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, logL
 
 	waClient := whatsmeow.NewClient(deviceStore, logger)
 
+	// create client lifecycle context
+	clientCtx, cancel := context.WithCancel(context.Background())
+
 	client := &Client{
 		wa:               waClient,
 		store:            store,
@@ -118,6 +123,8 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, logL
 		log:              logger,
 		logFile:          logFile,
 		historySyncChans: make(map[string]chan bool),
+		ctx:              clientCtx,
+		cancel:           cancel,
 	}
 
 	waClient.AddEventHandler(client.eventHandler)
@@ -134,6 +141,10 @@ func (c *Client) Connect() error {
 }
 
 func (c *Client) Disconnect() {
+	// cancel context to stop all running goroutines
+	if c.cancel != nil {
+		c.cancel()
+	}
 	c.wa.Disconnect()
 	if c.logFile != nil {
 		c.logFile.Close()
