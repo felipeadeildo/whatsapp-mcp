@@ -19,6 +19,8 @@ import (
 type Client struct {
 	wa               *whatsmeow.Client
 	store            *storage.MessageStore
+	mediaStore       *storage.MediaStore
+	mediaConfig      MediaConfig
 	log              waLog.Logger
 	logFile          *os.File
 	historySyncChans map[string]chan bool // tracks pending sync requests by chat JID
@@ -57,7 +59,7 @@ func (l *fileLogger) Sub(module string) waLog.Logger {
 	}
 }
 
-func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Client, error) {
+func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, dbPath string, logLevel string) (*Client, error) {
 	// validate log level, default to INFO if invalid
 	validLevels := map[string]bool{
 		"DEBUG": true,
@@ -69,13 +71,13 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 		logLevel = "INFO"
 	}
 
-	// Create log file in data directory
+	// create log file in data directory
 	logFile, err := os.OpenFile("./data/whatsapp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open log file: %w", err)
 	}
 
-	// Create base logger for stdout
+	// create base logger for stdout
 	baseLogger := waLog.Stdout("whatsapp", logLevel, true)
 
 	// Wrap with file logger
@@ -85,6 +87,13 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 	}
 
 	logger.Infof("Initializing WhatsApp client with log level: %s (logging to ./data/whatsapp.log)", logLevel)
+
+	// Load media configuration
+	mediaConfig := LoadMediaConfig()
+	logger.Infof("Media auto-download: enabled=%v, max_size=%d MB, types=%v",
+		mediaConfig.AutoDownloadEnabled,
+		mediaConfig.AutoDownloadMaxSize/(1024*1024),
+		getEnabledTypes(mediaConfig.AutoDownloadTypes))
 
 	ctx := context.Background()
 
@@ -103,6 +112,8 @@ func NewClient(store *storage.MessageStore, dbPath string, logLevel string) (*Cl
 	client := &Client{
 		wa:               waClient,
 		store:            store,
+		mediaStore:       mediaStore,
+		mediaConfig:      mediaConfig,
 		log:              logger,
 		logFile:          logFile,
 		historySyncChans: make(map[string]chan bool),
@@ -255,4 +266,15 @@ func (c *Client) RequestHistorySync(ctx context.Context, chatJID string, count i
 		c.log.Infof("Sent ON_DEMAND history sync request for chat %s (count: %d, async mode)", normalizedJID, count)
 		return []storage.MessageWithNames{}, nil
 	}
+}
+
+// returns a list of enabled media types for logging
+func getEnabledTypes(types map[string]bool) []string {
+	var enabled []string
+	for t, v := range types {
+		if v {
+			enabled = append(enabled, t)
+		}
+	}
+	return enabled
 }

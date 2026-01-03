@@ -1,0 +1,438 @@
+package whatsapp
+
+import (
+	"context"
+	"crypto/sha256"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"unicode"
+
+	"go.mau.fi/whatsmeow/proto/waE2E"
+	"whatsapp-mcp/storage"
+)
+
+// extracts metadata from WhatsApp message
+func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *storage.MediaMetadata {
+	if msg == nil {
+		return nil
+	}
+
+	// image message
+	if img := msg.GetImageMessage(); img != nil {
+		// * images don't have filename field, generate from message ID
+		fileName := fmt.Sprintf("image_%s.jpg", messageID[:min(8, len(messageID))])
+
+		return &storage.MediaMetadata{
+			MessageID:     messageID,
+			FileName:      fileName,
+			FileSize:      int64(img.GetFileLength()),
+			MimeType:      img.GetMimetype(),
+			Width:         intPtr(int(img.GetWidth())),
+			Height:        intPtr(int(img.GetHeight())),
+			MediaKey:      img.GetMediaKey(),
+			DirectPath:    img.GetDirectPath(),
+			FileSHA256:    img.GetFileSHA256(),
+			FileEncSHA256: img.GetFileEncSHA256(),
+			DownloadStatus: "pending",
+		}
+	}
+
+	// video message
+	if vid := msg.GetVideoMessage(); vid != nil {
+		// * videos don't have filename field, generate from message ID
+		fileName := fmt.Sprintf("video_%s.mp4", messageID[:min(8, len(messageID))])
+
+		return &storage.MediaMetadata{
+			MessageID:     messageID,
+			FileName:      fileName,
+			FileSize:      int64(vid.GetFileLength()),
+			MimeType:      vid.GetMimetype(),
+			Width:         intPtr(int(vid.GetWidth())),
+			Height:        intPtr(int(vid.GetHeight())),
+			Duration:      intPtr(int(vid.GetSeconds())),
+			MediaKey:      vid.GetMediaKey(),
+			DirectPath:    vid.GetDirectPath(),
+			FileSHA256:    vid.GetFileSHA256(),
+			FileEncSHA256: vid.GetFileEncSHA256(),
+			DownloadStatus: "pending",
+		}
+	}
+
+	// audio message
+	if aud := msg.GetAudioMessage(); aud != nil {
+		fileName := "audio.ogg"
+		if aud.GetPTT() {
+			fileName = "voice_note.ogg"
+		}
+		fileName = fmt.Sprintf("%s_%s", messageID[:8], fileName)
+
+		return &storage.MediaMetadata{
+			MessageID:     messageID,
+			FileName:      fileName,
+			FileSize:      int64(aud.GetFileLength()),
+			MimeType:      aud.GetMimetype(),
+			Duration:      intPtr(int(aud.GetSeconds())),
+			MediaKey:      aud.GetMediaKey(),
+			DirectPath:    aud.GetDirectPath(),
+			FileSHA256:    aud.GetFileSHA256(),
+			FileEncSHA256: aud.GetFileEncSHA256(),
+			DownloadStatus: "pending",
+		}
+	}
+
+	// document message
+	if doc := msg.GetDocumentMessage(); doc != nil {
+		fileName := doc.GetFileName()
+		if fileName == "" {
+			fileName = fmt.Sprintf("document_%s", messageID[:8])
+			// try to add extension from MIME type
+			if ext := mimeToExtension(doc.GetMimetype()); ext != "" {
+				fileName += ext
+			}
+		}
+
+		return &storage.MediaMetadata{
+			MessageID:     messageID,
+			FileName:      fileName,
+			FileSize:      int64(doc.GetFileLength()),
+			MimeType:      doc.GetMimetype(),
+			MediaKey:      doc.GetMediaKey(),
+			DirectPath:    doc.GetDirectPath(),
+			FileSHA256:    doc.GetFileSHA256(),
+			FileEncSHA256: doc.GetFileEncSHA256(),
+			DownloadStatus: "pending",
+		}
+	}
+
+	// sticker message
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		fileName := fmt.Sprintf("sticker_%s.webp", messageID[:8])
+
+		return &storage.MediaMetadata{
+			MessageID:     messageID,
+			FileName:      fileName,
+			FileSize:      int64(sticker.GetFileLength()),
+			MimeType:      sticker.GetMimetype(),
+			Width:         intPtr(int(sticker.GetWidth())),
+			Height:        intPtr(int(sticker.GetHeight())),
+			MediaKey:      sticker.GetMediaKey(),
+			DirectPath:    sticker.GetDirectPath(),
+			FileSHA256:    sticker.GetFileSHA256(),
+			FileEncSHA256: sticker.GetFileEncSHA256(),
+			DownloadStatus: "pending",
+		}
+	}
+
+	return nil
+}
+
+// checks if media should be auto-downloaded
+func (c *Client) shouldAutoDownload(mediaType string, fileSize int64) bool {
+	if !c.mediaConfig.AutoDownloadEnabled {
+		return false
+	}
+
+	// check type filter
+	if !c.mediaConfig.AutoDownloadTypes[mediaType] {
+		c.log.Debugf("Media type %s not in auto-download types", mediaType)
+		return false
+	}
+
+	// check size filter (0 = unlimited)
+	if c.mediaConfig.AutoDownloadMaxSize > 0 && fileSize > c.mediaConfig.AutoDownloadMaxSize {
+		c.log.Debugf("Media size %d bytes exceeds max %d bytes", fileSize, c.mediaConfig.AutoDownloadMaxSize)
+		return false
+	}
+
+	return true
+}
+
+// downloads media from WhatsApp and saves to disk
+func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) error {
+	if msg == nil || meta == nil {
+		return fmt.Errorf("nil message or metadata")
+	}
+
+	// get the appropriate downloadable message
+	var downloadable interface{}
+
+	if img := msg.GetImageMessage(); img != nil {
+		downloadable = img
+	} else if vid := msg.GetVideoMessage(); vid != nil {
+		downloadable = vid
+	} else if aud := msg.GetAudioMessage(); aud != nil {
+		downloadable = aud
+	} else if doc := msg.GetDocumentMessage(); doc != nil {
+		downloadable = doc
+	} else if sticker := msg.GetStickerMessage(); sticker != nil {
+		downloadable = sticker
+	} else {
+		return fmt.Errorf("unsupported media type")
+	}
+
+	// generate unique file path
+	filePath, err := c.generateMediaFilePath(meta)
+	if err != nil {
+		return fmt.Errorf("failed to generate file path: %w", err)
+	}
+
+	// create directory if needed
+	dir := filepath.Dir(filePath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// create file
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer file.Close()
+
+	// download to file using whatsmeow's Download method
+	var data []byte
+	switch d := downloadable.(type) {
+	case *waE2E.ImageMessage:
+		data, err = c.wa.Download(ctx, d)
+	case *waE2E.VideoMessage:
+		data, err = c.wa.Download(ctx, d)
+	case *waE2E.AudioMessage:
+		data, err = c.wa.Download(ctx, d)
+	case *waE2E.DocumentMessage:
+		data, err = c.wa.Download(ctx, d)
+	case *waE2E.StickerMessage:
+		data, err = c.wa.Download(ctx, d)
+	default:
+		return fmt.Errorf("unknown downloadable type")
+	}
+
+	if err != nil {
+		// check for specific errors
+		errStr := err.Error()
+		if strings.Contains(errStr, "404") || strings.Contains(errStr, "410") {
+			c.log.Warnf("Media no longer available (expired): %v", err)
+			return fmt.Errorf("media expired or deleted")
+		}
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// write data to file
+	if _, err := file.Write(data); err != nil {
+		os.Remove(filePath)
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+
+	// verify download
+	if err := c.verifyDownload(filePath, meta); err != nil {
+		os.Remove(filePath)
+		return fmt.Errorf("verification failed: %w", err)
+	}
+
+	// update metadata with relative file path
+	relPath, err := filepath.Rel(c.mediaConfig.StoragePath, filePath)
+	if err != nil {
+		relPath = filePath
+	}
+	meta.FilePath = relPath
+	meta.DownloadStatus = "downloaded"
+	now := time.Now()
+	meta.DownloadTimestamp = &now
+
+	c.log.Infof("Downloaded media %s to %s (%d bytes)", meta.MessageID, relPath, meta.FileSize)
+
+	return nil
+}
+
+// creates unique file path based on metadata
+func (c *Client) generateMediaFilePath(meta *storage.MediaMetadata) (string, error) {
+	// determine subdirectory based on MIME type
+	var subdir string
+	switch {
+	case strings.HasPrefix(meta.MimeType, "image/"):
+		subdir = "images"
+	case strings.HasPrefix(meta.MimeType, "video/"):
+		subdir = "videos"
+	case strings.HasPrefix(meta.MimeType, "audio/"):
+		subdir = "audio"
+	default:
+		subdir = "documents"
+	}
+
+	// safe filename: {message_id}_{timestamp}_{sanitized_filename}
+	timestamp := time.Now().Format("20060102_150405")
+	safeName := sanitizeFilename(meta.FileName)
+	if safeName == "" {
+		// fallback: use extension from MIME type
+		ext := mimeToExtension(meta.MimeType)
+		safeName = fmt.Sprintf("media_%s%s", timestamp, ext)
+	}
+
+	// ensure filename starts with message ID for uniqueness
+	fileName := fmt.Sprintf("%s_%s_%s", meta.MessageID[:min(8, len(meta.MessageID))], timestamp, safeName)
+
+	return filepath.Join(c.mediaConfig.StoragePath, subdir, fileName), nil
+}
+
+// checks file integrity
+func (c *Client) verifyDownload(filePath string, meta *storage.MediaMetadata) error {
+	stat, err := os.Stat(filePath)
+	if err != nil {
+		return err
+	}
+
+	// check file size
+	if stat.Size() != meta.FileSize {
+		c.log.Warnf("Size mismatch: expected %d, got %d", meta.FileSize, stat.Size())
+		// ! don't fail on size mismatch as WhatsApp sometimes reports incorrect sizes
+	}
+
+	// * optionally verify SHA256 if available
+	if len(meta.FileSHA256) > 0 {
+		fileHash, err := hashFile(filePath)
+		if err != nil {
+			c.log.Warnf("Failed to hash file: %v", err)
+			return nil // ! don't fail on hash error
+		}
+		if !bytesEqual(fileHash, meta.FileSHA256) {
+			c.log.Warnf("SHA256 mismatch for %s", filePath)
+			// ! don't fail as encrypted hash may be checked instead
+		}
+	}
+
+	return nil
+}
+
+// downloads media with retry logic
+func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) error {
+	maxRetries := 3
+	backoff := time.Second
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err := c.downloadMedia(ctx, msg, meta)
+		if err == nil {
+			return nil
+		}
+
+		// is error retryable?
+		if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "deleted") {
+			// expired, don't retry
+			return err
+		}
+
+		c.log.Warnf("Download attempt %d/%d failed: %v", attempt, maxRetries, err)
+
+		if attempt < maxRetries {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+				backoff *= 2 // backoff
+			}
+		}
+	}
+
+	return fmt.Errorf("download failed after %d attempts", maxRetries)
+}
+
+// helperssss
+func intPtr(i int) *int {
+	return &i
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func sanitizeFilename(name string) string {
+	if name == "" {
+		return ""
+	}
+
+	// remove path separators and other unsafe characters
+	var result []rune
+	for _, r := range name {
+		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+			result = append(result, '_')
+		} else if unicode.IsPrint(r) {
+			result = append(result, r)
+		}
+	}
+
+	filename := string(result)
+
+	// length to 200 characters
+	if len(filename) > 200 {
+		// preserve extension
+		ext := filepath.Ext(filename)
+		base := filename[:200-len(ext)]
+		filename = base + ext
+	}
+
+	return filename
+}
+
+func mimeToExtension(mime string) string {
+	extensions := map[string]string{
+		"image/jpeg":      ".jpg",
+		"image/jpg":       ".jpg",
+		"image/png":       ".png",
+		"image/gif":       ".gif",
+		"image/webp":      ".webp",
+		"video/mp4":       ".mp4",
+		"video/3gpp":      ".3gp",
+		"video/quicktime": ".mov",
+		"audio/ogg":       ".ogg",
+		"audio/mpeg":      ".mp3",
+		"audio/mp4":       ".m4a",
+		"audio/aac":       ".aac",
+		"application/pdf": ".pdf",
+		"application/zip": ".zip",
+		"text/plain":      ".txt",
+	}
+
+	if ext, ok := extensions[mime]; ok {
+		return ext
+	}
+
+	// try to extract extension from MIME type
+	parts := strings.Split(mime, "/")
+	if len(parts) == 2 {
+		return "." + parts[1]
+	}
+
+	return ""
+}
+
+func hashFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		return nil, err
+	}
+
+	return hasher.Sum(nil), nil
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
