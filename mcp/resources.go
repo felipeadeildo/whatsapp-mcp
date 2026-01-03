@@ -2,6 +2,9 @@ package mcp
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -50,6 +53,17 @@ func (m *MCPServer) registerResources() {
 			mcp.WithMIMEType("text/markdown"),
 		),
 		m.handleSearchPatternsGuide,
+	)
+
+	// dynamic media resource
+	m.server.AddResource(
+		mcp.NewResource(
+			"whatsapp://media/{message_id}",
+			"WhatsApp Media File",
+			mcp.WithResourceDescription("Access media file from a WhatsApp message (returns file path)"),
+			mcp.WithMIMEType("text/plain"),
+		),
+		m.handleMediaResource,
 	)
 }
 
@@ -853,6 +867,63 @@ search_messages(query="budget*", from="558293093900@s.whatsapp.net", limit=50)
 			URI:      "whatsapp://guide/search-patterns",
 			MIMEType: "text/markdown",
 			Text:     guide,
+		},
+	}, nil
+}
+
+// handles dynamic media resource requests
+func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+	// extract message_id from URI
+	// URI format: whatsapp://media/{message_id}
+	uri := req.Params.URI
+	messageID := filepath.Base(uri) // Get the last part after the last /
+
+	// get media metadata
+	meta, err := m.mediaStore.GetMediaMetadata(messageID)
+	if err != nil || meta == nil {
+		return nil, fmt.Errorf("media not found for message: %s", messageID)
+	}
+
+	// check download status
+	if meta.DownloadStatus != "downloaded" {
+		return nil, fmt.Errorf("media not downloaded (status: %s). Enable auto-download or download manually.", meta.DownloadStatus)
+	}
+
+	// construct full file path
+	fullPath := filepath.Join("./data/media", meta.FilePath)
+
+	// verify file exists
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("media file not found at: %s", fullPath)
+	}
+
+	// format metadata info
+	info := fmt.Sprintf(`Media File Path: %s
+
+Metadata:
+- Name: %s
+- Type: %s
+- Size: %s`,
+		fullPath,
+		meta.FileName,
+		meta.MimeType,
+		formatFileSize(meta.FileSize))
+
+	// add dimensions if available
+	if meta.Width != nil && meta.Height != nil {
+		info += fmt.Sprintf("\n- Dimensions: %dx%d", *meta.Width, *meta.Height)
+	}
+
+	// add duration if available
+	if meta.Duration != nil {
+		info += fmt.Sprintf("\n- Duration: %d:%02d", *meta.Duration/60, *meta.Duration%60)
+	}
+
+	return []mcp.ResourceContents{
+		mcp.TextResourceContents{
+			URI:      uri,
+			MIMEType: "text/plain",
+			Text:     info,
 		},
 	}, nil
 }
