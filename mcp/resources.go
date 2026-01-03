@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"whatsapp-mcp/paths"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -898,16 +900,38 @@ func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourc
 		return nil, fmt.Errorf("media not downloaded (status: %s). Enable auto-download or download manually.", meta.DownloadStatus)
 	}
 
-	// construct full file path
-	fullPath := paths.GetMediaPath(meta.FilePath)
-
-	// verify file exists
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("media file not found at: %s", fullPath)
+	// sanitize and validate file path to prevent directory traversal
+	cleanPath := filepath.Clean(meta.FilePath)
+	if strings.Contains(cleanPath, "..") {
+		return nil, errors.New("invalid file path: path traversal detected")
 	}
 
-	// read the actual file data
-	fileData, err := os.ReadFile(fullPath)
+	// construct full file path
+	fullPath := paths.GetMediaPath(cleanPath)
+
+	// get absolute paths for security validation
+	mediaDir, err := filepath.Abs(paths.DataMediaDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve media directory: %w", err)
+	}
+
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve file path: %w", err)
+	}
+
+	// ensure the resolved path is within the media directory
+	if !strings.HasPrefix(absPath, mediaDir+string(filepath.Separator)) && absPath != mediaDir {
+		return nil, errors.New("invalid file path: outside media directory")
+	}
+
+	// verify file exists
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("media file not found at: %s", absPath)
+	}
+
+	// read the actual file data (use validated absolute path)
+	fileData, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read media file: %w", err)
 	}
