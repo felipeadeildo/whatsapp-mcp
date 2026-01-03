@@ -21,6 +21,25 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 		return nil
 	}
 
+	// sticker message
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		fileName := fmt.Sprintf("sticker_%s.webp", messageID[:8])
+
+		return &storage.MediaMetadata{
+			MessageID:      messageID,
+			FileName:       fileName,
+			FileSize:       int64(sticker.GetFileLength()),
+			MimeType:       sticker.GetMimetype(),
+			Width:          intPtr(int(sticker.GetWidth())),
+			Height:         intPtr(int(sticker.GetHeight())),
+			MediaKey:       sticker.GetMediaKey(),
+			DirectPath:     sticker.GetDirectPath(),
+			FileSHA256:     sticker.GetFileSHA256(),
+			FileEncSHA256:  sticker.GetFileEncSHA256(),
+			DownloadStatus: "pending",
+		}
+	}
+
 	// image message
 	if img := msg.GetImageMessage(); img != nil {
 		// * images don't have filename field, generate from message ID
@@ -108,25 +127,6 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string) *sto
 		}
 	}
 
-	// sticker message
-	if sticker := msg.GetStickerMessage(); sticker != nil {
-		fileName := fmt.Sprintf("sticker_%s.webp", messageID[:8])
-
-		return &storage.MediaMetadata{
-			MessageID:     messageID,
-			FileName:      fileName,
-			FileSize:      int64(sticker.GetFileLength()),
-			MimeType:      sticker.GetMimetype(),
-			Width:         intPtr(int(sticker.GetWidth())),
-			Height:        intPtr(int(sticker.GetHeight())),
-			MediaKey:      sticker.GetMediaKey(),
-			DirectPath:    sticker.GetDirectPath(),
-			FileSHA256:    sticker.GetFileSHA256(),
-			FileEncSHA256: sticker.GetFileEncSHA256(),
-			DownloadStatus: "pending",
-		}
-	}
-
 	return nil
 }
 
@@ -160,7 +160,9 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 	// get the appropriate downloadable message
 	var downloadable interface{}
 
-	if img := msg.GetImageMessage(); img != nil {
+	if sticker := msg.GetStickerMessage(); sticker != nil {
+		downloadable = sticker
+	} else if img := msg.GetImageMessage(); img != nil {
 		downloadable = img
 	} else if vid := msg.GetVideoMessage(); vid != nil {
 		downloadable = vid
@@ -168,8 +170,6 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 		downloadable = aud
 	} else if doc := msg.GetDocumentMessage(); doc != nil {
 		downloadable = doc
-	} else if sticker := msg.GetStickerMessage(); sticker != nil {
-		downloadable = sticker
 	} else {
 		return fmt.Errorf("unsupported media type")
 	}

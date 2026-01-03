@@ -745,10 +745,10 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
 		return getMediaTypeFromMessage(msg.DocumentWithCaptionMessage.Message)
 	case msg.ExtendedTextMessage != nil && msg.ExtendedTextMessage.Title != nil:
 		return "url"
-	case msg.ImageMessage != nil:
-		return "image"
 	case msg.StickerMessage != nil:
 		return "sticker"
+	case msg.ImageMessage != nil:
+		return "image"
 	case msg.DocumentMessage != nil:
 		return "document"
 	case msg.AudioMessage != nil:
