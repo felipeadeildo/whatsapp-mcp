@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -182,7 +181,7 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 	}
 
 	// get the appropriate downloadable message
-	var downloadable interface{}
+	var downloadable any
 
 	if sticker := msg.GetStickerMessage(); sticker != nil {
 		downloadable = sticker
@@ -253,7 +252,8 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 	// update metadata with relative file path
 	relPath, err := filepath.Rel(c.mediaConfig.StoragePath, filePath)
 	if err != nil {
-		relPath = filePath
+		os.Remove(filePath)
+		return fmt.Errorf("failed to compute relative media path: %w", err)
 	}
 	meta.FilePath = relPath
 	meta.DownloadStatus = "downloaded"
@@ -296,29 +296,24 @@ func (c *Client) generateMediaFilePath(meta *storage.MediaMetadata) (string, err
 }
 
 // checks file integrity
+// note: whatsmeow's Download() already validates HMAC, encrypted SHA256, and decrypted SHA256
+// this function only performs basic sanity checks on the written file
 func (c *Client) verifyDownload(filePath string, meta *storage.MediaMetadata) error {
 	stat, err := os.Stat(filePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("file not accessible: %w", err)
 	}
 
-	// check file size
+	// verify file has non-zero size
+	if stat.Size() == 0 {
+		return fmt.Errorf("downloaded file is empty")
+	}
+
+	// log size comparison for debugging (but don't fail on mismatch)
+	// whatsmeow already validated the file, so size differences are just metadata inaccuracies
 	if stat.Size() != meta.FileSize {
-		c.log.Warnf("Size mismatch: expected %d, got %d", meta.FileSize, stat.Size())
-		// ! don't fail on size mismatch as WhatsApp sometimes reports incorrect sizes
-	}
-
-	// * optionally verify SHA256 if available
-	if len(meta.FileSHA256) > 0 {
-		fileHash, err := hashFile(filePath)
-		if err != nil {
-			c.log.Warnf("Failed to hash file: %v", err)
-			return nil // ! don't fail on hash error
-		}
-		if !bytes.Equal(fileHash, meta.FileSHA256) {
-			c.log.Warnf("SHA256 mismatch for %s", filePath)
-			// ! don't fail as encrypted hash may be checked instead
-		}
+		c.log.Debugf("File size differs from metadata: wrote %d bytes, metadata claimed %d bytes",
+			stat.Size(), meta.FileSize)
 	}
 
 	return nil
