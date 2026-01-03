@@ -2,8 +2,10 @@ package whatsapp
 
 import (
 	"context"
+	"errors"
 	"time"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	waHistorySync "go.mau.fi/whatsmeow/proto/waHistorySync"
 	"go.mau.fi/whatsmeow/proto/waWeb"
@@ -424,7 +426,8 @@ func (c *Client) handleMessage(evt *events.Message) {
 					if err := c.downloadMediaWithRetry(downloadCtx, evt.Message, mediaMetadata); err != nil {
 						c.log.Errorf("Failed to download media %s: %v", info.ID, err)
 						// update status based on error type
-						if err.Error() == "media expired or deleted" {
+						if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
+							errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
 							c.mediaStore.UpdateDownloadStatus(info.ID, "expired", err)
 						} else {
 							c.mediaStore.UpdateDownloadStatus(info.ID, "failed", err)
@@ -691,8 +694,9 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 								if actualMessage != nil {
 									if err := c.downloadMediaWithRetry(downloadCtx, actualMessage, &meta); err != nil {
 										c.log.Errorf("Failed to download history media %s: %v", meta.MessageID, err)
-										// update status based on error type
-										if err.Error() == "media expired or deleted" {
+										// update status based on error
+										if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
+											errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
 											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "expired", err)
 										} else {
 											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "failed", err)

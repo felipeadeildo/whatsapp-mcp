@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"whatsapp-mcp/storage"
 
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
@@ -233,13 +235,7 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 	}
 
 	if err != nil {
-		// check for specific errors
-		errStr := err.Error()
-		if strings.Contains(errStr, "404") || strings.Contains(errStr, "410") {
-			c.log.Warnf("Media no longer available (expired): %v", err)
-			return fmt.Errorf("media expired or deleted")
-		}
-		return fmt.Errorf("download failed: %w", err)
+		return err
 	}
 
 	// write data to file
@@ -343,8 +339,9 @@ func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message,
 		allErrors = append(allErrors, fmt.Sprintf("attempt %d: %v", attempt, err))
 
 		// is error retryable?
-		if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "deleted") {
-			// expired, don't retry
+		// 404/410 errors indicate expired/deleted media - don't retry
+		if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
+			errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
 			return err
 		}
 
