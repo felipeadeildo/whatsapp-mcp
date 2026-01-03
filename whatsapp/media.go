@@ -330,12 +330,15 @@ func (c *Client) verifyDownload(filePath string, meta *storage.MediaMetadata) er
 func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) error {
 	maxRetries := 3
 	backoff := time.Second
+	var allErrors []string
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		err := c.downloadMedia(ctx, msg, meta)
 		if err == nil {
 			return nil
 		}
+
+		allErrors = append(allErrors, fmt.Sprintf("attempt %d: %v", attempt, err))
 
 		// is error retryable?
 		if strings.Contains(err.Error(), "expired") || strings.Contains(err.Error(), "deleted") {
@@ -355,7 +358,8 @@ func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message,
 		}
 	}
 
-	return fmt.Errorf("download failed after %d attempts", maxRetries)
+	// combine all errors into a single message
+	return fmt.Errorf("download failed after %d attempts: %s", maxRetries, strings.Join(allErrors, "; "))
 }
 
 // helperssss
