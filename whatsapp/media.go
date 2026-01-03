@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -318,7 +319,7 @@ func (c *Client) verifyDownload(filePath string, meta *storage.MediaMetadata) er
 			c.log.Warnf("Failed to hash file: %v", err)
 			return nil // ! don't fail on hash error
 		}
-		if !bytesEqual(fileHash, meta.FileSHA256) {
+		if !bytes.Equal(fileHash, meta.FileSHA256) {
 			c.log.Warnf("SHA256 mismatch for %s", filePath)
 			// ! don't fail as encrypted hash may be checked instead
 		}
@@ -366,13 +367,6 @@ func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message,
 // helperssss
 func intPtr(i int) *int {
 	return &i
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func sanitizeFilename(name string) string {
@@ -448,16 +442,4 @@ func hashFile(path string) ([]byte, error) {
 	}
 
 	return hasher.Sum(nil), nil
-}
-
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
