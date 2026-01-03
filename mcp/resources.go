@@ -3,9 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"whatsapp-mcp/paths"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -883,9 +883,8 @@ func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourc
 		}
 	}
 
-	// fallback to parsing from URI if arguments not available
 	if messageID == "" {
-		messageID = filepath.Base(uri)
+		return nil, errors.New("invalid message id")
 	}
 
 	// get media metadata
