@@ -348,47 +348,11 @@ func (c *Client) handleMessage(evt *events.Message) {
 		return
 	}
 
-	// handle message media if exist
+	// extract media metadata (if exists)
+	var mediaMetadata *storage.MediaMetadata
 	mediaType := getMediaTypeFromMessage(evt.Message)
 	if mediaType != "" && mediaType != "vcard" && mediaType != "contact_array" {
-		// extract and save media metadata
-		mediaMetadata := c.extractMediaMetadata(evt.Message, info.ID)
-		if mediaMetadata != nil {
-			if err := c.mediaStore.SaveMediaMetadata(*mediaMetadata); err != nil {
-				c.log.Errorf("Failed to save media metadata for %s: %v", info.ID, err)
-			} else {
-				c.log.Debugf("Saved media metadata for %s: type=%s, size=%d",
-					info.ID, mediaMetadata.MimeType, mediaMetadata.FileSize)
-
-				// should auto-download?
-				if c.shouldAutoDownload(mediaType, mediaMetadata.FileSize) {
-					c.log.Infof("Auto-downloading %s media (%d bytes) from %s",
-						mediaType, mediaMetadata.FileSize, info.ID)
-
-					// ! download asynchronously to avoid blocking message processing
-					// ? should i implement a queue system for media downloading? If the process dies (for some reason), we loose the media download event.
-					go func() {
-						downloadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-						defer cancel()
-
-						if err := c.downloadMediaWithRetry(downloadCtx, evt.Message, mediaMetadata); err != nil {
-							c.log.Errorf("Failed to download media %s: %v", info.ID, err)
-							// update status based on error type
-							if err.Error() == "media expired or deleted" {
-								c.mediaStore.UpdateDownloadStatus(info.ID, "expired", err)
-							} else {
-								c.mediaStore.UpdateDownloadStatus(info.ID, "failed", err)
-							}
-						} else {
-							c.mediaStore.UpdateDownloadStatus(info.ID, "downloaded", nil)
-						}
-					}()
-				} else {
-					c.log.Debugf("Skipping auto-download for %s media (%d bytes) from %s",
-						mediaType, mediaMetadata.FileSize, info.ID)
-				}
-			}
-		}
+		mediaMetadata = c.extractMediaMetadata(evt.Message, info.ID)
 	}
 
 	text := extractText(evt.Message)
@@ -438,6 +402,42 @@ func (c *Client) handleMessage(evt *events.Message) {
 
 	if err := c.processMessageData(ctx, data); err != nil {
 		return
+	}
+
+	if mediaMetadata != nil {
+		if err := c.mediaStore.SaveMediaMetadata(*mediaMetadata); err != nil {
+			c.log.Errorf("Failed to save media metadata for %s: %v", info.ID, err)
+		} else {
+			c.log.Debugf("Saved media metadata for %s: type=%s, size=%d",
+				info.ID, mediaMetadata.MimeType, mediaMetadata.FileSize)
+
+			// should auto-download?
+			if c.shouldAutoDownload(mediaType, mediaMetadata.FileSize) {
+				c.log.Infof("Auto-downloading %s media (%d bytes) from %s",
+					mediaType, mediaMetadata.FileSize, info.ID)
+
+				// download asynchronously to avoid blocking message processing
+				go func() {
+					downloadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+					defer cancel()
+
+					if err := c.downloadMediaWithRetry(downloadCtx, evt.Message, mediaMetadata); err != nil {
+						c.log.Errorf("Failed to download media %s: %v", info.ID, err)
+						// update status based on error type
+						if err.Error() == "media expired or deleted" {
+							c.mediaStore.UpdateDownloadStatus(info.ID, "expired", err)
+						} else {
+							c.mediaStore.UpdateDownloadStatus(info.ID, "failed", err)
+						}
+					} else {
+						c.mediaStore.UpdateDownloadStatus(info.ID, "downloaded", nil)
+					}
+				}()
+			} else {
+				c.log.Debugf("Skipping auto-download for %s media (%d bytes) from %s",
+					mediaType, mediaMetadata.FileSize, info.ID)
+			}
+		}
 	}
 }
 
