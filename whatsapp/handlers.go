@@ -419,25 +419,25 @@ func (c *Client) handleMessage(evt *events.Message) {
 					mediaType, mediaMetadata.FileSize, info.ID)
 
 				// download asynchronously to avoid blocking message processing
-				go func() {
+				go func(meta *storage.MediaMetadata, msgID string) {
 					downloadCtx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
 					defer cancel()
 
-					filePath, err := c.downloadMediaWithRetry(downloadCtx, evt.Message, mediaMetadata)
+					filePath, err := c.downloadMediaWithRetry(downloadCtx, evt.Message, meta)
 					if err != nil {
-						c.log.Errorf("Failed to download media %s: %v", info.ID, err)
+						c.log.Errorf("Failed to download media %s: %v", msgID, err)
 						// update status based on error type
 						if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
 							errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-							c.mediaStore.UpdateDownloadStatus(info.ID, "expired", nil, err)
+							c.mediaStore.UpdateDownloadStatus(msgID, "expired", nil, err)
 						} else {
-							c.mediaStore.UpdateDownloadStatus(info.ID, "failed", nil, err)
+							c.mediaStore.UpdateDownloadStatus(msgID, "failed", nil, err)
 						}
 					} else {
 						// update status with file path on success
-						c.mediaStore.UpdateDownloadStatus(info.ID, "downloaded", &filePath, nil)
+						c.mediaStore.UpdateDownloadStatus(msgID, "downloaded", &filePath, nil)
 					}
-				}()
+				}(mediaMetadata, info.ID)
 			} else {
 				c.log.Debugf("Skipping auto-download for %s media (%d bytes) from %s (status: %s)",
 					mediaType, mediaMetadata.FileSize, info.ID, mediaMetadata.DownloadStatus)
