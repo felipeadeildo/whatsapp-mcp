@@ -2,13 +2,13 @@ package storage
 
 import (
 	"database/sql"
-	"os"
+	"fmt"
 	"whatsapp-mcp/paths"
 
 	_ "modernc.org/sqlite"
 )
 
-// init db and create schema
+// initializes the database and runs migrations
 func InitDB() (*sql.DB, error) {
 	db, err := sql.Open("sqlite", paths.MessagesDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 
@@ -20,23 +20,11 @@ func InitDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-	if err := createSchema(db); err != nil {
-		return nil, err
+	// run migrations
+	migrator := NewMigrator(db)
+	if err := migrator.Migrate(); err != nil {
+		return nil, fmt.Errorf("migration failed: %w", err)
 	}
 
 	return db, nil
-}
-
-// create schema from the file
-func createSchema(db *sql.DB) error {
-	data, err := os.ReadFile("schema.sql")
-	if err != nil {
-		return err
-	}
-
-	schema := string(data)
-
-	_, err = db.Exec(schema)
-
-	return err
 }
