@@ -14,6 +14,11 @@ const (
 	DataMediaDir = DataDir + "/media"
 )
 
+// storage paths
+const (
+	MigrationsDir = "storage/migrations"
+)
+
 // file paths
 const (
 	// database files
@@ -27,7 +32,7 @@ const (
 	QRCodePath = "./qr.png"
 )
 
-// ensures that all required data directories exist
+// EnsureDataDirectories ensures that all required data directories exist
 func EnsureDataDirectories() error {
 	dirs := []string{
 		DataDir,
@@ -44,7 +49,7 @@ func EnsureDataDirectories() error {
 	return nil
 }
 
-// returns the full path for a media file
+// GetMediaPath returns the full path for a media file
 func GetMediaPath(relativePath string) string {
 	return filepath.Join(DataMediaDir, relativePath)
 }

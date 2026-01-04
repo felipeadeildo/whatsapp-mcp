@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25.5-alpine3.20 AS builder
+FROM golang:1.25.5-alpine3.23 AS builder
 
 WORKDIR /app
 
@@ -17,7 +17,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -o whatsapp-mcp
 
 # Runtime stage
-FROM alpine:3.20
+FROM alpine:3.23
 
 RUN apk --no-cache add ca-certificates sqlite curl tzdata
 

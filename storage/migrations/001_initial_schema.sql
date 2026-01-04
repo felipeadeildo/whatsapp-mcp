@@ -1,3 +1,9 @@
+-- Migration: 001_initial_schema
+-- Description: Initial database schema for WhatsApp MCP
+-- Previous: none
+-- Version: 001
+-- Created: 2026-01-04
+
 -- Main messages table
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY, -- Unique WhatsApp message ID
