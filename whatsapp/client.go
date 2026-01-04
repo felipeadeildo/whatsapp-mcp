@@ -147,7 +147,9 @@ func (c *Client) Disconnect() {
 	}
 	c.wa.Disconnect()
 	if c.logFile != nil {
-		c.logFile.Close()
+		if err := c.logFile.Close(); err != nil {
+			c.log.Errorf("failed to close log file: %v", err)
+		}
 	}
 }
 
