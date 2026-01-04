@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"whatsapp-mcp/paths"
 	"whatsapp-mcp/storage"
 
 	_ "modernc.org/sqlite"
@@ -26,7 +27,8 @@ func main() {
 	case "create":
 		if len(os.Args) < 3 {
 			fmt.Println("Error: migration description required")
-			fmt.Println("Usage: go run migrate.go create <description>")
+			fmt.Println("Usage: go run cmd/migrate/main.go create <description>")
+			fmt.Println("\nExample: go run cmd/migrate/main.go create add_message_reactions")
 			os.Exit(1)
 		}
 		description := strings.Join(os.Args[2:], "_")
@@ -79,16 +81,20 @@ func createMigration(description string) error {
 	// sanitize description
 	description = sanitizeDescription(description)
 
+	// ensure migrations directory exists
+	if err := os.MkdirAll(paths.MigrationsDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create migrations directory: %w", err)
+	}
+
 	// get next version number
-	migrationsDir := "storage/migrations"
-	nextVersion, err := getNextVersion(migrationsDir)
+	nextVersion, err := getNextVersion(paths.MigrationsDir)
 	if err != nil {
 		return fmt.Errorf("failed to determine next version: %w", err)
 	}
 
 	// create filename
 	filename := fmt.Sprintf("%03d_%s.sql", nextVersion, description)
-	migrationPath := filepath.Join(migrationsDir, filename)
+	migrationPath := filepath.Join(paths.MigrationsDir, filename)
 
 	// create file with template
 	template := generateMigrationTemplate(nextVersion, description)
@@ -215,7 +221,7 @@ func showStatus() error {
 	}
 
 	if len(statuses) == 0 {
-		fmt.Println("\nNo migration files found in storage/migrations/")
+		fmt.Printf("\nNo migration files found in %s/\n", paths.MigrationsDir)
 		fmt.Println("\nTo create your first migration, run:")
 		fmt.Println("  go run cmd/migrate/main.go create <description>")
 		fmt.Println("\nExample:")
@@ -292,11 +298,11 @@ func runUpgrade(target string) error {
 	// parse target version
 	version, err := strconv.Atoi(target)
 	if err != nil {
-		return fmt.Errorf("invalid version number: %s (use 'latest' or a number)", target)
+		return fmt.Errorf("invalid version number: %s (use 'latest' or a positive integer). Example: 'upgrade 2' or 'upgrade latest'", target)
 	}
 
 	if version <= 0 {
-		return fmt.Errorf("version must be a positive number")
+		return fmt.Errorf("version must be a positive number (got %d). Example: 'upgrade 2' or 'upgrade latest'", version)
 	}
 
 	fmt.Printf("Upgrading to version %d...\n", version)

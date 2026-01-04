@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"whatsapp-mcp/paths"
 )
 
 //go:embed migrations/*.sql
@@ -80,7 +81,7 @@ func (m *Migrator) Migrate() error {
 	return nil
 }
 
-// creates the schema_migrations table if it doesn't exist
+// ensureMigrationTable creates the schema_migrations table if it doesn't exist
 func (m *Migrator) ensureMigrationTable() error {
 	query := `
 	CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -94,7 +95,7 @@ func (m *Migrator) ensureMigrationTable() error {
 	return err
 }
 
-// gets the highest version number from applied migrations
+// getCurrentVersion gets the highest version number from applied migrations
 func (m *Migrator) getCurrentVersion() (int, error) {
 	var version int
 	err := m.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").Scan(&version)
@@ -105,7 +106,7 @@ func (m *Migrator) getCurrentVersion() (int, error) {
 	return version, nil
 }
 
-// loads all migration files from the embedded filesystem
+// loadMigrations loads all migration files from the embedded filesystem
 func (m *Migrator) loadMigrations() ([]Migration, error) {
 	var migrations []Migration
 
@@ -174,7 +175,7 @@ func (m *Migrator) loadMigrations() ([]Migration, error) {
 	return migrations, nil
 }
 
-// validates that already-applied migrations haven't been modified
+// validateAppliedMigrations validates that already-applied migrations haven't been modified
 func (m *Migrator) validateAppliedMigrations(migrations []Migration, currentVersion int) error {
 	for _, migration := range migrations {
 		if migration.Version > currentVersion {
@@ -190,13 +191,16 @@ func (m *Migrator) validateAppliedMigrations(migrations []Migration, currentVers
 		).Scan(&storedChecksum)
 
 		if err != nil {
-			return fmt.Errorf("migration %d is missing from schema_migrations table", migration.Version)
+			return fmt.Errorf("migration %d (%s) is missing from schema_migrations table. Database may be corrupted or partially migrated",
+				migration.Version, migration.Filename)
 		}
 
 		// compare checksums
 		if storedChecksum != migration.Checksum {
 			return fmt.Errorf(
-				"migration %d (%s) has been modified after being applied (checksum mismatch)",
+				"migration %d (%s) has been modified after being applied (checksum mismatch). "+
+					"Never modify applied migrations - create a new migration instead. "+
+					"If this is a development environment, you may need to reset your database",
 				migration.Version, migration.Filename,
 			)
 		}
@@ -205,7 +209,7 @@ func (m *Migrator) validateAppliedMigrations(migrations []Migration, currentVers
 	return nil
 }
 
-// filters migrations to only those not yet applied
+// filterPendingMigrations filters migrations to only those not yet applied
 func (m *Migrator) filterPendingMigrations(migrations []Migration, currentVersion int) []Migration {
 	var pending []Migration
 	for _, migration := range migrations {
@@ -216,7 +220,7 @@ func (m *Migrator) filterPendingMigrations(migrations []Migration, currentVersio
 	return pending
 }
 
-// applies a single migration within a transaction
+// applyMigration applies a single migration within a transaction
 func (m *Migrator) applyMigration(migration Migration) error {
 	// start transaction
 	tx, err := m.db.Begin()
@@ -330,7 +334,7 @@ func (m *Migrator) MigrateTo(targetVersion int) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("target version %d does not exist", targetVersion)
+			return fmt.Errorf("target version %d does not exist. Check available migrations in %s/", targetVersion, paths.MigrationsDir)
 		}
 	}
 
