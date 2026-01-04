@@ -134,17 +134,17 @@ INFO: All migrations applied successfully
 5. **Include indexes** - Add indexes for any new columns that will be queried
 6. **Handle existing data** - Include UPDATE statements if you're adding NOT NULL columns
 
-### Migration Status
+### Migration Commands
 
-To check which migrations have been applied, look at the server logs on startup or query the database:
-
-```sql
-SELECT * FROM schema_migrations ORDER BY version;
-```
-
-The migration CLI tool has a `status` command (implementation pending):
 ```bash
+# Check migration status
 go run cmd/migrate/main.go status
+
+# Apply all pending migrations
+go run cmd/migrate/main.go upgrade latest
+
+# Apply migrations up to a specific version
+go run cmd/migrate/main.go upgrade 2
 ```
 
 ## Development Workflow
