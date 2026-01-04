@@ -282,6 +282,67 @@ func (c *Client) RequestHistorySync(ctx context.Context, chatJID string, count i
 	}
 }
 
+// MyInfo contains the user's own WhatsApp profile information
+type MyInfo struct {
+	JID          string // User's WhatsApp JID
+	PushName     string // User's display name (from store)
+	Status       string // User's bio/status message
+	PictureID    string // Profile picture ID
+	PictureURL   string // Profile picture download URL (empty if not set)
+	BusinessName string // Verified business name (if applicable)
+}
+
+// GetMyInfo retrieves the current user's WhatsApp profile information
+func (c *Client) GetMyInfo(ctx context.Context) (*MyInfo, error) {
+	if !c.IsLoggedIn() {
+		return nil, fmt.Errorf("not logged in")
+	}
+
+	myJID := *c.wa.Store.ID
+
+	// Get basic user info (status, picture ID, verified business name)
+	userInfoMap, err := c.wa.GetUserInfo(ctx, []types.JID{myJID})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user info: %w", err)
+	}
+
+	userInfo, ok := userInfoMap[myJID]
+	if !ok {
+		return nil, fmt.Errorf("user info not found for own JID")
+	}
+
+	// Get push name from store
+	pushName := c.wa.Store.PushName
+
+	// Get contact info for business name (if available)
+	var businessName string
+	if c.wa.Store.Contacts != nil {
+		contactInfo, err := c.wa.Store.Contacts.GetContact(ctx, myJID)
+		if err == nil && contactInfo.Found {
+			businessName = contactInfo.BusinessName
+		}
+	}
+
+	// Try to get profile picture URL
+	var pictureURL string
+	picInfo, err := c.wa.GetProfilePictureInfo(ctx, myJID, &whatsmeow.GetProfilePictureParams{
+		Preview: false,
+	})
+	if err == nil && picInfo != nil {
+		pictureURL = picInfo.URL
+	}
+	// Ignore ErrProfilePictureNotSet and ErrProfilePictureUnauthorized - just leave URL empty
+
+	return &MyInfo{
+		JID:          myJID.String(),
+		PushName:     pushName,
+		Status:       userInfo.Status,
+		PictureID:    userInfo.PictureID,
+		PictureURL:   pictureURL,
+		BusinessName: businessName,
+	}, nil
+}
+
 // returns a list of enabled media types for logging
 func getEnabledTypes(types map[string]bool) []string {
 	var enabled []string

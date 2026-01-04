@@ -521,3 +521,45 @@ func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.Call
 
 	return mcp.NewToolResultText(result.String()), nil
 }
+
+func (m *MCPServer) handleGetMyInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// check WhatsApp connection
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	// get user info
+	myInfo, err := m.wa.GetMyInfo(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get user info: %v", err)), nil
+	}
+
+	// format response
+	var result strings.Builder
+	fmt.Fprintf(&result, "Your WhatsApp Profile:\n\n")
+	fmt.Fprintf(&result, "JID: %s\n", myInfo.JID)
+
+	if myInfo.PushName != "" {
+		fmt.Fprintf(&result, "Display Name: %s\n", myInfo.PushName)
+	}
+
+	if myInfo.Status != "" {
+		fmt.Fprintf(&result, "Status/Bio: %s\n", myInfo.Status)
+	} else {
+		fmt.Fprintf(&result, "Status/Bio: (not set)\n")
+	}
+
+	if myInfo.BusinessName != "" {
+		fmt.Fprintf(&result, "Business Name: %s\n", myInfo.BusinessName)
+	}
+
+	if myInfo.PictureURL != "" {
+		fmt.Fprintf(&result, "\nProfile Picture:\n")
+		fmt.Fprintf(&result, "  Picture ID: %s\n", myInfo.PictureID)
+		fmt.Fprintf(&result, "  URL: %s\n", myInfo.PictureURL)
+	} else {
+		fmt.Fprintf(&result, "\nProfile Picture: (not set)\n")
+	}
+
+	return mcp.NewToolResultText(result.String()), nil
+}

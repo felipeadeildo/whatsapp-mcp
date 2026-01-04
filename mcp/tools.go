@@ -106,4 +106,12 @@ func (m *MCPServer) registerTools() {
 		),
 		m.handleLoadMoreMessages,
 	)
+
+	// 7. get my info
+	m.server.AddTool(
+		mcp.NewTool("get_my_info",
+			mcp.WithDescription("Get your own WhatsApp profile information including JID, display name, status/bio, and profile picture URL."),
+		),
+		m.handleGetMyInfo,
+	)
 }
