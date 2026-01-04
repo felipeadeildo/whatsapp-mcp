@@ -298,7 +298,7 @@ func (c *Client) GetMyInfo(ctx context.Context) (*MyInfo, error) {
 		return nil, fmt.Errorf("not logged in")
 	}
 
-	myJID := *c.wa.Store.ID
+	myJID := c.wa.Store.ID.ToNonAD()
 
 	// Get basic user info (status, picture ID, verified business name)
 	userInfoMap, err := c.wa.GetUserInfo(ctx, []types.JID{myJID})
