@@ -674,47 +674,58 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 		}
 
 		if len(pendingDownloads) > 0 && c.mediaConfig.AutoDownloadFromHistory {
-			for _, metadata := range pendingDownloads {
-				// need to get the original message for downloading
-				// find it in the conversations
-				go func(meta storage.MediaMetadata) {
-					// find the message in history sync data
-					for _, conv := range evt.Data.GetConversations() {
-						for _, histMsg := range conv.GetMessages() {
-							msg := histMsg.GetMessage()
-							if msg == nil {
-								continue
-							}
-
-							key := msg.GetKey()
-							if key != nil && key.GetID() == meta.MessageID {
-								// found the message, download media
-								downloadCtx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
-								defer cancel()
-
-								actualMessage := msg.GetMessage()
-								if actualMessage != nil {
-									filePath, err := c.downloadMediaWithRetry(downloadCtx, actualMessage, &meta)
-									if err != nil {
-										c.log.Errorf("Failed to download history media %s: %v", meta.MessageID, err)
-										// update status based on error type
-										if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
-											errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
-											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "expired", nil, err)
-										} else {
-											c.mediaStore.UpdateDownloadStatus(meta.MessageID, "failed", nil, err)
-										}
-									} else {
-										// update status with file path on success
-										c.mediaStore.UpdateDownloadStatus(meta.MessageID, "downloaded", &filePath, nil)
-										c.log.Infof("Downloaded history media %s successfully", meta.MessageID)
-									}
-								}
-								return
-							}
-						}
+			// build message lookup map once (O(M) instead of O(N*M))
+			messageByID := make(map[string]*waE2E.Message)
+			for _, conv := range evt.Data.GetConversations() {
+				for _, histMsg := range conv.GetMessages() {
+					msg := histMsg.GetMessage()
+					if msg == nil {
+						continue
 					}
-					c.log.Warnf("Could not find message %s for download", meta.MessageID)
+					key := msg.GetKey()
+					if key == nil {
+						continue
+					}
+					id := key.GetID()
+					if id == "" {
+						continue
+					}
+					actualMessage := msg.GetMessage()
+					if actualMessage == nil {
+						continue
+					}
+					messageByID[id] = actualMessage
+				}
+			}
+
+			// now process downloads with O(1) lookups
+			for _, metadata := range pendingDownloads {
+				go func(meta storage.MediaMetadata) {
+					actualMessage, ok := messageByID[meta.MessageID]
+					if !ok || actualMessage == nil {
+						c.log.Warnf("Could not find message %s for download", meta.MessageID)
+						return
+					}
+
+					// found the message, download media
+					downloadCtx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
+					defer cancel()
+
+					filePath, err := c.downloadMediaWithRetry(downloadCtx, actualMessage, &meta)
+					if err != nil {
+						c.log.Errorf("Failed to download history media %s: %v", meta.MessageID, err)
+						// update status based on error type
+						if errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith404) ||
+							errors.Is(err, whatsmeow.ErrMediaDownloadFailedWith410) {
+							c.mediaStore.UpdateDownloadStatus(meta.MessageID, "expired", nil, err)
+						} else {
+							c.mediaStore.UpdateDownloadStatus(meta.MessageID, "failed", nil, err)
+						}
+					} else {
+						// update status with file path on success
+						c.mediaStore.UpdateDownloadStatus(meta.MessageID, "downloaded", &filePath, nil)
+						c.log.Infof("Downloaded history media %s successfully", meta.MessageID)
+					}
 				}(metadata)
 			}
 		}
