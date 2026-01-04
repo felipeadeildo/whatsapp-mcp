@@ -25,7 +25,6 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/whatsapp-mcp .
-COPY schema.sql .
 
 # Expose MCP server port
 EXPOSE 8080
