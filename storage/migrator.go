@@ -293,3 +293,74 @@ func (m *Migrator) GetMigrationStatus() ([]MigrationStatus, error) {
 
 	return statuses, nil
 }
+
+// runs migrations up to a specific target version
+// if targetVersion is 0 or negative, applies all migrations (same as Migrate)
+func (m *Migrator) MigrateTo(targetVersion int) error {
+	// 1. ensure schema_migrations table exists
+	if err := m.ensureMigrationTable(); err != nil {
+		return fmt.Errorf("failed to create migration table: %w", err)
+	}
+
+	// 2. get current schema version from database
+	currentVersion, err := m.getCurrentVersion()
+	if err != nil {
+		return fmt.Errorf("failed to get current version: %w", err)
+	}
+
+	// 3. load all migration files from embedded FS
+	migrations, err := m.loadMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	// 4. validate target version
+	if targetVersion > 0 {
+		found := false
+		for _, migration := range migrations {
+			if migration.Version == targetVersion {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("target version %d does not exist", targetVersion)
+		}
+	}
+
+	// 5. validate migration checksums for already-applied migrations
+	if err := m.validateAppliedMigrations(migrations, currentVersion); err != nil {
+		return fmt.Errorf("migration validation failed: %w", err)
+	}
+
+	// 6. filter migrations to apply (only up to target version)
+	var migrationsToApply []Migration
+	for _, migration := range migrations {
+		if migration.Version > currentVersion {
+			if targetVersion <= 0 || migration.Version <= targetVersion {
+				migrationsToApply = append(migrationsToApply, migration)
+			}
+		}
+	}
+
+	if len(migrationsToApply) == 0 {
+		if targetVersion > 0 && targetVersion <= currentVersion {
+			log.Printf("Already at version %d or higher (current: %d)", targetVersion, currentVersion)
+		} else {
+			log.Println("Database schema is up to date")
+		}
+		return nil
+	}
+
+	log.Printf("Applying %d migration(s)...", len(migrationsToApply))
+	for _, migration := range migrationsToApply {
+		log.Printf("  - Migration %d: %s", migration.Version, migration.Description)
+		if err := m.applyMigration(migration); err != nil {
+			return fmt.Errorf("failed to apply migration %d (%s): %w",
+				migration.Version, migration.Description, err)
+		}
+	}
+
+	log.Println("Migrations completed successfully")
+	return nil
+}

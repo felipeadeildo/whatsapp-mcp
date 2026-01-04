@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"whatsapp-mcp/paths"
+	"whatsapp-mcp/storage"
+
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -31,9 +36,19 @@ func main() {
 			os.Exit(1)
 		}
 	case "status":
-		// Could add migration status checking here
-		fmt.Println("Status command not yet implemented")
-		fmt.Println("Run the application to see migration status in logs")
+		if err := showStatus(); err != nil {
+			fmt.Printf("Error showing status: %v\n", err)
+			os.Exit(1)
+		}
+	case "upgrade":
+		target := "latest"
+		if len(os.Args) > 2 {
+			target = os.Args[2]
+		}
+		if err := runUpgrade(target); err != nil {
+			fmt.Printf("Error running upgrade: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		printUsage()
 		os.Exit(1)
@@ -44,12 +59,21 @@ func printUsage() {
 	fmt.Println("Migration CLI Tool")
 	fmt.Println("")
 	fmt.Println("Usage:")
-	fmt.Println("  go run migrate.go create <description>")
-	fmt.Println("  go run migrate.go status")
+	fmt.Println("  go run cmd/migrate/main.go create <description>")
+	fmt.Println("  go run cmd/migrate/main.go status")
+	fmt.Println("  go run cmd/migrate/main.go upgrade [version|latest]")
+	fmt.Println("")
+	fmt.Println("Commands:")
+	fmt.Println("  create      Create a new migration file")
+	fmt.Println("  status      Show migration status (applied and pending)")
+	fmt.Println("  upgrade     Apply migrations up to specified version or latest")
 	fmt.Println("")
 	fmt.Println("Examples:")
-	fmt.Println("  go run migrate.go create add_message_reactions")
-	fmt.Println("  go run migrate.go create add_user_preferences_table")
+	fmt.Println("  go run cmd/migrate/main.go create add_message_reactions")
+	fmt.Println("  go run cmd/migrate/main.go create add_user_preferences_table")
+	fmt.Println("  go run cmd/migrate/main.go status")
+	fmt.Println("  go run cmd/migrate/main.go upgrade latest")
+	fmt.Println("  go run cmd/migrate/main.go upgrade 2")
 }
 
 func createMigration(description string) error {
@@ -163,4 +187,98 @@ func generateMigrationTemplate(version int, description string) string {
 		version,
 		now,
 	)
+}
+
+func openDB() (*sql.DB, error) {
+	db, err := sql.Open("sqlite", paths.MessagesDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	return db, nil
+}
+
+func showStatus() error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	migrator := storage.NewMigrator(db)
+	statuses, err := migrator.GetMigrationStatus()
+	if err != nil {
+		return fmt.Errorf("failed to get migration status: %w", err)
+	}
+
+	if len(statuses) == 0 {
+		fmt.Println("No migrations found")
+		return nil
+	}
+
+	fmt.Println("\nMigration Status:")
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-10s %-10s %-35s %s\n", "Version", "Status", "Description", "Applied At")
+	fmt.Println(strings.Repeat("-", 80))
+
+	for _, status := range statuses {
+		statusStr := "pending"
+		appliedAtStr := "-"
+
+		if status.Applied {
+			statusStr = "applied"
+			if status.AppliedAt != nil {
+				appliedAtStr = status.AppliedAt.Format("2006-01-02 15:04:05")
+			}
+		}
+
+		fmt.Printf("%-10d %-10s %-35s %s\n",
+			status.Version,
+			statusStr,
+			truncateString(status.Description, 35),
+			appliedAtStr,
+		)
+	}
+	fmt.Println(strings.Repeat("-", 80))
+
+	return nil
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+func runUpgrade(target string) error {
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	migrator := storage.NewMigrator(db)
+
+	if target == "latest" {
+		fmt.Println("Upgrading to latest version...")
+		return migrator.Migrate()
+	}
+
+	// parse target version
+	version, err := strconv.Atoi(target)
+	if err != nil {
+		return fmt.Errorf("invalid version number: %s (use 'latest' or a number)", target)
+	}
+
+	if version <= 0 {
+		return fmt.Errorf("version must be a positive number")
+	}
+
+	fmt.Printf("Upgrading to version %d...\n", version)
+	return migrator.MigrateTo(version)
 }
