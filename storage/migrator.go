@@ -16,7 +16,7 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// represents a single database migration
+// Migration represents a single database migration
 type Migration struct {
 	Version     int
 	Description string
@@ -25,17 +25,17 @@ type Migration struct {
 	Filename    string
 }
 
-// handles database migrations
+// Migrator handles database migrations
 type Migrator struct {
 	db *sql.DB
 }
 
-// creates a new migrator instance
+// NewMigrator creates a new migrator instance
 func NewMigrator(db *sql.DB) *Migrator {
 	return &Migrator{db: db}
 }
 
-// runs all pending migrations
+// Migrate runs all pending migrations
 func (m *Migrator) Migrate() error {
 	// 1. ensure schema_migrations table exists
 	if err := m.ensureMigrationTable(); err != nil {
@@ -252,7 +252,7 @@ func (m *Migrator) applyMigration(migration Migration) error {
 	return nil
 }
 
-// represents the status of a migration
+// MigrationStatus represents the status of a migration
 type MigrationStatus struct {
 	Version     int
 	Description string
@@ -261,7 +261,7 @@ type MigrationStatus struct {
 	AppliedAt   *time.Time
 }
 
-// returns information about applied and pending migrations
+// GetMigrationStatus returns information about applied and pending migrations
 func (m *Migrator) GetMigrationStatus() ([]MigrationStatus, error) {
 	migrations, err := m.loadMigrations()
 	if err != nil {
@@ -271,10 +271,16 @@ func (m *Migrator) GetMigrationStatus() ([]MigrationStatus, error) {
 	var statuses []MigrationStatus
 	for _, migration := range migrations {
 		var appliedAt sql.NullInt64
-		_ = m.db.QueryRow(
+		err := m.db.QueryRow(
 			"SELECT applied_at FROM schema_migrations WHERE version = ?",
 			migration.Version,
 		).Scan(&appliedAt)
+
+		// Only ignore sql.ErrNoRows (migration not applied yet)
+		// Return any other errors
+		if err != nil && err != sql.ErrNoRows {
+			return nil, fmt.Errorf("failed to query migration status for version %d: %w", migration.Version, err)
+		}
 
 		status := MigrationStatus{
 			Version:     migration.Version,
@@ -294,7 +300,7 @@ func (m *Migrator) GetMigrationStatus() ([]MigrationStatus, error) {
 	return statuses, nil
 }
 
-// runs migrations up to a specific target version
+// MigrateTo runs migrations up to a specific target version
 // if targetVersion is 0 or negative, applies all migrations (same as Migrate)
 func (m *Migrator) MigrateTo(targetVersion int) error {
 	// 1. ensure schema_migrations table exists

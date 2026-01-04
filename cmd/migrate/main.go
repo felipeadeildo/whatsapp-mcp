@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"whatsapp-mcp/paths"
 	"whatsapp-mcp/storage"
 
 	_ "modernc.org/sqlite"
@@ -89,16 +88,16 @@ func createMigration(description string) error {
 
 	// create filename
 	filename := fmt.Sprintf("%03d_%s.sql", nextVersion, description)
-	filepath := filepath.Join(migrationsDir, filename)
+	migrationPath := filepath.Join(migrationsDir, filename)
 
 	// create file with template
 	template := generateMigrationTemplate(nextVersion, description)
 
-	if err := os.WriteFile(filepath, []byte(template), 0644); err != nil {
+	if err := os.WriteFile(migrationPath, []byte(template), 0o644); err != nil {
 		return fmt.Errorf("failed to write migration file: %w", err)
 	}
 
-	fmt.Printf("Created migration: %s\n", filepath)
+	fmt.Printf("Created migration: %s\n", migrationPath)
 	fmt.Println("")
 	fmt.Println("Next steps:")
 	fmt.Println("1. Edit the migration file and add your SQL statements")
@@ -190,7 +189,7 @@ func generateMigrationTemplate(version int, description string) string {
 }
 
 func openDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite", paths.MessagesDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", storage.GetConnectionString())
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -216,8 +215,23 @@ func showStatus() error {
 	}
 
 	if len(statuses) == 0 {
-		fmt.Println("No migrations found")
+		fmt.Println("\nNo migration files found in storage/migrations/")
+		fmt.Println("\nTo create your first migration, run:")
+		fmt.Println("  go run cmd/migrate/main.go create <description>")
+		fmt.Println("\nExample:")
+		fmt.Println("  go run cmd/migrate/main.go create initial_schema")
 		return nil
+	}
+
+	// Count applied and pending migrations
+	appliedCount := 0
+	pendingCount := 0
+	for _, status := range statuses {
+		if status.Applied {
+			appliedCount++
+		} else {
+			pendingCount++
+		}
 	}
 
 	fmt.Println("\nMigration Status:")
@@ -244,6 +258,12 @@ func showStatus() error {
 		)
 	}
 	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("Total: %d migrations (%d applied, %d pending)\n", len(statuses), appliedCount, pendingCount)
+
+	if pendingCount > 0 {
+		fmt.Println("\nTo apply pending migrations, run:")
+		fmt.Println("  go run cmd/migrate/main.go upgrade latest")
+	}
 
 	return nil
 }

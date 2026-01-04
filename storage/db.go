@@ -8,9 +8,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// initializes the database and runs migrations
+// GetConnectionString returns the SQLite connection string with pragmas
+func GetConnectionString() string {
+	return paths.MessagesDBPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+}
+
+// InitDB initializes the database and runs migrations
 func InitDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite", paths.MessagesDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", GetConnectionString())
 
 	if err != nil {
 		return nil, err
