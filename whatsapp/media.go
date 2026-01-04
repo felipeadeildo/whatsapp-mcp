@@ -379,12 +379,20 @@ func sanitizeFilename(name string) string {
 
 	filename := string(result)
 
-	// length to 200 characters
-	if len(filename) > 200 {
-		// preserve extension
+	// truncate filename to 200 runes (Unicode-safe)
+	const maxFilenameLen = 200
+	runes := []rune(filename)
+	if len(runes) > maxFilenameLen {
 		ext := filepath.Ext(filename)
-		base := filename[:200-len(ext)]
-		filename = base + ext
+		extRunes := []rune(ext)
+
+		// if extension is too long, just truncate the whole filename
+		if len(extRunes) >= maxFilenameLen {
+			filename = string(runes[:maxFilenameLen])
+		} else {
+			baseLen := maxFilenameLen - len(extRunes)
+			filename = string(runes[:baseLen]) + ext
+		}
 	}
 
 	return filename
