@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -699,12 +700,24 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			}
 
 			// now process downloads with O(1) lookups
+			var wg sync.WaitGroup
 			for _, metadata := range pendingDownloads {
+				wg.Add(1)
 				go func(meta storage.MediaMetadata) {
+					defer wg.Done()
+
 					actualMessage, ok := messageByID[meta.MessageID]
 					if !ok || actualMessage == nil {
 						c.log.Warnf("Could not find message %s for download", meta.MessageID)
 						return
+					}
+
+					// check if context was cancelled before starting download
+					select {
+					case <-c.ctx.Done():
+						c.log.Debugf("Context cancelled before downloading %s", meta.MessageID)
+						return
+					default:
 					}
 
 					// found the message, download media
@@ -728,6 +741,12 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 					}
 				}(metadata)
 			}
+
+			// log completion asynchronously (don't block)
+			go func() {
+				wg.Wait()
+				c.log.Infof("Completed all %d history media downloads", len(pendingDownloads))
+			}()
 		}
 	}
 
