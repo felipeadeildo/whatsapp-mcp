@@ -330,13 +330,19 @@ See `.env.example` and be happy!
 
 ## 🤝 Contributing
 
-This is a personal project I maintain for daily use. Contributions are welcome:
+This is a personal project I maintain for daily use. Contributions are welcome!
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for:
+- Development setup and workflow
+- Project structure (main server vs migration CLI)
+- Database migration system
+- Code style guidelines
+
+Quick start:
 1. Fork the repository
 2. Create your feature branch
-3. Submit a pull request
-
-Feel free to adapt this project to your needs!
+3. Follow the guidelines in CONTRIBUTING.md
+4. Submit a pull request
 
 ## ⚠️ Disclaimer
 
