@@ -18,10 +18,18 @@ type Config struct {
 
 // LoadConfig loads webhook configuration from environment variables.
 func LoadConfig() *Config {
+	retryBackoff := []time.Duration{0, 5 * time.Second, 15 * time.Second}
+	maxRetries := config.GetEnvInt("WEBHOOK_MAX_RETRIES", 3)
+
+	// Cap MaxRetries to the length of RetryBackoff to prevent array out of bounds
+	if maxRetries > len(retryBackoff) {
+		maxRetries = len(retryBackoff)
+	}
+
 	return &Config{
 		PrimaryURL:        os.Getenv("WEBHOOK_URL"),
-		MaxRetries:        config.GetEnvInt("WEBHOOK_MAX_RETRIES", 3),
-		RetryBackoff:      []time.Duration{0, 5 * time.Second, 15 * time.Second},
+		MaxRetries:        maxRetries,
+		RetryBackoff:      retryBackoff,
 		DeliveryTimeout:   time.Duration(config.GetEnvInt("WEBHOOK_TIMEOUT_SECONDS", 10)) * time.Second,
 		WorkerPoolSize:    config.GetEnvInt("WEBHOOK_WORKER_POOL_SIZE", 3),
 		ChannelBufferSize: 100,
