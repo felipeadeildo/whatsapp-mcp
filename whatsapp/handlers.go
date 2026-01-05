@@ -445,6 +445,47 @@ func (c *Client) handleMessage(evt *events.Message) {
 			}
 		}
 	}
+
+	// Emit webhook event if manager is configured
+	if c.webhookManager != nil {
+		// Get chat names for context
+		chatPushName, chatContactName := c.getChatInfo(ctx, data.ChatJID, data.IsGroup, data.PushName)
+
+		// Determine the chat name to use (prefer contact name, fallback to push name)
+		chatName := chatContactName
+		if chatName == "" {
+			chatName = chatPushName
+		}
+
+		// For sender, get their info if not from me
+		var senderPushName, senderContactName string
+		if !data.IsFromMe {
+			senderPushName, senderContactName = c.getChatInfo(ctx, data.SenderJID, false, data.PushName)
+		}
+
+		msgWithNames := storage.MessageWithNames{
+			Message: storage.Message{
+				ID:          data.MessageID,
+				ChatJID:     c.normalizeJID(data.ChatJID),
+				SenderJID:   c.normalizeJID(data.SenderJID),
+				Text:        data.Text,
+				Timestamp:   data.Timestamp,
+				IsFromMe:    data.IsFromMe,
+				MessageType: data.MessageType,
+			},
+			ChatName:          chatName,
+			SenderPushName:    senderPushName,
+			SenderContactName: senderContactName,
+			MediaMetadata:     mediaMetadata,
+		}
+
+		// Emit asynchronously to avoid blocking message processing
+		go func() {
+			if err := c.webhookManager.EmitMessageEvent(msgWithNames); err != nil {
+				c.log.Errorf("Failed to emit webhook event: %v", err)
+			}
+		}()
+	}
 }
 
 // handleGroupInfo processes group info updates like name changes.

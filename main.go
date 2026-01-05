@@ -37,6 +37,7 @@ import (
 	"whatsapp-mcp/mcp"
 	"whatsapp-mcp/paths"
 	"whatsapp-mcp/storage"
+	"whatsapp-mcp/webhook"
 	"whatsapp-mcp/whatsapp"
 
 	"github.com/joho/godotenv"
@@ -44,6 +45,11 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"github.com/skip2/go-qrcode"
 )
+
+// TODO: cleanup main entry
+// TODO: move dotenv loading to a separate package
+// TODO: move services initialization to a separate package
+// TODO: move and improve api/mcp endpoints registration
 
 func main() {
 	// load .env file
@@ -101,8 +107,38 @@ func main() {
 	mediaStore := storage.NewMediaStore(db)
 	log.Println("Media storage initialized")
 
+	// initialize webhook system
+	webhookConfig := webhook.LoadConfig()
+	webhookStore := storage.NewWebhookStore(db)
+	webhookLogger := log.New(os.Stdout, "[WEBHOOK] ", log.LstdFlags)
+	webhookManager := webhook.NewWebhookManager(webhookStore, webhookConfig, webhookLogger)
+
+	// Register primary webhook from env var if configured
+	if webhookConfig.PrimaryURL != "" {
+		primaryWebhook := storage.WebhookRegistration{
+			ID:         "primary",
+			URL:        webhookConfig.PrimaryURL,
+			EventTypes: []string{"message"},
+			Active:     true,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
+		}
+		// TODO: improve error handling, avoid use string verification.
+		if err := webhookStore.CreateWebhook(primaryWebhook); err != nil {
+			// Ignore error if webhook already exists
+			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				log.Printf("Warning: Failed to register primary webhook: %v", err)
+			}
+		} else {
+			log.Println("Primary webhook registered from WEBHOOK_URL")
+		}
+	}
+
+	webhookManager.Start()
+	log.Println("Webhook manager started")
+
 	// initialize WhatsApp client
-	waClient, err := whatsapp.NewClient(store, mediaStore, logLevel)
+	waClient, err := whatsapp.NewClient(store, mediaStore, webhookManager, logLevel)
 	if err != nil {
 		log.Fatal("Failed to create WhatsApp client:", err)
 	}
@@ -181,6 +217,34 @@ func main() {
 		streamableServer.ServeHTTP(w, r)
 	})
 
+	// Webhook management API
+	webhookHandler := webhook.NewHandler(webhookManager, webhookStore, apiKey)
+
+	mux.HandleFunc("/api/webhooks", func(w http.ResponseWriter, r *http.Request) {
+		if !webhookHandler.ValidateAuth(r) {
+			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		switch r.Method {
+		case http.MethodPost:
+			webhookHandler.CreateWebhook(w, r)
+		case http.MethodGet:
+			webhookHandler.ListWebhooks(w, r)
+		default:
+			http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/api/webhooks/", func(w http.ResponseWriter, r *http.Request) {
+		if !webhookHandler.ValidateAuth(r) {
+			http.Error(w, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+
+		webhookHandler.HandleWebhookByID(w, r)
+	})
+
 	httpServer := &http.Server{
 		Addr:    ":" + httpPort,
 		Handler: mux,
@@ -213,6 +277,10 @@ func main() {
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
 	}
+
+	// stop webhook manager
+	webhookManager.Stop()
+	log.Println("Webhook manager stopped")
 
 	// disconnect WhatsApp
 	waClient.Disconnect()

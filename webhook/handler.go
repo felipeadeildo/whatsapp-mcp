@@ -1,0 +1,311 @@
+package webhook
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"whatsapp-mcp/storage"
+
+	"github.com/google/uuid"
+)
+
+// Handler handles HTTP API requests for webhook management.
+type Handler struct {
+	manager *WebhookManager
+	store   *storage.WebhookStore
+	apiKey  string
+}
+
+// NewHandler creates a new webhook HTTP handler.
+func NewHandler(manager *WebhookManager, store *storage.WebhookStore, apiKey string) *Handler {
+	return &Handler{
+		manager: manager,
+		store:   store,
+		apiKey:  apiKey,
+	}
+}
+
+// ValidateAuth checks if the request has a valid API key.
+func (h *Handler) ValidateAuth(r *http.Request) bool {
+	authHeader := r.Header.Get("Authorization")
+	expectedAuth := "Bearer " + h.apiKey
+	return authHeader == expectedAuth
+}
+
+// CreateWebhookRequest represents a webhook creation request.
+type CreateWebhookRequest struct {
+	URL        string   `json:"url"`
+	Secret     string   `json:"secret,omitempty"`
+	EventTypes []string `json:"event_types"`
+}
+
+// WebhookResponse represents a webhook in API responses.
+type WebhookResponse struct {
+	ID         string    `json:"id"`
+	URL        string    `json:"url"`
+	EventTypes []string  `json:"event_types"`
+	Active     bool      `json:"active"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// CreateWebhook handles POST /api/webhooks
+func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
+	var req CreateWebhookRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate request
+	if req.URL == "" {
+		http.Error(w, `{"error":"URL is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.EventTypes) == 0 {
+		req.EventTypes = []string{"message"} // default
+	}
+
+	// Create webhook registration
+	webhook := storage.WebhookRegistration{
+		ID:         uuid.New().String(),
+		URL:        req.URL,
+		Secret:     req.Secret,
+		EventTypes: req.EventTypes,
+		Active:     true,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	if err := h.store.CreateWebhook(webhook); err != nil {
+		http.Error(w, `{"error":"Failed to create webhook"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Return response
+	resp := WebhookResponse{
+		ID:         webhook.ID,
+		URL:        webhook.URL,
+		EventTypes: webhook.EventTypes,
+		Active:     webhook.Active,
+		CreatedAt:  webhook.CreatedAt,
+		UpdatedAt:  webhook.UpdatedAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+}
+
+// ListWebhooks handles GET /api/webhooks
+func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
+	webhooks, err := h.store.ListWebhooks(false) // include inactive
+	if err != nil {
+		http.Error(w, `{"error":"Failed to list webhooks"}`, http.StatusInternalServerError)
+		return
+	}
+
+	var resp []WebhookResponse
+	for _, wh := range webhooks {
+		resp = append(resp, WebhookResponse{
+			ID:         wh.ID,
+			URL:        wh.URL,
+			EventTypes: wh.EventTypes,
+			Active:     wh.Active,
+			CreatedAt:  wh.CreatedAt,
+			UpdatedAt:  wh.UpdatedAt,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"webhooks": resp})
+}
+
+// HandleWebhookByID routes requests to specific webhook endpoints.
+func (h *Handler) HandleWebhookByID(w http.ResponseWriter, r *http.Request) {
+	// Extract webhook ID from path
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/webhooks/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, `{"error":"Webhook ID required"}`, http.StatusBadRequest)
+		return
+	}
+
+	webhookID := parts[0]
+
+	// Check for test endpoint
+	if len(parts) == 2 && parts[1] == "test" && r.Method == http.MethodPost {
+		h.TestWebhook(w, r, webhookID)
+		return
+	}
+
+	// Check for stats endpoint
+	if len(parts) == 2 && parts[1] == "stats" && r.Method == http.MethodGet {
+		h.GetWebhookStats(w, r, webhookID)
+		return
+	}
+
+	// Route by method
+	switch r.Method {
+	case http.MethodGet:
+		h.GetWebhook(w, r, webhookID)
+	case http.MethodPut:
+		h.UpdateWebhook(w, r, webhookID)
+	case http.MethodDelete:
+		h.DeleteWebhook(w, r, webhookID)
+	default:
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+// GetWebhook handles GET /api/webhooks/{id}
+func (h *Handler) GetWebhook(w http.ResponseWriter, r *http.Request, webhookID string) {
+	webhook, err := h.store.GetWebhook(webhookID)
+	if err != nil {
+		http.Error(w, `{"error":"Webhook not found"}`, http.StatusNotFound)
+		return
+	}
+
+	resp := WebhookResponse{
+		ID:         webhook.ID,
+		URL:        webhook.URL,
+		EventTypes: webhook.EventTypes,
+		Active:     webhook.Active,
+		CreatedAt:  webhook.CreatedAt,
+		UpdatedAt:  webhook.UpdatedAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// UpdateWebhookRequest represents a webhook update request.
+type UpdateWebhookRequest struct {
+	URL        *string   `json:"url,omitempty"`
+	Secret     *string   `json:"secret,omitempty"`
+	EventTypes *[]string `json:"event_types,omitempty"`
+	Active     *bool     `json:"active,omitempty"`
+}
+
+// UpdateWebhook handles PUT /api/webhooks/{id}
+func (h *Handler) UpdateWebhook(w http.ResponseWriter, r *http.Request, webhookID string) {
+	webhook, err := h.store.GetWebhook(webhookID)
+	if err != nil {
+		http.Error(w, `{"error":"Webhook not found"}`, http.StatusNotFound)
+		return
+	}
+
+	var req UpdateWebhookRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Apply updates
+	if req.URL != nil {
+		webhook.URL = *req.URL
+	}
+	if req.Secret != nil {
+		webhook.Secret = *req.Secret
+	}
+	if req.EventTypes != nil {
+		webhook.EventTypes = *req.EventTypes
+	}
+	if req.Active != nil {
+		webhook.Active = *req.Active
+	}
+
+	if err := h.store.UpdateWebhook(*webhook); err != nil {
+		http.Error(w, `{"error":"Failed to update webhook"}`, http.StatusInternalServerError)
+		return
+	}
+
+	resp := WebhookResponse{
+		ID:         webhook.ID,
+		URL:        webhook.URL,
+		EventTypes: webhook.EventTypes,
+		Active:     webhook.Active,
+		CreatedAt:  webhook.CreatedAt,
+		UpdatedAt:  webhook.UpdatedAt,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// DeleteWebhook handles DELETE /api/webhooks/{id}
+func (h *Handler) DeleteWebhook(w http.ResponseWriter, r *http.Request, webhookID string) {
+	if err := h.store.DeleteWebhook(webhookID); err != nil {
+		http.Error(w, `{"error":"Webhook not found"}`, http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// TestWebhook handles POST /api/webhooks/{id}/test
+func (h *Handler) TestWebhook(w http.ResponseWriter, r *http.Request, webhookID string) {
+	webhook, err := h.store.GetWebhook(webhookID)
+	if err != nil {
+		http.Error(w, `{"error":"Webhook not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Create a test payload
+	testPayload := WebhookPayload{
+		ID:        uuid.New().String(),
+		EventType: "message.received",
+		Timestamp: time.Now(),
+		Data: MessageEventData{
+			MessageID:   "TEST-" + uuid.New().String(),
+			ChatJID:     "test@s.whatsapp.net",
+			SenderJID:   "test@s.whatsapp.net",
+			Text:        "This is a test message from WhatsApp MCP webhook system",
+			Timestamp:   time.Now(),
+			IsFromMe:    false,
+			MessageType: "text",
+			ChatName:    "Test Chat",
+			IsGroup:     false,
+		},
+	}
+
+	// Attempt delivery
+	err = h.manager.deliverWebhook(*webhook, testPayload, 1)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": "failed",
+			"error":  err.Error(),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":     "delivered",
+		"payload_id": testPayload.ID,
+	})
+}
+
+// GetWebhookStats handles GET /api/webhooks/{id}/stats
+func (h *Handler) GetWebhookStats(w http.ResponseWriter, r *http.Request, webhookID string) {
+	// Check webhook exists
+	if _, err := h.store.GetWebhook(webhookID); err != nil {
+		http.Error(w, `{"error":"Webhook not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// Get stats for last 24 hours
+	since := time.Now().Add(-24 * time.Hour)
+	stats, err := h.store.GetDeliveryStats(webhookID, since)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to get stats"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
