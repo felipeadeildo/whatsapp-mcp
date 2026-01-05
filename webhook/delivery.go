@@ -54,11 +54,11 @@ func (m *WebhookManager) deliverWebhook(webhook storage.WebhookRegistration, pay
 	}
 	defer resp.Body.Close()
 
-	// Read response body (for logging purposes)
-	body, _ := io.ReadAll(resp.Body)
-
 	// Check status code
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		// Read response body only for error reporting (with 1MB limit to prevent memory exhaustion)
+		limitedReader := io.LimitReader(resp.Body, 1024*1024)
+		body, _ := io.ReadAll(limitedReader)
 		return m.recordFailure(webhook, payload, attempt, resp.StatusCode,
 			fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body)))
 	}

@@ -116,19 +116,16 @@ func main() {
 	// Register primary webhook from env var if configured
 	if webhookConfig.PrimaryURL != "" {
 		primaryWebhook := storage.WebhookRegistration{
-			ID:         "primary",
+			ID:         "system:primary",
 			URL:        webhookConfig.PrimaryURL,
 			EventTypes: []string{"message"},
 			Active:     true,
 			CreatedAt:  time.Now(),
 			UpdatedAt:  time.Now(),
 		}
-		// TODO: improve error handling, avoid use string verification.
-		if err := webhookStore.CreateWebhook(primaryWebhook); err != nil {
-			// Ignore error if webhook already exists
-			if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				log.Printf("Warning: Failed to register primary webhook: %v", err)
-			}
+		// Use upsert to create or update the primary webhook
+		if err := webhookStore.UpsertWebhook(primaryWebhook); err != nil {
+			log.Printf("Warning: Failed to register primary webhook: %v", err)
 		} else {
 			log.Println("Primary webhook registered from WEBHOOK_URL")
 		}
