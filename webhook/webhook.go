@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,7 @@ type WebhookManager struct {
 	store        *storage.WebhookStore
 	config       *Config
 	deliveryChan chan *deliveryTask
+	httpClient   *http.Client
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
@@ -72,10 +74,20 @@ type WebhookManager struct {
 func NewWebhookManager(store *storage.WebhookStore, config *Config, logger Logger) *WebhookManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	httpClient := &http.Client{
+		Timeout: config.DeliveryTimeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
 	return &WebhookManager{
 		store:        store,
 		config:       config,
 		deliveryChan: make(chan *deliveryTask, config.ChannelBufferSize),
+		httpClient:   httpClient,
 		ctx:          ctx,
 		cancel:       cancel,
 		log:          logger,
@@ -189,12 +201,15 @@ func (m *WebhookManager) buildMessagePayload(msg storage.MessageWithNames) Webho
 }
 
 // worker processes delivery tasks from the queue.
-func (m *WebhookManager) worker(_ int) {
+func (m *WebhookManager) worker(id int) {
 	defer m.wg.Done()
+
+	m.log.Printf("Worker %d started", id)
 
 	for {
 		select {
 		case task := <-m.deliveryChan:
+			m.log.Printf("Worker %d processing webhook %s", id, task.webhook.ID)
 			if err := m.deliverWebhook(task.webhook, task.payload, task.attempt); err != nil {
 				// Schedule retry if attempts remain and backoff configuration is available
 				if task.attempt < m.config.MaxRetries && task.attempt < len(m.config.RetryBackoff) {
