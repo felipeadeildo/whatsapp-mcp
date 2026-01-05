@@ -21,6 +21,17 @@ type Handler struct {
 	apiKey  string
 }
 
+// errorResponse writes a properly escaped JSON error response.
+func errorResponse(w http.ResponseWriter, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	response := map[string]string{"error": message}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		// Fallback to plain text if JSON encoding fails
+		http.Error(w, message, statusCode)
+	}
+}
+
 // NewHandler creates a new webhook HTTP handler.
 func NewHandler(manager *WebhookManager, store *storage.WebhookStore, apiKey string) *Handler {
 	return &Handler{
@@ -115,7 +126,7 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Validate URL format and prevent SSRF
 	if err := validateURL(req.URL); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"Invalid URL: %s"}`, err.Error()), http.StatusBadRequest)
+		errorResponse(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -125,7 +136,7 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Validate event types
 	if err := validateEventTypes(req.EventTypes); err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		errorResponse(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -157,7 +168,7 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // ListWebhooks handles GET /api/webhooks
@@ -181,7 +192,7 @@ func (h *Handler) ListWebhooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"webhooks": resp})
+	_ = json.NewEncoder(w).Encode(map[string]any{"webhooks": resp})
 }
 
 // HandleWebhookByID routes requests to specific webhook endpoints.
@@ -238,7 +249,7 @@ func (h *Handler) GetWebhook(w http.ResponseWriter, r *http.Request, webhookID s
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // UpdateWebhookRequest represents a webhook update request.
@@ -266,7 +277,7 @@ func (h *Handler) UpdateWebhook(w http.ResponseWriter, r *http.Request, webhookI
 	// Validate URL if provided
 	if req.URL != nil {
 		if err := validateURL(*req.URL); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"Invalid URL: %s"}`, err.Error()), http.StatusBadRequest)
+			errorResponse(w, "Invalid URL: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -274,7 +285,7 @@ func (h *Handler) UpdateWebhook(w http.ResponseWriter, r *http.Request, webhookI
 	// Validate event types if provided
 	if req.EventTypes != nil {
 		if err := validateEventTypes(*req.EventTypes); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			errorResponse(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -283,6 +294,8 @@ func (h *Handler) UpdateWebhook(w http.ResponseWriter, r *http.Request, webhookI
 	if req.URL != nil {
 		webhook.URL = *req.URL
 	}
+	// Note: Setting secret to empty string intentionally disables HMAC signature verification.
+	// This is allowed for development/testing scenarios where signature validation isn't needed.
 	if req.Secret != nil {
 		webhook.Secret = *req.Secret
 	}
@@ -315,7 +328,7 @@ func (h *Handler) UpdateWebhook(w http.ResponseWriter, r *http.Request, webhookI
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // DeleteWebhook handles DELETE /api/webhooks/{id}
@@ -359,7 +372,7 @@ func (h *Handler) TestWebhook(w http.ResponseWriter, r *http.Request, webhookID 
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "failed",
 			"error":  err.Error(),
 		})
@@ -367,7 +380,7 @@ func (h *Handler) TestWebhook(w http.ResponseWriter, r *http.Request, webhookID 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":     "delivered",
 		"payload_id": testPayload.ID,
 	})
@@ -390,5 +403,5 @@ func (h *Handler) GetWebhookStats(w http.ResponseWriter, r *http.Request, webhoo
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	_ = json.NewEncoder(w).Encode(stats)
 }
