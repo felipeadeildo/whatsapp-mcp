@@ -5,34 +5,29 @@ import (
 	"path/filepath"
 )
 
-// base data directory
+// DataDir is the base data directory for the application.
 const DataDir = "./data"
 
-// data subdirectories
+// Data subdirectories for organizing different types of data.
 const (
 	DataDBDir    = DataDir + "/db"
 	DataMediaDir = DataDir + "/media"
 )
 
-// storage paths
+// Storage paths for migrations and other persistent data.
 const (
 	MigrationsDir = "storage/migrations"
 )
 
-// file paths
+// File paths for databases, logs, and other files.
 const (
-	// database files
 	MessagesDBPath     = DataDBDir + "/messages.db"
 	WhatsAppAuthDBPath = DataDBDir + "/whatsapp_auth.db"
-
-	// log files
-	WhatsAppLogPath = DataDir + "/whatsapp.log"
-
-	// other files
-	QRCodePath = "./qr.png"
+	WhatsAppLogPath    = DataDir + "/whatsapp.log"
+	QRCodePath         = "./qr.png"
 )
 
-// EnsureDataDirectories ensures that all required data directories exist
+// EnsureDataDirectories ensures that all required data directories exist.
 func EnsureDataDirectories() error {
 	dirs := []string{
 		DataDir,
@@ -49,7 +44,7 @@ func EnsureDataDirectories() error {
 	return nil
 }
 
-// GetMediaPath returns the full path for a media file
+// GetMediaPath returns the full path for a media file given its relative path.
 func GetMediaPath(relativePath string) string {
 	return filepath.Join(DataMediaDir, relativePath)
 }

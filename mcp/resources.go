@@ -13,7 +13,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// defines all MCP resources for documentation
+// registerResources defines all MCP resources for documentation.
 func (m *MCPServer) registerResources() {
 	// cross-chat search guide
 	m.server.AddResource(
@@ -70,6 +70,7 @@ func (m *MCPServer) registerResources() {
 	)
 }
 
+// handleCrossChatSearchGuide handles the cross-chat search guide resource request.
 func (m *MCPServer) handleCrossChatSearchGuide(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	guide := `# Finding Messages Across All Chats
 
@@ -220,7 +221,7 @@ search_messages(query="[keyword]", from="[JID]") -> get specific messages
 	}, nil
 }
 
-// general workflows
+// handleWorkflowGuide handles the general workflow guide resource request.
 func (m *MCPServer) handleWorkflowGuide(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	guide := `# WhatsApp MCP Workflow Guide
 
@@ -429,7 +430,7 @@ find_chat -> send_message
 	}, nil
 }
 
-// JID format explanation
+// handleJIDFormatGuide handles the JID format guide resource request.
 func (m *MCPServer) handleJIDFormatGuide(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	guide := `# WhatsApp JID Format Guide
 
@@ -607,7 +608,7 @@ find_chat(search="[name]") -> get JID
 	}, nil
 }
 
-// search patterns documentation
+// handleSearchPatternsGuide handles the search patterns guide resource request.
 func (m *MCPServer) handleSearchPatternsGuide(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	guide := `# Search Pattern Matching Guide
 
@@ -874,7 +875,7 @@ search_messages(query="budget*", from="558293093900@s.whatsapp.net", limit=50)
 	}, nil
 }
 
-// handles dynamic media resource requests
+// handleMediaResource handles dynamic media resource requests.
 func (m *MCPServer) handleMediaResource(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 	uri := req.Params.URI
 

@@ -35,23 +35,23 @@ func getSenderDisplayName(msg storage.MessageWithNames) string {
 	return msg.SenderJID
 }
 
-// converts a UTC timestamp to the configured timezone
+// toLocalTime converts a UTC timestamp to the configured timezone.
 func (m *MCPServer) toLocalTime(t time.Time) time.Time {
 	return t.In(m.timezone)
 }
 
-// formats a timestamp in the configured timezone (for date + time display)
+// formatDateTime formats a timestamp in the configured timezone for date and time display.
 func (m *MCPServer) formatDateTime(t time.Time) string {
 	return m.toLocalTime(t).Format("2006-01-02 15:04:05")
 }
 
-// formats a timestamp in the configured timezone (for time-only display)
+// formatTime formats a timestamp in the configured timezone for time-only display.
 func (m *MCPServer) formatTime(t time.Time) string {
 	return m.toLocalTime(t).Format("15:04:05")
 }
 
-// parseTimestamp converts ISO 8601 timestamp string to time.Time in server's timezone
-// supports formats: "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02"
+// parseTimestamp converts an ISO 8601 timestamp string to time.Time in the server's timezone.
+// It supports the formats: "2006-01-02T15:04:05", "2006-01-02 15:04:05", "2006-01-02".
 func (m *MCPServer) parseTimestamp(timestampStr string) (time.Time, error) {
 	formats := []string{
 		"2006-01-02T15:04:05",
@@ -68,13 +68,13 @@ func (m *MCPServer) parseTimestamp(timestampStr string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid timestamp format: %s (expected ISO 8601 like '2006-01-02T15:04:05' or '2006-01-02')", timestampStr)
 }
 
-// detectPatternType determines if a search query should use GLOB
-// Returns true if query contains glob wildcards: * ? [
+// detectPatternType determines whether a search query should use GLOB matching.
+// It returns true if the query contains glob wildcards: * ? [
 func detectPatternType(query string) bool {
 	return strings.ContainsAny(query, "*?[")
 }
 
-// converts bytes to human-readable size
+// formatFileSize converts bytes to a human-readable size string.
 func formatFileSize(bytes int64) string {
 	const (
 		KB = 1024
@@ -92,7 +92,7 @@ func formatFileSize(bytes int64) string {
 	return fmt.Sprintf("%d B", bytes)
 }
 
-// returns formatted dimensions string
+// formatDimensions returns a formatted dimensions string from width and height.
 func formatDimensions(width, height *int) string {
 	if width != nil && height != nil {
 		return fmt.Sprintf("%dx%d", *width, *height)
@@ -100,7 +100,7 @@ func formatDimensions(width, height *int) string {
 	return ""
 }
 
-// converts seconds to MM:SS format
+// formatDuration converts seconds to MM:SS format.
 func formatDuration(seconds *int) string {
 	if seconds == nil {
 		return ""
@@ -109,6 +109,7 @@ func formatDuration(seconds *int) string {
 	return fmt.Sprintf("%d:%02d", s/60, s%60)
 }
 
+// handleListChats handles the list_chats tool request.
 func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get limit parameter with default
 	limit := request.GetFloat("limit", 50.0)
@@ -149,6 +150,7 @@ func (m *MCPServer) handleListChats(ctx context.Context, request mcp.CallToolReq
 	return mcp.NewToolResultText(result.String()), nil
 }
 
+// handleGetChatMessages handles the get_chat_messages tool request.
 func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get required chat_jid
 	chatJID, err := request.RequireString("chat_jid")
@@ -275,6 +277,7 @@ func (m *MCPServer) handleGetChatMessages(ctx context.Context, request mcp.CallT
 	return mcp.NewToolResultText(result.String()), nil
 }
 
+// handleSearchMessages handles the search_messages tool request.
 func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get query (can be empty when using 'from' parameter)
 	query := request.GetString("query", "")
@@ -364,6 +367,7 @@ func (m *MCPServer) handleSearchMessages(ctx context.Context, request mcp.CallTo
 	return mcp.NewToolResultText(result.String()), nil
 }
 
+// handleFindChat handles the find_chat tool request.
 func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get required search parameter
 	search, err := request.RequireString("search")
@@ -406,6 +410,7 @@ func (m *MCPServer) handleFindChat(ctx context.Context, request mcp.CallToolRequ
 	return mcp.NewToolResultText(result.String()), nil
 }
 
+// handleSendMessage handles the send_message tool request.
 func (m *MCPServer) handleSendMessage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get required parameters
 	chatJID, err := request.RequireString("chat_jid")
@@ -432,6 +437,7 @@ func (m *MCPServer) handleSendMessage(ctx context.Context, request mcp.CallToolR
 	return mcp.NewToolResultText(fmt.Sprintf("Message sent successfully to %s", chatJID)), nil
 }
 
+// handleLoadMoreMessages handles the load_more_messages tool request.
 func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get required chat_jid
 	chatJID, err := request.RequireString("chat_jid")
@@ -522,6 +528,7 @@ func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.Call
 	return mcp.NewToolResultText(result.String()), nil
 }
 
+// handleGetMyInfo handles the get_my_info tool request.
 func (m *MCPServer) handleGetMyInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// check WhatsApp connection
 	if !m.wa.IsLoggedIn() {

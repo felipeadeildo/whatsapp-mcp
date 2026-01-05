@@ -16,7 +16,7 @@ import (
 	"whatsapp-mcp/storage"
 )
 
-// process all whatsapp events
+// eventHandler processes all WhatsApp events from the client.
 func (c *Client) eventHandler(evt any) {
 	switch v := evt.(type) {
 	case *events.Message:
@@ -40,9 +40,9 @@ func (c *Client) eventHandler(evt any) {
 	}
 }
 
-// normalizeJID converts any JID to canonical string format
-// groups/broadcasts/newsletters return as-is
-// user JIDs: always prefer phone number (PN) format over LID to prevent duplicate contacts
+// normalizeJID converts any JID to canonical string format.
+// For user JIDs, it prefers phone number format over LID to prevent duplicates.
+// Groups, broadcasts, and newsletters are returned as-is.
 func (c *Client) normalizeJID(jid types.JID) string {
 	if jid.IsEmpty() {
 		return ""
@@ -69,7 +69,7 @@ func (c *Client) normalizeJID(jid types.JID) string {
 	return jid.ToNonAD().String()
 }
 
-// messageData holds parsed message information for processing
+// messageData holds parsed message information for processing.
 type messageData struct {
 	MessageID   string
 	ChatJID     types.JID
@@ -82,7 +82,7 @@ type messageData struct {
 	IsGroup     bool
 }
 
-// fetches group info with database caching to avoid excessive API calls
+// getGroupInfoCached fetches group info with database caching to avoid excessive API calls.
 func (c *Client) getGroupInfoCached(ctx context.Context, groupJID types.JID) (string, error) {
 	// try to load from database first
 	chatJID := c.normalizeJID(groupJID)
@@ -102,8 +102,8 @@ func (c *Client) getGroupInfoCached(ctx context.Context, groupJID types.JID) (st
 	return groupInfo.Name, nil
 }
 
-// gets sender's WhatsApp display name with fallbacks
-// priority: PushName from message > Contact store (for groups only)
+// getSenderPushName returns the sender's display name.
+// It tries PushName from the message first, then falls back to the contact store for groups.
 func (c *Client) getSenderPushName(ctx context.Context, senderJID types.JID, messagePushName string, isGroup bool, isFromMe bool) string {
 	if isFromMe {
 		return ""
@@ -131,7 +131,8 @@ func (c *Client) getSenderPushName(ctx context.Context, senderJID types.JID, mes
 	return ""
 }
 
-// gets chat display names (both push name and contact name for DMs)
+// getChatInfo returns display names for a chat.
+// For groups it returns the group name. For DMs it returns both push name and contact name.
 func (c *Client) getChatInfo(ctx context.Context, chatJID types.JID, isGroup bool, messagePushName string) (pushName string, contactName string) {
 	if isGroup {
 		// for groups, fetch group name (with caching)
@@ -166,8 +167,7 @@ func (c *Client) getChatInfo(ctx context.Context, chatJID types.JID, isGroup boo
 	return pushName, contactName
 }
 
-// handles the common logic for saving messages and chats
-// returns error if save fails
+// processMessageData saves a message and its associated chat to the database.
 func (c *Client) processMessageData(ctx context.Context, data messageData) error {
 	// normalize JIDs to canonical format
 	chatJID := c.normalizeJID(data.ChatJID)
@@ -222,8 +222,8 @@ func (c *Client) processMessageData(ctx context.Context, data messageData) error
 	return nil
 }
 
-// parses a WebMessageInfo from history sync into messageData
-// returns nil if message cannot be parsed
+// parseHistoryMessage parses a WebMessageInfo from history sync into messageData.
+// It returns nil if the message cannot be parsed.
 func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInfo, pushNameMap map[string]string) *messageData {
 	// try ParseWebMessage first
 	parsedMsg, parseErr := c.wa.ParseWebMessage(chatJID, msg)
@@ -337,7 +337,7 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 	}
 }
 
-// process incoming messages
+// handleMessage processes incoming messages from WhatsApp.
 func (c *Client) handleMessage(evt *events.Message) {
 	info := evt.Info
 	ctx := context.Background()
@@ -447,7 +447,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 	}
 }
 
-// handles group info updates (name, topic, settings changes)
+// handleGroupInfo processes group info updates like name changes.
 func (c *Client) handleGroupInfo(evt *events.GroupInfo) {
 	// update group name if changed
 	if evt.Name != nil {
@@ -469,7 +469,7 @@ func (c *Client) handleGroupInfo(evt *events.GroupInfo) {
 	}
 }
 
-// handles contact info updates from app state sync
+// handleContact processes contact info updates from app state sync.
 func (c *Client) handleContact(evt *events.Contact) {
 	c.log.Debugf("Contact info updated: %s (FullName: %s, FirstName: %s)",
 		evt.JID, evt.Action.GetFullName(), evt.Action.GetFirstName())
@@ -477,7 +477,7 @@ func (c *Client) handleContact(evt *events.Contact) {
 	// no additional action needed - getChatInfo() will retrieve it
 }
 
-// handles push name updates
+// handlePushName processes push name updates from WhatsApp.
 func (c *Client) handlePushName(evt *events.PushName) {
 	c.log.Debugf("Push name updated: %s -> %s", evt.JID, evt.NewPushName)
 	// push name is automatically stored by whatsmeow in the contact store
@@ -781,8 +781,8 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 	}
 }
 
-// extracts text content from a WhatsApp message
-// checks extended text (replies, URLs) first, then plain text, then media captions
+// extractText extracts text content from a WhatsApp message.
+// It checks extended text first, then plain text, then media captions.
 func extractText(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
@@ -816,8 +816,8 @@ func extractText(msg *waE2E.Message) string {
 	return ""
 }
 
-// returns the high-level message type (text, media, reaction, poll)
-// based on whatsmeow's internal implementation
+// getTypeFromMessage returns the high-level message type.
+// Possible values are text, media, reaction, poll, or unknown.
 func (c *Client) getTypeFromMessage(msg *waE2E.Message) string {
 	if msg == nil {
 		return "unknown"
@@ -849,8 +849,8 @@ func (c *Client) getTypeFromMessage(msg *waE2E.Message) string {
 	}
 }
 
-// returns the specific media type (image, video, audio, etc.)
-// based on whatsmeow's internal implementation
+// getMediaTypeFromMessage returns the specific media type from a message.
+// It returns empty string if the message is not media.
 func getMediaTypeFromMessage(msg *waE2E.Message) string {
 	if msg == nil {
 		return ""
@@ -906,8 +906,8 @@ func getMediaTypeFromMessage(msg *waE2E.Message) string {
 	}
 }
 
-// returns a user-friendly message type string
-// this wraps the whatsmeow-style functions for backward compatibility
+// getMessageType returns a user-friendly message type string.
+// For media messages, it returns the specific media type instead of just "media".
 func (c *Client) getMessageType(msg *waE2E.Message) string {
 	msgType := c.getTypeFromMessage(msg)
 

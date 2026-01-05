@@ -6,7 +6,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// defines all MCP prompts for common workflows
+// registerPrompts defines all MCP prompts for common workflows.
 func (m *MCPServer) registerPrompts() {
 	m.server.AddPrompt(
 		mcp.NewPrompt("search_person_messages",
@@ -56,7 +56,7 @@ func (m *MCPServer) registerPrompts() {
 	)
 }
 
-// find all messages from someone
+// handleSearchPersonMessagesPrompt handles the search_person_messages prompt request.
 func (m *MCPServer) handleSearchPersonMessagesPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 	contactName := req.Params.Arguments["contact_name"]
 	if contactName == "" {
@@ -98,7 +98,7 @@ This helps me understand:
 	), nil
 }
 
-// comprehensive analysis of someone
+// handleGetContextAboutPersonPrompt handles the get_context_about_person prompt request.
 func (m *MCPServer) handleGetContextAboutPersonPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 	contactName := req.Params.Arguments["contact_name"]
 	if contactName == "" {
@@ -147,7 +147,7 @@ Please provide a comprehensive summary that helps me understand who ` + contactN
 	), nil
 }
 
-// analyze a specific conversation
+// handleAnalyzeConversationPrompt handles the analyze_conversation prompt request.
 func (m *MCPServer) handleAnalyzeConversationPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 	contactName := req.Params.Arguments["contact_name"]
 	if contactName == "" {
@@ -186,7 +186,7 @@ Please provide a structured summary of our recent conversation.`
 	), nil
 }
 
-// search for keyword across all chats
+// handleSearchKeywordPrompt handles the search_keyword prompt request.
 func (m *MCPServer) handleSearchKeywordPrompt(ctx context.Context, req mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
 	keyword := req.Params.Arguments["keyword"]
 	if keyword == "" {

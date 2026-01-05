@@ -1,3 +1,26 @@
+// WhatsApp MCP Server provides AI assistants access to WhatsApp conversations.
+//
+// This server implements the Model Context Protocol (MCP) specification to expose
+// WhatsApp messages and chats through a standardized interface. It connects to
+// WhatsApp Web using your existing account and persists all messages locally in
+// SQLite for fast searching and retrieval.
+//
+// The server supports:
+//   - Real-time message syncing from WhatsApp
+//   - Full-text search across all conversations
+//   - Pattern matching with glob support
+//   - Media download and storage
+//   - On-demand history loading
+//   - Timezone-aware message formatting
+//
+// Configuration is done via environment variables (see .env.example).
+// Authentication uses QR code scanning on first launch.
+//
+// Usage:
+//
+//	whatsapp-mcp
+//
+// The server runs as an MCP stdio server and communicates via JSON-RPC.
 package main
 
 import (
@@ -194,4 +217,5 @@ func main() {
 	// disconnect WhatsApp
 	waClient.Disconnect()
 	log.Println("Shutdown complete")
+
 }

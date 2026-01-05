@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// represents a whatsapp message
+// Message represents a WhatsApp message.
 type Message struct {
 	ID          string
 	ChatJID     string // Canonical JID
@@ -17,7 +17,7 @@ type Message struct {
 	MessageType string
 }
 
-// represents a message with sender names (from view)
+// MessageWithNames represents a message with sender and chat names from the database view.
 type MessageWithNames struct {
 	Message
 	SenderPushName    string         // Current WhatsApp display name (from push_names table)
@@ -26,17 +26,17 @@ type MessageWithNames struct {
 	MediaMetadata     *MediaMetadata // Associated media metadata (null if no media)
 }
 
-// messages operations manager
+// MessageStore handles message operations on the database.
 type MessageStore struct {
 	db *sql.DB
 }
 
-// message store constructor
+// NewMessageStore creates a new message store instance.
 func NewMessageStore(db *sql.DB) *MessageStore {
 	return &MessageStore{db: db}
 }
 
-// saves a WhatsApp message to database
+// SaveMessage saves a WhatsApp message to the database.
 func (s *MessageStore) SaveMessage(msg Message) error {
 	query := `
 	INSERT OR REPLACE INTO messages
@@ -62,7 +62,8 @@ func (s *MessageStore) SaveMessage(msg Message) error {
 	return nil
 }
 
-// saves multiple messages (optimized for history sync)
+// SaveBulk saves multiple messages in a single transaction.
+// This is optimized for history sync operations.
 func (s *MessageStore) SaveBulk(messages []Message) error {
 	tx, err := s.db.Begin()
 
@@ -103,7 +104,7 @@ func (s *MessageStore) SaveBulk(messages []Message) error {
 
 }
 
-// get messages by text
+// SearchMessages searches messages by text content.
 func (s *MessageStore) SearchMessages(q string, limit int) ([]Message, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
@@ -123,7 +124,7 @@ func (s *MessageStore) SearchMessages(q string, limit int) ([]Message, error) {
 	return s.scanMessages(rows)
 }
 
-// get messages from a chat
+// GetChatMessages retrieves messages from a specific chat.
 func (s *MessageStore) GetChatMessages(chatJID string, limit int, offset int) ([]Message, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
@@ -142,7 +143,8 @@ func (s *MessageStore) GetChatMessages(chatJID string, limit int, offset int) ([
 	return s.scanMessages(rows)
 }
 
-// get a message by id
+// GetMessageByID retrieves a message by its ID.
+// It returns nil if the message is not found.
 func (s *MessageStore) GetMessageByID(messageID string) (*Message, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
@@ -178,7 +180,8 @@ func (s *MessageStore) GetMessageByID(messageID string) (*Message, error) {
 	return &msg, nil
 }
 
-// get the oldest message from a specific chat (for history sync requests)
+// GetOldestMessage retrieves the oldest message from a specific chat.
+// This is used for history sync requests.
 func (s *MessageStore) GetOldestMessage(chatJID string) (*Message, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type
@@ -216,7 +219,8 @@ func (s *MessageStore) GetOldestMessage(chatJID string) (*Message, error) {
 	return &msg, nil
 }
 
-// get messages older than a specific timestamp (for retrieving newly loaded messages)
+// GetChatMessagesOlderThan retrieves messages older than a specific timestamp.
+// This is used for retrieving newly loaded messages from history sync.
 func (s *MessageStore) GetChatMessagesOlderThan(chatJID string, timestamp time.Time, limit int) ([]MessageWithNames, error) {
 	query := `
 	SELECT id, chat_jid, sender_jid, sender_push_name, sender_contact_name, chat_name,
@@ -239,7 +243,7 @@ func (s *MessageStore) GetChatMessagesOlderThan(chatJID string, timestamp time.T
 	return s.scanMessagesWithNames(rows)
 }
 
-// retrieves chat messages with advanced filtering
+// GetChatMessagesWithNamesFiltered retrieves chat messages with advanced filtering.
 func (s *MessageStore) GetChatMessagesWithNamesFiltered(
 	chatJID string,
 	limit int,
@@ -288,7 +292,7 @@ func (s *MessageStore) GetChatMessagesWithNamesFiltered(
 	return s.scanMessagesWithNames(rows)
 }
 
-// helper to convert rows cursor into actual message objects
+// scanMessages converts SQL rows into Message objects.
 func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
 	var messages []Message
 
@@ -316,7 +320,8 @@ func (s *MessageStore) scanMessages(rows *sql.Rows) ([]Message, error) {
 	return messages, rows.Err()
 }
 
-// searches messages with pattern matching and sender filtering
+// SearchMessagesWithNamesFiltered searches messages with pattern matching and sender filtering.
+// It uses GLOB patterns if useGlob is true, otherwise uses LIKE for fuzzy matching.
 func (s *MessageStore) SearchMessagesWithNamesFiltered(
 	query string,
 	useGlob bool,
@@ -416,7 +421,7 @@ func (s *MessageStore) GetChatMessagesWithNames(chatJID string, limit int, offse
 	return s.scanMessagesWithNames(rows)
 }
 
-// helper to scan messages with names from view
+// scanMessagesWithNames converts SQL rows into MessageWithNames objects.
 func (s *MessageStore) scanMessagesWithNames(rows *sql.Rows) ([]MessageWithNames, error) {
 	var messages []MessageWithNames
 

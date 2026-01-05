@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// represents media file metadata
+// MediaMetadata represents metadata for a media file attached to a message.
 type MediaMetadata struct {
 	MessageID         string
 	FilePath          string // relative path from data/media/ (empty if not downloaded)
@@ -26,17 +26,17 @@ type MediaMetadata struct {
 	CreatedAt         time.Time
 }
 
-// handles media metadata operations
+// MediaStore handles media metadata operations on the database.
 type MediaStore struct {
 	db *sql.DB
 }
 
-// creates a new MediaStore
+// NewMediaStore creates a new media store instance.
 func NewMediaStore(db *sql.DB) *MediaStore {
 	return &MediaStore{db: db}
 }
 
-// inserts or updates media metadata
+// SaveMediaMetadata inserts or updates media metadata in the database.
 func (s *MediaStore) SaveMediaMetadata(meta MediaMetadata) error {
 	query := `
 	INSERT OR REPLACE INTO media_metadata
@@ -73,7 +73,8 @@ func (s *MediaStore) SaveMediaMetadata(meta MediaMetadata) error {
 	return err
 }
 
-// retrieves metadata by message ID
+// GetMediaMetadata retrieves media metadata by message ID.
+// It returns nil if the metadata is not found.
 func (s *MediaStore) GetMediaMetadata(messageID string) (*MediaMetadata, error) {
 	query := `
 	SELECT message_id, file_path, file_name, file_size, mime_type, width, height, duration,
@@ -154,7 +155,7 @@ func (s *MediaStore) GetMediaMetadata(messageID string) (*MediaMetadata, error) 
 	return &meta, nil
 }
 
-// updates download status and timestamp
+// UpdateDownloadStatus updates the download status and timestamp for a media file.
 func (s *MediaStore) UpdateDownloadStatus(messageID, status string, filePath *string, downloadErr error) error {
 	query := `
 	UPDATE media_metadata
@@ -173,7 +174,7 @@ func (s *MediaStore) UpdateDownloadStatus(messageID, status string, filePath *st
 	return err
 }
 
-// returns media filtered by MIME type prefix
+// ListMediaByType returns media filtered by MIME type prefix.
 func (s *MediaStore) ListMediaByType(mimeTypePrefix string, limit int) ([]MediaMetadata, error) {
 	query := `
 	SELECT message_id, file_path, file_name, file_size, mime_type, width, height, duration,
@@ -245,7 +246,7 @@ func (s *MediaStore) ListMediaByType(mimeTypePrefix string, limit int) ([]MediaM
 	return results, rows.Err()
 }
 
-// returns all media from a specific chat
+// GetMediaByChat returns all media from a specific chat.
 func (s *MediaStore) GetMediaByChat(chatJID string, limit int) ([]MediaMetadata, error) {
 	query := `
 	SELECT m.message_id, m.file_path, m.file_name, m.file_size, m.mime_type,
@@ -318,7 +319,8 @@ func (s *MediaStore) GetMediaByChat(chatJID string, limit int) ([]MediaMetadata,
 	return results, rows.Err()
 }
 
-// removes metadata (file deletion handled separately)
+// DeleteMediaMetadata removes metadata from the database.
+// File deletion must be handled separately.
 func (s *MediaStore) DeleteMediaMetadata(messageID string) error {
 	query := `DELETE FROM media_metadata WHERE message_id = ?`
 	_, err := s.db.Exec(query, messageID)

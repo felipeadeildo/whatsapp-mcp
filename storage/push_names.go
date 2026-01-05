@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-// saves multiple push names in a single transaction (from HistorySync)
+// SavePushNames saves multiple push names in a single transaction.
+// This is typically called from HistorySync events.
 func (s *MessageStore) SavePushNames(pushNames map[string]string) error {
 	if len(pushNames) == 0 {
 		return nil
@@ -41,7 +42,8 @@ func (s *MessageStore) SavePushNames(pushNames map[string]string) error {
 	return tx.Commit()
 }
 
-// gets a single push name by JID
+// GetPushName retrieves a single push name by JID.
+// It returns an empty string if the JID is not found.
 func (s *MessageStore) GetPushName(jid string) (string, error) {
 	var pushName string
 	err := s.db.QueryRow("SELECT push_name FROM push_names WHERE jid = ?", jid).Scan(&pushName)
@@ -54,7 +56,8 @@ func (s *MessageStore) GetPushName(jid string) (string, error) {
 	return pushName, nil
 }
 
-// loads all push names into a map for fast lookup during batch processing
+// LoadAllPushNames loads all push names into a map for fast lookup.
+// This is used during batch processing like history sync.
 func (s *MessageStore) LoadAllPushNames() (map[string]string, error) {
 	rows, err := s.db.Query("SELECT jid, push_name FROM push_names")
 	if err != nil {

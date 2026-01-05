@@ -4,7 +4,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-// registerTools defines all MCP tools
+// registerTools defines all MCP tools available to clients.
 func (m *MCPServer) registerTools() {
 	// 1. list all chats
 	m.server.AddTool(

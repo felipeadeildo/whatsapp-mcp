@@ -1,3 +1,31 @@
+// Migrate is a CLI tool for managing database schema migrations.
+//
+// This command provides utilities for creating, viewing, and applying
+// database migrations for the WhatsApp MCP server. It ensures safe,
+// versioned schema changes with checksum validation.
+//
+// Commands:
+//
+//	create <description>  - Create a new migration file
+//	status                - Show migration status
+//	upgrade [version]     - Apply pending migrations (all or up to version)
+//
+// Examples:
+//
+//	# Create a new migration
+//	go run cmd/migrate/main.go create add_user_table
+//
+//	# Check migration status
+//	go run cmd/migrate/main.go status
+//
+//	# Apply all pending migrations
+//	go run cmd/migrate/main.go upgrade
+//
+//	# Upgrade to specific version
+//	go run cmd/migrate/main.go upgrade 5
+//
+// Migration files are stored in storage/migrations/ and are automatically
+// embedded in the application binary. Never modify applied migrations.
 package main
 
 import (
@@ -56,6 +84,7 @@ func main() {
 	}
 }
 
+// printUsage prints the usage information for the migration tool.
 func printUsage() {
 	fmt.Println("Migration CLI Tool")
 	fmt.Println("")
@@ -77,6 +106,7 @@ func printUsage() {
 	fmt.Println("  go run cmd/migrate/main.go upgrade 2")
 }
 
+// createMigration creates a new migration file with the given description.
 func createMigration(description string) error {
 	// sanitize description
 	description = sanitizeDescription(description)
@@ -113,6 +143,7 @@ func createMigration(description string) error {
 	return nil
 }
 
+// sanitizeDescription removes invalid characters from a migration description.
 func sanitizeDescription(description string) string {
 	// replace spaces and invalid characters with underscores
 	re := regexp.MustCompile(`[^a-zA-Z0-9_]+`)
@@ -122,6 +153,7 @@ func sanitizeDescription(description string) string {
 	return sanitized
 }
 
+// getNextVersion determines the next migration version number.
 func getNextVersion(migrationsDir string) (int, error) {
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
@@ -158,6 +190,7 @@ func getNextVersion(migrationsDir string) (int, error) {
 	return maxVersion + 1, nil
 }
 
+// generateMigrationTemplate generates a migration file template with metadata.
 func generateMigrationTemplate(version int, description string) string {
 	now := time.Now().Format("2006-01-02")
 	prevVersion := version - 1
@@ -194,6 +227,7 @@ func generateMigrationTemplate(version int, description string) string {
 	)
 }
 
+// openDB opens a connection to the database.
 func openDB() (*sql.DB, error) {
 	db, err := sql.Open("sqlite", storage.GetConnectionString())
 	if err != nil {
@@ -207,6 +241,7 @@ func openDB() (*sql.DB, error) {
 	return db, nil
 }
 
+// showStatus displays the current migration status.
 func showStatus() error {
 	db, err := openDB()
 	if err != nil {
@@ -274,6 +309,7 @@ func showStatus() error {
 	return nil
 }
 
+// truncateString truncates a string to the specified maximum length.
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -281,6 +317,7 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+// runUpgrade runs database migrations up to the specified target version.
 func runUpgrade(target string) error {
 	db, err := openDB()
 	if err != nil {

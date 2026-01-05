@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// represents a conversation
+// Chat represents a WhatsApp conversation.
 type Chat struct {
 	JID             string // canonical JID (required)
 	PushName        string // sender's WhatsApp display name (from PushName in messages)
@@ -16,8 +16,8 @@ type Chat struct {
 	IsGroup         bool
 }
 
-// retrieves a chat by its canonical JID
-// returns the chat if found, nil otherwise
+// GetChatByJID retrieves a chat by its canonical JID.
+// It returns nil if the chat is not found.
 func (s *MessageStore) GetChatByJID(jid string) (*Chat, error) {
 	query := `
 	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
@@ -51,7 +51,7 @@ func (s *MessageStore) GetChatByJID(jid string) (*Chat, error) {
 	return &chat, nil
 }
 
-// saves/updates chat information
+// SaveChat saves or updates chat information in the database.
 func (s *MessageStore) SaveChat(chat Chat) error {
 	if chat.JID == "" {
 		return fmt.Errorf("chat JID cannot be empty")
@@ -81,7 +81,7 @@ func (s *MessageStore) SaveChat(chat Chat) error {
 	return err
 }
 
-// return all chats ordered by last message timestamp
+// ListChats returns all chats ordered by last message timestamp.
 func (s *MessageStore) ListChats(limit int) ([]Chat, error) {
 	query := `
 	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group
@@ -120,7 +120,8 @@ func (s *MessageStore) ListChats(limit int) ([]Chat, error) {
 	return chats, rows.Err()
 }
 
-// searches chats with pattern matching support
+// SearchChatsFiltered searches chats with pattern matching.
+// It uses GLOB patterns if useGlob is true, otherwise uses LIKE for fuzzy matching.
 func (s *MessageStore) SearchChatsFiltered(search string, useGlob bool, limit int) ([]Chat, error) {
 	var query string
 	var searchPattern string
@@ -176,7 +177,7 @@ func (s *MessageStore) SearchChatsFiltered(search string, useGlob bool, limit in
 	return chats, rows.Err()
 }
 
-// search chats by name or JID with fuzzy matching
+// SearchChats searches chats by name or JID with fuzzy matching.
 func (s *MessageStore) SearchChats(search string, limit int) ([]Chat, error) {
 	query := `
 	SELECT jid, push_name, contact_name, last_message_time, unread_count, is_group

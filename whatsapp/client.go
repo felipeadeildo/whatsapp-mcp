@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// Client wraps the WhatsApp client with additional functionality.
 type Client struct {
 	wa               *whatsmeow.Client
 	store            *storage.MessageStore
@@ -30,31 +31,37 @@ type Client struct {
 	cancel           context.CancelFunc   // cancel function to stop all goroutines
 }
 
+// fileLogger wraps a logger to write to both stdout and a file.
 type fileLogger struct {
 	base waLog.Logger
 	file *os.File
 }
 
+// Errorf logs an error message to both stdout and file.
 func (l *fileLogger) Errorf(msg string, args ...any) {
 	l.base.Errorf(msg, args...)
 	fmt.Fprintf(l.file, "[ERROR] "+msg+"\n", args...)
 }
 
+// Warnf logs a warning message to both stdout and file.
 func (l *fileLogger) Warnf(msg string, args ...any) {
 	l.base.Warnf(msg, args...)
 	fmt.Fprintf(l.file, "[WARN] "+msg+"\n", args...)
 }
 
+// Infof logs an info message to both stdout and file.
 func (l *fileLogger) Infof(msg string, args ...any) {
 	l.base.Infof(msg, args...)
 	fmt.Fprintf(l.file, "[INFO] "+msg+"\n", args...)
 }
 
+// Debugf logs a debug message to both stdout and file.
 func (l *fileLogger) Debugf(msg string, args ...any) {
 	l.base.Debugf(msg, args...)
 	fmt.Fprintf(l.file, "[DEBUG] "+msg+"\n", args...)
 }
 
+// Sub creates a sub-logger for a specific module.
 func (l *fileLogger) Sub(module string) waLog.Logger {
 	return &fileLogger{
 		base: l.base.Sub(module),
@@ -62,6 +69,7 @@ func (l *fileLogger) Sub(module string) waLog.Logger {
 	}
 }
 
+// NewClient creates a new WhatsApp client with the given configuration.
 func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, logLevel string) (*Client, error) {
 	// validate log level, default to INFO if invalid
 	validLevels := map[string]bool{
@@ -132,14 +140,17 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, logL
 	return client, nil
 }
 
+// IsLoggedIn reports whether the client is logged in.
 func (c *Client) IsLoggedIn() bool {
 	return c.wa.Store.ID != nil
 }
 
+// Connect establishes a connection to WhatsApp.
 func (c *Client) Connect() error {
 	return c.wa.Connect()
 }
 
+// Disconnect closes the WhatsApp connection and cleans up resources.
 func (c *Client) Disconnect() {
 	// cancel context to stop all running goroutines
 	if c.cancel != nil {
@@ -153,6 +164,7 @@ func (c *Client) Disconnect() {
 	}
 }
 
+// GetQRChannel returns a channel for receiving QR codes for authentication.
 func (c *Client) GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelItem, error) {
 	if c.IsLoggedIn() {
 		return nil, fmt.Errorf("already logged in")
@@ -173,6 +185,7 @@ func (c *Client) GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelIt
 	return qrChan, nil
 }
 
+// SendTextMessage sends a text message to a chat.
 func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text string) error {
 	targetJID, err := types.ParseJID(chatJID)
 	if err != nil {
@@ -200,7 +213,8 @@ func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text strin
 	return nil
 }
 
-// requests additional message history from WhatsApp on-demand
+// RequestHistorySync requests additional message history from WhatsApp.
+// If waitForSync is true, it blocks until the sync completes and returns the new messages.
 func (c *Client) RequestHistorySync(ctx context.Context, chatJID string, count int, waitForSync bool) ([]storage.MessageWithNames, error) {
 	// parse the chatJID string to types.JID
 	parsedJID, err := types.ParseJID(chatJID)
@@ -343,7 +357,7 @@ func (c *Client) GetMyInfo(ctx context.Context) (*MyInfo, error) {
 	}, nil
 }
 
-// returns a list of enabled media types for logging
+// getEnabledTypes returns a list of enabled media types for logging.
 func getEnabledTypes(types map[string]bool) []string {
 	var enabled []string
 	for t, v := range types {

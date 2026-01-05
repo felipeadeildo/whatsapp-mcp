@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
+// MCPServer represents an MCP server instance for WhatsApp integration.
 type MCPServer struct {
 	server     *server.MCPServer
 	wa         *whatsapp.Client
@@ -19,6 +20,7 @@ type MCPServer struct {
 	timezone   *time.Location
 }
 
+// NewMCPServer creates a new MCP server with the provided WhatsApp client and storage.
 func NewMCPServer(wa *whatsapp.Client, store *storage.MessageStore, mediaStore *storage.MediaStore, timezone *time.Location) *MCPServer {
 	s := server.NewMCPServer(
 		"WhatsApp MCP",
@@ -53,6 +55,7 @@ Use prompts for common workflows or resources for detailed guides.`),
 	return m
 }
 
+// GetServer returns the underlying MCP server instance.
 func (m *MCPServer) GetServer() *server.MCPServer {
 	return m.server
 }

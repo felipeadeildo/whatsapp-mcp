@@ -18,7 +18,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
-// determines initial download status based on auto-download config
+// getInitialDownloadStatus determines the initial download status based on auto-download configuration.
 func (c *Client) getInitialDownloadStatus(mediaType string, fileSize int64, fromHistory bool) string {
 	// check if auto-download is enabled based on source
 	if fromHistory && !c.mediaConfig.AutoDownloadFromHistory {
@@ -31,7 +31,7 @@ func (c *Client) getInitialDownloadStatus(mediaType string, fileSize int64, from
 	return "skipped"
 }
 
-// extracts metadata from WhatsApp message
+// extractMediaMetadata extracts metadata from a WhatsApp message and returns media information.
 func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string, fromHistory bool) *storage.MediaMetadata {
 	if msg == nil {
 		return nil
@@ -153,7 +153,7 @@ func (c *Client) extractMediaMetadata(msg *waE2E.Message, messageID string, from
 	return nil
 }
 
-// checks if media should be auto-downloaded
+// shouldAutoDownload checks whether media should be automatically downloaded based on type and size filters.
 func (c *Client) shouldAutoDownload(mediaType string, fileSize int64) bool {
 	if !c.mediaConfig.AutoDownloadEnabled {
 		return false
@@ -174,8 +174,8 @@ func (c *Client) shouldAutoDownload(mediaType string, fileSize int64) bool {
 	return true
 }
 
-// downloads media from WhatsApp and saves to disk
-// returns the relative file path on success
+// downloadMedia downloads media from WhatsApp and saves it to disk.
+// It returns the relative file path on success.
 func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) (string, error) {
 	if msg == nil || meta == nil {
 		return "", fmt.Errorf("nil message or metadata")
@@ -265,7 +265,7 @@ func (c *Client) downloadMedia(ctx context.Context, msg *waE2E.Message, meta *st
 	return relPath, nil
 }
 
-// creates unique file path based on metadata
+// generateMediaFilePath creates a unique file path based on media metadata.
 func (c *Client) generateMediaFilePath(meta *storage.MediaMetadata) (string, error) {
 	// determine subdirectory based on MIME type
 	var subdir string
@@ -295,9 +295,9 @@ func (c *Client) generateMediaFilePath(meta *storage.MediaMetadata) (string, err
 	return filepath.Join(c.mediaConfig.StoragePath, subdir, fileName), nil
 }
 
-// checks file integrity
-// note: whatsmeow's Download() already validates HMAC, encrypted SHA256, and decrypted SHA256
-// this function only performs basic sanity checks on the written file
+// verifyDownload checks file integrity after download.
+// Note: whatsmeow's Download() already validates HMAC, encrypted SHA256, and decrypted SHA256.
+// This function only performs basic sanity checks on the written file.
 func (c *Client) verifyDownload(filePath string, meta *storage.MediaMetadata) error {
 	stat, err := os.Stat(filePath)
 	if err != nil {
@@ -319,8 +319,8 @@ func (c *Client) verifyDownload(filePath string, meta *storage.MediaMetadata) er
 	return nil
 }
 
-// downloads media with retry logic
-// returns the relative file path on success
+// downloadMediaWithRetry downloads media with retry logic for transient failures.
+// It returns the relative file path on success.
 func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message, meta *storage.MediaMetadata) (string, error) {
 	maxRetries := 3
 	backoff := time.Second
@@ -357,11 +357,12 @@ func (c *Client) downloadMediaWithRetry(ctx context.Context, msg *waE2E.Message,
 	return "", fmt.Errorf("download failed after %d attempts: %s", maxRetries, strings.Join(allErrors, "; "))
 }
 
-// helperssss
+// intPtr returns a pointer to the given integer value.
 func intPtr(i int) *int {
 	return &i
 }
 
+// sanitizeFilename removes unsafe characters from a filename and truncates it to a safe length.
 func sanitizeFilename(name string) string {
 	if name == "" {
 		return ""
@@ -398,6 +399,7 @@ func sanitizeFilename(name string) string {
 	return filename
 }
 
+// mimeToExtension converts a MIME type to a file extension.
 func mimeToExtension(mime string) string {
 	extensions := map[string]string{
 		"image/jpeg":      ".jpg",
@@ -430,6 +432,7 @@ func mimeToExtension(mime string) string {
 	return ""
 }
 
+// hashFile computes the SHA256 hash of a file.
 func hashFile(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {

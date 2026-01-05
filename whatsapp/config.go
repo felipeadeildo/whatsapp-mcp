@@ -7,7 +7,7 @@ import (
 	"whatsapp-mcp/paths"
 )
 
-// media download configuration
+// MediaConfig holds configuration for media download behavior.
 type MediaConfig struct {
 	AutoDownloadEnabled     bool
 	AutoDownloadFromHistory bool
@@ -16,7 +16,7 @@ type MediaConfig struct {
 	StoragePath             string
 }
 
-// media configuration from environment variables
+// LoadMediaConfig loads media configuration from environment variables.
 func LoadMediaConfig() MediaConfig {
 	config := MediaConfig{
 		AutoDownloadEnabled:     getEnvBool("MEDIA_AUTO_DOWNLOAD_ENABLED", true),
@@ -35,7 +35,7 @@ func LoadMediaConfig() MediaConfig {
 	return config
 }
 
-// gets environment variable with fallback default
+// getEnv gets an environment variable with a fallback default value.
 func getEnv(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
@@ -43,7 +43,7 @@ func getEnv(key, defaultVal string) string {
 	return defaultVal
 }
 
-// gets boolean environment variable with fallback default
+// getEnvBool gets a boolean environment variable with a fallback default value.
 func getEnvBool(key string, defaultVal bool) bool {
 	val := os.Getenv(key)
 	if val == "" {
@@ -56,7 +56,7 @@ func getEnvBool(key string, defaultVal bool) bool {
 	return b
 }
 
-// gets int64 environment variable with fallback default
+// getEnvInt64 gets an int64 environment variable with a fallback default value.
 func getEnvInt64(key string, defaultVal int64) int64 {
 	val := os.Getenv(key)
 	if val == "" {
