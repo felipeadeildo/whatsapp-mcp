@@ -479,12 +479,10 @@ func (c *Client) handleMessage(evt *events.Message) {
 			MediaMetadata:     mediaMetadata,
 		}
 
-		// Emit asynchronously to avoid blocking message processing
-		go func() {
-			if err := c.webhookManager.EmitMessageEvent(msgWithNames); err != nil {
-				c.log.Errorf("Failed to emit webhook event: %v", err)
-			}
-		}()
+		// Emit webhook event (already non-blocking via worker queue)
+		if err := c.webhookManager.EmitMessageEvent(msgWithNames); err != nil {
+			c.log.Errorf("Failed to emit webhook event: %v", err)
+		}
 	}
 }
 

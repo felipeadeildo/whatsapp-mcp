@@ -96,6 +96,9 @@ func (m *WebhookManager) Stop() {
 	m.log.Println("Stopping webhook manager...")
 	m.cancel() // Signal workers to stop
 
+	// Close the delivery channel to signal no more tasks will be sent
+	close(m.deliveryChan)
+
 	// Wait for workers to finish current tasks (with timeout)
 	done := make(chan struct{})
 	go func() {
@@ -186,19 +189,33 @@ func (m *WebhookManager) buildMessagePayload(msg storage.MessageWithNames) Webho
 }
 
 // worker processes delivery tasks from the queue.
-func (m *WebhookManager) worker(id int) {
+func (m *WebhookManager) worker(_ int) {
 	defer m.wg.Done()
 
 	for {
 		select {
 		case task := <-m.deliveryChan:
 			if err := m.deliverWebhook(task.webhook, task.payload, task.attempt); err != nil {
-				// Schedule retry if attempts remain
-				if task.attempt < m.config.MaxRetries {
+				// Schedule retry if attempts remain and backoff configuration is available
+				if task.attempt < m.config.MaxRetries && task.attempt < len(m.config.RetryBackoff) {
 					backoff := m.config.RetryBackoff[task.attempt]
-					time.Sleep(backoff)
 					task.attempt++
-					m.deliveryChan <- task
+
+					// Schedule the retry without blocking this worker goroutine.
+					go func(t *deliveryTask, delay time.Duration) {
+						select {
+						case <-time.After(delay):
+							// Only enqueue if context is still active.
+							select {
+							case m.deliveryChan <- t:
+								// retry enqueued
+							case <-m.ctx.Done():
+								// context canceled; stop processing
+							}
+						case <-m.ctx.Done():
+							// context canceled during backoff
+						}
+					}(task, backoff)
 				}
 			}
 		case <-m.ctx.Done():
@@ -215,4 +232,10 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// TestDelivery sends a test webhook payload for manual testing purposes.
+// This is a synchronous operation that bypasses the worker queue.
+func (m *WebhookManager) TestDelivery(webhook storage.WebhookRegistration, payload WebhookPayload) error {
+	return m.deliverWebhook(webhook, payload, 1)
 }

@@ -79,6 +79,41 @@ func (s *WebhookStore) CreateWebhook(reg WebhookRegistration) error {
 	return nil
 }
 
+// UpsertWebhook inserts a new webhook or updates an existing one if the ID already exists.
+func (s *WebhookStore) UpsertWebhook(reg WebhookRegistration) error {
+	eventTypesJSON, err := json.Marshal(reg.EventTypes)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event types: %w", err)
+	}
+
+	query := `
+		INSERT INTO webhook_registrations (id, url, secret, event_types, active, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			url = excluded.url,
+			secret = excluded.secret,
+			event_types = excluded.event_types,
+			active = excluded.active,
+			updated_at = excluded.updated_at
+	`
+
+	_, err = s.db.Exec(query,
+		reg.ID,
+		reg.URL,
+		reg.Secret,
+		string(eventTypesJSON),
+		reg.Active,
+		reg.CreatedAt.Unix(),
+		reg.UpdatedAt.Unix(),
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to upsert webhook: %w", err)
+	}
+
+	return nil
+}
+
 // GetWebhook retrieves a webhook by ID.
 func (s *WebhookStore) GetWebhook(id string) (*WebhookRegistration, error) {
 	query := `

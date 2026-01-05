@@ -1,8 +1,11 @@
 package webhook
 
 import (
+	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -27,18 +30,63 @@ func NewHandler(manager *WebhookManager, store *storage.WebhookStore, apiKey str
 	}
 }
 
-// ValidateAuth checks if the request has a valid API key.
+// ValidateAuth checks if the request has a valid API key using constant-time comparison.
 func (h *Handler) ValidateAuth(r *http.Request) bool {
 	authHeader := r.Header.Get("Authorization")
 	expectedAuth := "Bearer " + h.apiKey
-	return authHeader == expectedAuth
+	return subtle.ConstantTimeCompare([]byte(authHeader), []byte(expectedAuth)) == 1
 }
+
+var (
+	// supportedEventTypes lists all valid event types
+	supportedEventTypes = map[string]bool{
+		"message": true,
+	}
+)
 
 // CreateWebhookRequest represents a webhook creation request.
 type CreateWebhookRequest struct {
 	URL        string   `json:"url"`
 	Secret     string   `json:"secret,omitempty"`
 	EventTypes []string `json:"event_types"`
+}
+
+// validateURL checks if the URL is valid and not targeting private/internal networks (SSRF prevention).
+func validateURL(rawURL string) error {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+
+	// only allow HTTP and HTTPS schemes
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return fmt.Errorf("invalid URL scheme: only http and https are allowed")
+	}
+
+	// ensure a host is specified
+	if parsedURL.Host == "" {
+		return fmt.Errorf("invalid URL: host is required")
+	}
+
+	return nil
+}
+
+// validateEventTypes checks if all event types are supported.
+func validateEventTypes(eventTypes []string) error {
+	if len(eventTypes) == 0 {
+		return nil // will use default
+	}
+
+	for _, eventType := range eventTypes {
+		if eventType == "" {
+			return fmt.Errorf("empty event type is not allowed")
+		}
+		if !supportedEventTypes[eventType] {
+			return fmt.Errorf("unsupported event type: %s", eventType)
+		}
+	}
+
+	return nil
 }
 
 // WebhookResponse represents a webhook in API responses.
@@ -65,8 +113,20 @@ func (h *Handler) CreateWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate URL format and prevent SSRF
+	if err := validateURL(req.URL); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"Invalid URL: %s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
 	if len(req.EventTypes) == 0 {
 		req.EventTypes = []string{"message"} // default
+	}
+
+	// Validate event types
+	if err := validateEventTypes(req.EventTypes); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+		return
 	}
 
 	// Create webhook registration
@@ -203,6 +263,22 @@ func (h *Handler) UpdateWebhook(w http.ResponseWriter, r *http.Request, webhookI
 		return
 	}
 
+	// Validate URL if provided
+	if req.URL != nil {
+		if err := validateURL(*req.URL); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"Invalid URL: %s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Validate event types if provided
+	if req.EventTypes != nil {
+		if err := validateEventTypes(*req.EventTypes); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Apply updates
 	if req.URL != nil {
 		webhook.URL = *req.URL
@@ -222,13 +298,20 @@ func (h *Handler) UpdateWebhook(w http.ResponseWriter, r *http.Request, webhookI
 		return
 	}
 
+	// Get updated webhook to ensure UpdatedAt field is current
+	updatedWebhook, err := h.store.GetWebhook(webhookID)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to retrieve updated webhook"}`, http.StatusInternalServerError)
+		return
+	}
+
 	resp := WebhookResponse{
-		ID:         webhook.ID,
-		URL:        webhook.URL,
-		EventTypes: webhook.EventTypes,
-		Active:     webhook.Active,
-		CreatedAt:  webhook.CreatedAt,
-		UpdatedAt:  webhook.UpdatedAt,
+		ID:         updatedWebhook.ID,
+		URL:        updatedWebhook.URL,
+		EventTypes: updatedWebhook.EventTypes,
+		Active:     updatedWebhook.Active,
+		CreatedAt:  updatedWebhook.CreatedAt,
+		UpdatedAt:  updatedWebhook.UpdatedAt,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -272,7 +355,7 @@ func (h *Handler) TestWebhook(w http.ResponseWriter, r *http.Request, webhookID 
 	}
 
 	// Attempt delivery
-	err = h.manager.deliverWebhook(*webhook, testPayload, 1)
+	err = h.manager.TestDelivery(*webhook, testPayload)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
