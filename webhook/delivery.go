@@ -43,12 +43,7 @@ func (m *WebhookManager) deliverWebhook(webhook storage.WebhookRegistration, pay
 		req.Header.Set("X-Webhook-Signature", signature)
 	}
 
-	// Send request with timeout
-	client := &http.Client{
-		Timeout: m.config.DeliveryTimeout,
-	}
-
-	resp, err := client.Do(req)
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return m.recordFailure(webhook, payload, attempt, 0, fmt.Errorf("request failed: %w", err))
 	}
