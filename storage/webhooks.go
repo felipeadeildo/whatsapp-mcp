@@ -320,6 +320,8 @@ func (s *WebhookStore) RecordDelivery(attempt DeliveryAttempt) error {
 }
 
 // GetDeliveryStats retrieves delivery statistics for a webhook.
+// Note: Delivery records are retained indefinitely for audit purposes.
+// TODO: implements a cleanup job if storage becomes a concern (e.g., delete records older than 90 days).
 func (s *WebhookStore) GetDeliveryStats(webhookID string, since time.Time) (*DeliveryStats, error) {
 	query := `
 		SELECT
