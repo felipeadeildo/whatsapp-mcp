@@ -17,11 +17,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// WebhookManager defines the interface for webhook emission.
+type WebhookManager interface {
+	EmitMessageEvent(msg storage.MessageWithNames) error
+}
+
 // Client wraps the WhatsApp client with additional functionality.
 type Client struct {
 	wa               *whatsmeow.Client
 	store            *storage.MessageStore
 	mediaStore       *storage.MediaStore
+	webhookManager   WebhookManager // optional webhook manager
 	mediaConfig      MediaConfig
 	log              waLog.Logger
 	logFile          *os.File
@@ -70,7 +76,7 @@ func (l *fileLogger) Sub(module string) waLog.Logger {
 }
 
 // NewClient creates a new WhatsApp client with the given configuration.
-func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, logLevel string) (*Client, error) {
+func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webhookManager WebhookManager, logLevel string) (*Client, error) {
 	// validate log level, default to INFO if invalid
 	validLevels := map[string]bool{
 		"DEBUG": true,
@@ -127,6 +133,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, logL
 		wa:               waClient,
 		store:            store,
 		mediaStore:       mediaStore,
+		webhookManager:   webhookManager,
 		mediaConfig:      mediaConfig,
 		log:              logger,
 		logFile:          logFile,
