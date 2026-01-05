@@ -113,7 +113,9 @@ func main() {
 	webhookLogger := log.New(os.Stdout, "[WEBHOOK] ", log.LstdFlags)
 	webhookManager := webhook.NewWebhookManager(webhookStore, webhookConfig, webhookLogger)
 
-	// Register primary webhook from env var if configured
+	// Register primary webhook from env var if configured.
+	// Note: Changing WEBHOOK_URL and restarting will update the existing "system:primary" webhook.
+	// The old URL will be replaced. To use multiple webhooks, register them via the API instead.
 	if webhookConfig.PrimaryURL != "" {
 		primaryWebhook := storage.WebhookRegistration{
 			ID:         "system:primary",
