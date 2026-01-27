@@ -114,4 +114,85 @@ func (m *MCPServer) registerTools() {
 		),
 		m.handleGetMyInfo,
 	)
+
+	// 8. send image
+	m.server.AddTool(
+		mcp.NewTool("send_image",
+			mcp.WithDescription("Send an image to a WhatsApp chat (JPEG, PNG, WebP, max 5MB). Supports both local file paths and base64-encoded data."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID from find_chat or list_chats"),
+			),
+			mcp.WithString("file_path",
+				mcp.Description("local path to image file (use for Claude Code/local access)"),
+			),
+			mcp.WithString("file_data",
+				mcp.Description("base64-encoded image data (use for Web Apps/remote access)"),
+			),
+			mcp.WithString("caption",
+				mcp.Description("optional caption text for the image"),
+			),
+		),
+		m.handleSendImage,
+	)
+
+	// 9. send video
+	m.server.AddTool(
+		mcp.NewTool("send_video",
+			mcp.WithDescription("Send a video to a WhatsApp chat (MP4, 3GP, max 100MB). Supports both local file paths and base64-encoded data."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID from find_chat or list_chats"),
+			),
+			mcp.WithString("file_path",
+				mcp.Description("local path to video file"),
+			),
+			mcp.WithString("file_data",
+				mcp.Description("base64-encoded video data"),
+			),
+			mcp.WithString("caption",
+				mcp.Description("optional caption"),
+			),
+		),
+		m.handleSendVideo,
+	)
+
+	// 10. send document
+	m.server.AddTool(
+		mcp.NewTool("send_document",
+			mcp.WithDescription("Send a document to a WhatsApp chat (PDF, DOCX, etc., max 2GB). Supports both local file paths and base64-encoded data."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID from find_chat or list_chats"),
+			),
+			mcp.WithString("file_path",
+				mcp.Description("local path to document file"),
+			),
+			mcp.WithString("file_data",
+				mcp.Description("base64-encoded document data"),
+			),
+			mcp.WithString("filename",
+				mcp.Description("filename for the document (required if using file_data)"),
+			),
+		),
+		m.handleSendDocument,
+	)
+
+	// 11. send audio
+	m.server.AddTool(
+		mcp.NewTool("send_audio",
+			mcp.WithDescription("Send an audio file to a WhatsApp chat (MP3, OGG, AAC, M4A, max 16MB). Supports both local file paths and base64-encoded data."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID from find_chat or list_chats"),
+			),
+			mcp.WithString("file_path",
+				mcp.Description("local path to audio file"),
+			),
+			mcp.WithString("file_data",
+				mcp.Description("base64-encoded audio data"),
+			),
+		),
+		m.handleSendAudio,
+	)
 }

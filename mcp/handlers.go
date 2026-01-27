@@ -570,3 +570,147 @@ func (m *MCPServer) handleGetMyInfo(ctx context.Context, request mcp.CallToolReq
 
 	return mcp.NewToolResultText(result.String()), nil
 }
+
+// handleSendImage sends an image to a WhatsApp chat.
+func (m *MCPServer) handleSendImage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Extract chat_jid
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+
+	// Extract file_path and file_data
+	filePath := request.GetString("file_path", "")
+	fileData := request.GetString("file_data", "")
+	caption := request.GetString("caption", "")
+
+	// Validate exactly one is provided
+	if filePath == "" && fileData == "" {
+		return mcp.NewToolResultError("either file_path or file_data must be provided"), nil
+	}
+	if filePath != "" && fileData != "" {
+		return mcp.NewToolResultError("only one of file_path or file_data should be provided, not both"), nil
+	}
+
+	// Check login status
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	// Send image
+	err = m.wa.SendImage(ctx, chatJID, filePath, fileData, caption)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send image: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Image sent successfully to %s", chatJID)), nil
+}
+
+// handleSendVideo sends a video to a WhatsApp chat.
+func (m *MCPServer) handleSendVideo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Extract chat_jid
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+
+	// Extract file_path and file_data
+	filePath := request.GetString("file_path", "")
+	fileData := request.GetString("file_data", "")
+	caption := request.GetString("caption", "")
+
+	// Validate exactly one is provided
+	if filePath == "" && fileData == "" {
+		return mcp.NewToolResultError("either file_path or file_data must be provided"), nil
+	}
+	if filePath != "" && fileData != "" {
+		return mcp.NewToolResultError("only one of file_path or file_data should be provided, not both"), nil
+	}
+
+	// Check login status
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	// Send video
+	err = m.wa.SendVideo(ctx, chatJID, filePath, fileData, caption)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send video: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Video sent successfully to %s", chatJID)), nil
+}
+
+// handleSendDocument sends a document to a WhatsApp chat.
+func (m *MCPServer) handleSendDocument(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Extract chat_jid
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+
+	// Extract file_path, file_data, and filename
+	filePath := request.GetString("file_path", "")
+	fileData := request.GetString("file_data", "")
+	filename := request.GetString("filename", "")
+
+	// Validate exactly one is provided
+	if filePath == "" && fileData == "" {
+		return mcp.NewToolResultError("either file_path or file_data must be provided"), nil
+	}
+	if filePath != "" && fileData != "" {
+		return mcp.NewToolResultError("only one of file_path or file_data should be provided, not both"), nil
+	}
+
+	// Validate filename is provided if using file_data
+	if fileData != "" && filename == "" {
+		return mcp.NewToolResultError("filename must be provided when using file_data"), nil
+	}
+
+	// Check login status
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	// Send document
+	err = m.wa.SendDocument(ctx, chatJID, filePath, fileData, filename)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send document: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Document sent successfully to %s", chatJID)), nil
+}
+
+// handleSendAudio sends an audio file to a WhatsApp chat.
+func (m *MCPServer) handleSendAudio(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Extract chat_jid
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+
+	// Extract file_path and file_data
+	filePath := request.GetString("file_path", "")
+	fileData := request.GetString("file_data", "")
+
+	// Validate exactly one is provided
+	if filePath == "" && fileData == "" {
+		return mcp.NewToolResultError("either file_path or file_data must be provided"), nil
+	}
+	if filePath != "" && fileData != "" {
+		return mcp.NewToolResultError("only one of file_path or file_data should be provided, not both"), nil
+	}
+
+	// Check login status
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	// Send audio
+	err = m.wa.SendAudio(ctx, chatJID, filePath, fileData)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send audio: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Audio sent successfully to %s", chatJID)), nil
+}

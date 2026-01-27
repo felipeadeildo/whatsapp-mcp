@@ -1,3 +1,4 @@
 data/*
 qr.png
 .env
+.claude/
