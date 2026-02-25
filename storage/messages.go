@@ -39,9 +39,16 @@ func NewMessageStore(db *sql.DB) *MessageStore {
 // SaveMessage saves a WhatsApp message to the database.
 func (s *MessageStore) SaveMessage(msg Message) error {
 	query := `
-	INSERT OR REPLACE INTO messages
+	INSERT INTO messages
 	(id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type)
 	VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		chat_jid = excluded.chat_jid,
+		sender_jid = excluded.sender_jid,
+		text = excluded.text,
+		timestamp = excluded.timestamp,
+		is_from_me = excluded.is_from_me,
+		message_type = excluded.message_type
 	`
 
 	_, err := s.db.Exec(
@@ -74,9 +81,16 @@ func (s *MessageStore) SaveBulk(messages []Message) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(`
-	INSERT OR REPLACE INTO messages
+	INSERT INTO messages
 	(id, chat_jid, sender_jid, text, timestamp, is_from_me, message_type)
 	VALUES (?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		chat_jid = excluded.chat_jid,
+		sender_jid = excluded.sender_jid,
+		text = excluded.text,
+		timestamp = excluded.timestamp,
+		is_from_me = excluded.is_from_me,
+		message_type = excluded.message_type
 	`)
 	if err != nil {
 		return err
@@ -290,6 +304,33 @@ func (s *MessageStore) GetChatMessagesWithNamesFiltered(
 	defer rows.Close()
 
 	return s.scanMessagesWithNames(rows)
+}
+
+// SaveMessageProto stores the serialized protobuf for a sent message.
+// This is used for retry receipt handling when the recipient can't decrypt.
+func (s *MessageStore) SaveMessageProto(messageID string, protoBytes []byte) error {
+	_, err := s.db.Exec(
+		"UPDATE messages SET message_proto = ? WHERE id = ?",
+		protoBytes, messageID,
+	)
+	return err
+}
+
+// GetMessageProto retrieves the serialized protobuf for a message.
+// Returns nil if the message or proto is not found.
+func (s *MessageStore) GetMessageProto(messageID string) ([]byte, error) {
+	var protoBytes []byte
+	err := s.db.QueryRow(
+		"SELECT message_proto FROM messages WHERE id = ?",
+		messageID,
+	).Scan(&protoBytes)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return protoBytes, nil
 }
 
 // scanMessages converts SQL rows into Message objects.
