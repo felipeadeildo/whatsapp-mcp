@@ -528,6 +528,138 @@ func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.Call
 	return mcp.NewToolResultText(result.String()), nil
 }
 
+// handleSendFile handles the send_file tool request.
+func (m *MCPServer) handleSendFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+	filePath, err := request.RequireString("file_path")
+	if err != nil {
+		return mcp.NewToolResultError("file_path parameter is required"), nil
+	}
+	caption := request.GetString("caption", "")
+
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	messageID, err := m.wa.SendFile(ctx, chatJID, filePath, caption)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send file: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf(
+		"File sent to %s (message_id: %s)", chatJID, messageID,
+	)), nil
+}
+
+// handleSendAudioMessage handles the send_audio_message tool request.
+func (m *MCPServer) handleSendAudioMessage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+	audioPath, err := request.RequireString("audio_path")
+	if err != nil {
+		return mcp.NewToolResultError("audio_path parameter is required"), nil
+	}
+
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	messageID, err := m.wa.SendAudioMessage(ctx, chatJID, audioPath)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send voice note: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf(
+		"Voice note sent to %s (message_id: %s)", chatJID, messageID,
+	)), nil
+}
+
+// handleSendReaction handles the send_reaction tool request.
+func (m *MCPServer) handleSendReaction(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+	messageID, err := request.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError("message_id parameter is required"), nil
+	}
+	// emoji is required even when empty (for explicit removal). RequireString
+	// rejects unset, but allows the empty string as a deliberate signal.
+	emoji, err := request.RequireString("emoji")
+	if err != nil {
+		return mcp.NewToolResultError("emoji parameter is required (pass empty string to remove a reaction)"), nil
+	}
+	senderJID := request.GetString("sender_jid", "")
+
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	if err := m.wa.SendReaction(ctx, chatJID, messageID, senderJID, emoji); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send reaction: %v", err)), nil
+	}
+
+	if emoji == "" {
+		return mcp.NewToolResultText(fmt.Sprintf("Reaction removed from message %s", messageID)), nil
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Reacted %s to message %s", emoji, messageID)), nil
+}
+
+// handleEditMessage handles the edit_message tool request.
+func (m *MCPServer) handleEditMessage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+	messageID, err := request.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError("message_id parameter is required"), nil
+	}
+	newText, err := request.RequireString("new_text")
+	if err != nil {
+		return mcp.NewToolResultError("new_text parameter is required"), nil
+	}
+
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	if err := m.wa.EditMessage(ctx, chatJID, messageID, newText); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to edit message: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Message %s edited", messageID)), nil
+}
+
+// handleDeleteMessage handles the delete_message tool request.
+func (m *MCPServer) handleDeleteMessage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+	messageID, err := request.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError("message_id parameter is required"), nil
+	}
+	senderJID := request.GetString("sender_jid", "")
+
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	if err := m.wa.DeleteMessage(ctx, chatJID, messageID, senderJID); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to delete message: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Message %s deleted for everyone", messageID)), nil
+}
+
 // handleGetMyInfo handles the get_my_info tool request.
 func (m *MCPServer) handleGetMyInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// check WhatsApp connection

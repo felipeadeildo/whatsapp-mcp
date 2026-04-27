@@ -114,4 +114,101 @@ func (m *MCPServer) registerTools() {
 		),
 		m.handleGetMyInfo,
 	)
+
+	// 8. send a file (image, video, audio, document) to a chat
+	m.server.AddTool(
+		mcp.NewTool("send_file",
+			mcp.WithDescription("Send a local file as an image, video, audio or document message. The kind is decided from the file extension; unknown extensions are sent as generic documents. Caption is shown on images, videos and documents."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID from find_chat or list_chats"),
+			),
+			mcp.WithString("file_path",
+				mcp.Required(),
+				mcp.Description("absolute or relative path to a local file (no path traversal allowed)"),
+			),
+			mcp.WithString("caption",
+				mcp.Description("optional caption to display alongside the file (images/videos/documents only)"),
+			),
+		),
+		m.handleSendFile,
+	)
+
+	// 9. send an audio file as a voice note (PTT)
+	m.server.AddTool(
+		mcp.NewTool("send_audio_message",
+			mcp.WithDescription("Send an audio file as a WhatsApp voice note (PTT). Files in .ogg or .opus format are sent as-is; other formats (mp3, wav, m4a, etc.) are converted to ogg-opus via ffmpeg first. Returns an error mentioning ffmpeg if it isn't installed."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID"),
+			),
+			mcp.WithString("audio_path",
+				mcp.Required(),
+				mcp.Description("path to a local audio file to send as a voice note"),
+			),
+		),
+		m.handleSendAudioMessage,
+	)
+
+	// 10. react to an existing message with an emoji (or remove a reaction)
+	m.server.AddTool(
+		mcp.NewTool("send_reaction",
+			mcp.WithDescription("React to an existing message with an emoji. Pass an empty emoji to remove your previous reaction. The message_id can come from get_chat_messages or search_messages."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("chat JID where the target message lives"),
+			),
+			mcp.WithString("message_id",
+				mcp.Required(),
+				mcp.Description("ID of the message to react to"),
+			),
+			mcp.WithString("emoji",
+				mcp.Required(),
+				mcp.Description("emoji to react with; pass an empty string to remove your reaction"),
+			),
+			mcp.WithString("sender_jid",
+				mcp.Description("JID of the original message's sender; omit for your own messages"),
+			),
+		),
+		m.handleSendReaction,
+	)
+
+	// 11. edit a previously sent message
+	m.server.AddTool(
+		mcp.NewTool("edit_message",
+			mcp.WithDescription("Edit the text of a message you sent. WhatsApp only accepts edits within roughly 20 minutes of the original send; older edits will fail with a server error."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("chat JID where the message was sent"),
+			),
+			mcp.WithString("message_id",
+				mcp.Required(),
+				mcp.Description("ID of the message to edit"),
+			),
+			mcp.WithString("new_text",
+				mcp.Required(),
+				mcp.Description("replacement text"),
+			),
+		),
+		m.handleEditMessage,
+	)
+
+	// 12. delete (revoke) a message for everyone
+	m.server.AddTool(
+		mcp.NewTool("delete_message",
+			mcp.WithDescription("Delete a message for everyone in the chat (revoke). For your own messages, omit sender_jid. For deleting another user's message in a group where you are admin, pass their JID as sender_jid."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("chat JID where the message lives"),
+			),
+			mcp.WithString("message_id",
+				mcp.Required(),
+				mcp.Description("ID of the message to delete"),
+			),
+			mcp.WithString("sender_jid",
+				mcp.Description("JID of the original message's sender; omit when deleting your own message"),
+			),
+		),
+		m.handleDeleteMessage,
+	)
 }
