@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -249,4 +250,132 @@ func (c *Client) persistOutboundMedia(resp whatsmeow.SendResponse, chatJID, mess
 	}); err != nil {
 		c.log.Errorf("failed to save outbound %s message %s: %v", messageType, resp.ID, err)
 	}
+}
+
+// SendReaction sends an emoji reaction against a previously sent or received
+// message. Passing an empty emoji string removes the reaction (this is how
+// WhatsApp itself models removal on the wire).
+//
+// senderJID is the JID of the original message's sender. For your own
+// messages pass your JID or an empty string; for messages sent by others
+// pass their JID. The reaction is also persisted in the local store so
+// reads of message_reactions reflect what was sent.
+func (c *Client) SendReaction(ctx context.Context, chatJID, messageID, senderJID, emoji string) error {
+	chat, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID %q: %w", chatJID, err)
+	}
+
+	var sender types.JID
+	if strings.TrimSpace(senderJID) == "" {
+		sender = types.EmptyJID
+	} else {
+		sender, err = types.ParseJID(senderJID)
+		if err != nil {
+			return fmt.Errorf("invalid sender JID %q: %w", senderJID, err)
+		}
+	}
+
+	msg := c.wa.BuildReaction(chat, sender, types.MessageID(messageID), emoji)
+	resp, err := c.wa.SendMessage(ctx, chat, msg)
+	if err != nil {
+		return fmt.Errorf("failed to send reaction: %w", err)
+	}
+
+	// Mirror the reaction locally so readers see the same state. The reactor
+	// here is "us" -- use our own JID rather than the original sender's, since
+	// (message_id, sender_jid) is the natural primary key on this table.
+	myJID := ""
+	if c.wa.Store.ID != nil {
+		myJID = c.wa.Store.ID.ToNonAD().String()
+	}
+	if err := c.store.SaveReaction(storage.Reaction{
+		MessageID: messageID,
+		ChatJID:   chatJID,
+		SenderJID: myJID,
+		Emoji:     emoji,
+		Timestamp: resp.Timestamp,
+	}); err != nil {
+		c.log.Errorf("failed to persist reaction for %s: %v", messageID, err)
+	}
+
+	if emoji == "" {
+		c.log.Infof("Removed reaction on message %s in chat %s", messageID, chatJID)
+	} else {
+		c.log.Infof("Reacted %q on message %s in chat %s", emoji, messageID, chatJID)
+	}
+	return nil
+}
+
+// EditMessage replaces the text of an existing message. The WhatsApp server
+// rejects edits older than whatsmeow.EditWindow (~20 minutes); the resulting
+// IQ error is surfaced to the caller so they can show a useful message.
+//
+// Only text messages can be edited (this matches WhatsApp's official client
+// -- captions on media require a separate flow not exposed here).
+func (c *Client) EditMessage(ctx context.Context, chatJID, messageID, newText string) error {
+	chat, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID %q: %w", chatJID, err)
+	}
+
+	if strings.TrimSpace(newText) == "" {
+		return fmt.Errorf("new text is empty -- to delete a message use delete_message instead")
+	}
+
+	editMsg := c.wa.BuildEdit(chat, types.MessageID(messageID), &waE2E.Message{
+		Conversation: proto.String(newText),
+	})
+
+	resp, err := c.wa.SendMessage(ctx, chat, editMsg)
+	if err != nil {
+		return fmt.Errorf("failed to edit message: %w", err)
+	}
+
+	if err := c.store.MarkMessageEdited(messageID, newText, resp.Timestamp); err != nil {
+		// not finding the row locally is benign -- the edit was accepted by the
+		// server, we just don't have the original cached. Anything else is a
+		// real failure worth logging.
+		c.log.Debugf("could not update local row for edited message %s: %v", messageID, err)
+	}
+
+	c.log.Infof("Edited message %s in chat %s", messageID, chatJID)
+	return nil
+}
+
+// DeleteMessage revokes a message for everyone in the chat. WhatsApp enforces
+// a time window for revoking your own messages (~15 minutes for self,
+// indefinitely for group admins); the corresponding server error is returned
+// verbatim so callers can surface it.
+//
+// senderJID identifies the original message's sender. Pass an empty string
+// (or your own JID) to revoke your own message; pass another user's JID to
+// admin-revoke their message in a group.
+func (c *Client) DeleteMessage(ctx context.Context, chatJID, messageID, senderJID string) error {
+	chat, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID %q: %w", chatJID, err)
+	}
+
+	var sender types.JID
+	if strings.TrimSpace(senderJID) == "" {
+		sender = types.EmptyJID
+	} else {
+		sender, err = types.ParseJID(senderJID)
+		if err != nil {
+			return fmt.Errorf("invalid sender JID %q: %w", senderJID, err)
+		}
+	}
+
+	resp, err := c.wa.SendMessage(ctx, chat, c.wa.BuildRevoke(chat, sender, types.MessageID(messageID)))
+	if err != nil {
+		return fmt.Errorf("failed to revoke message: %w", err)
+	}
+
+	if err := c.store.MarkMessageDeleted(messageID, resp.Timestamp); err != nil {
+		c.log.Debugf("could not update local row for revoked message %s: %v", messageID, err)
+	}
+
+	c.log.Infof("Revoked message %s in chat %s", messageID, chatJID)
+	return nil
 }
