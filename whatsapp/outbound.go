@@ -81,13 +81,11 @@ func (c *Client) SendAudioMessage(ctx context.Context, chatJID, audioPath string
 	}
 
 	// decide whether we need to convert. .ogg and .opus go through unchanged;
-	// everything else is shoved through ffmpeg.
+	// everything else is routed through ffmpeg.
 	srcPath := abs
 	cleanup := func() {}
-	switch filepath.Ext(filepath.ToSlash(abs)) {
-	case ".ogg", ".OGG", ".opus", ".OPUS":
-		// no conversion needed
-	default:
+	ext := strings.ToLower(filepath.Ext(abs))
+	if ext != ".ogg" && ext != ".opus" {
 		converted, cleanFn, convErr := convertToOpusOgg(ctx, abs)
 		if convErr != nil {
 			return "", convErr
