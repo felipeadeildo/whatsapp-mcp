@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync"
 	"time"
@@ -348,6 +349,76 @@ func (c *Client) handleMessage(evt *events.Message) {
 	// skip internal protocol messages (encryption key distribution)
 	if evt.Message.GetSenderKeyDistributionMessage() != nil {
 		c.log.Debugf("Skipping sender key distribution message (internal protocol)")
+		return
+	}
+
+	// Inbound edit: whatsmeow has already unwrapped the EditedMessage; the new
+	// content is on evt.Message and info.ID is the *original* message ID.
+	// Update the existing row's text and stamp edited_at -- do not insert a
+	// new row. This keeps the local store in sync with what the WhatsApp app
+	// itself shows ("edited" tag on the original bubble).
+	if evt.IsEdit {
+		newText := extractText(evt.Message)
+		if err := c.store.MarkMessageEdited(info.ID, newText, info.Timestamp); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				c.log.Errorf("Failed to apply edit for %s: %v", info.ID, err)
+			} else {
+				c.log.Debugf("Edit arrived for unknown message %s (not in local cache)", info.ID)
+			}
+			return
+		}
+		c.log.Infof("Applied edit to message %s in chat %s", info.ID, info.Chat)
+		return
+	}
+
+	// Inbound revoke: a ProtocolMessage of type REVOKE carries the target
+	// message's key. Stamp deleted_at on that row and bail; the protocol
+	// message itself doesn't need to be persisted as a chat entry.
+	if pm := evt.Message.GetProtocolMessage(); pm != nil && pm.GetType() == waE2E.ProtocolMessage_REVOKE {
+		targetID := pm.GetKey().GetID()
+		if targetID == "" {
+			c.log.Debugf("Revoke event missing target message ID")
+			return
+		}
+		if err := c.store.MarkMessageDeleted(targetID, info.Timestamp); err != nil {
+			if !errors.Is(err, sql.ErrNoRows) {
+				c.log.Errorf("Failed to apply revoke for %s: %v", targetID, err)
+			} else {
+				c.log.Debugf("Revoke arrived for unknown message %s (not in local cache)", targetID)
+			}
+			return
+		}
+		c.log.Infof("Marked message %s as deleted (revoke from %s)", targetID, info.Sender)
+		return
+	}
+
+	// Inbound reaction: persist into the message_reactions side table rather
+	// than saving a placeholder row in `messages`. An empty Text means the
+	// sender is removing their previous reaction.
+	if rm := evt.Message.GetReactionMessage(); rm != nil {
+		targetID := rm.GetKey().GetID()
+		if targetID == "" {
+			c.log.Debugf("Reaction event missing target message ID")
+			return
+		}
+		chatJID := c.normalizeJID(info.Chat)
+		senderJID := c.normalizeJID(info.Sender)
+		emoji := rm.GetText()
+		if err := c.store.SaveReaction(storage.Reaction{
+			MessageID: targetID,
+			ChatJID:   chatJID,
+			SenderJID: senderJID,
+			Emoji:     emoji,
+			Timestamp: info.Timestamp,
+		}); err != nil {
+			c.log.Errorf("Failed to save reaction on %s: %v", targetID, err)
+			return
+		}
+		if emoji == "" {
+			c.log.Infof("Reaction removed by %s on message %s", senderJID, targetID)
+		} else {
+			c.log.Infof("Reaction %q by %s on message %s", emoji, senderJID, targetID)
+		}
 		return
 	}
 
