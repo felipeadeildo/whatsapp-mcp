@@ -702,3 +702,22 @@ func (m *MCPServer) handleGetMyInfo(ctx context.Context, request mcp.CallToolReq
 
 	return mcp.NewToolResultText(result.String()), nil
 }
+
+// handleTranscribeAudioMessage handles the transcribe_audio_message tool request.
+func (m *MCPServer) handleTranscribeAudioMessage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	messageID, err := request.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError("message_id parameter is required"), nil
+	}
+
+	transcript, err := m.wa.TranscribeMessage(ctx, messageID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to transcribe %s: %v", messageID, err)), nil
+	}
+
+	if transcript == "" {
+		return mcp.NewToolResultText(fmt.Sprintf("Message %s transcribed but produced no text (silent audio?)", messageID)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Transcript of message %s:\n\n%s", messageID, transcript)), nil
+}

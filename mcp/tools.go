@@ -235,4 +235,18 @@ func (m *MCPServer) registerTools() {
 		),
 		m.handleDeleteMessage,
 	)
+
+	// 13. transcribe an audio message (voice note or generic audio) to text
+	m.server.AddTool(
+		mcp.NewTool("transcribe_audio_message",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithDescription("Transcribe a WhatsApp audio message (voice note or audio file) to text using a locally-hosted whisper.cpp model. The audio must already be downloaded (auto-download is on for audio by default). Default language is Brazilian Portuguese; configure via WHISPER_LANGUAGE."),
+			mcp.WithString("message_id",
+				mcp.Required(),
+				mcp.Description("ID of the audio message to transcribe (from get_chat_messages or search_messages)"),
+			),
+		),
+		m.handleTranscribeAudioMessage,
+	)
 }

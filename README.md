@@ -66,6 +66,7 @@ This server implements the full MCP specification with:
 | `delete_message` | Revoke for everyone | Self or admin-revoke in groups |
 | `load_more_messages` | Fetch older history | On-demand from servers |
 | `get_my_info` | Get your profile info | JID, name, status, picture |
+| `transcribe_audio_message` | Transcribe a voice note to text | Uses whisper.cpp, default language Brazilian Portuguese |
 
 #### Prompts
 
@@ -334,7 +335,18 @@ AI assistants can access these guides through the MCP Resources API.
 
 ### Environment Variables
 
-See `.env.example` and be happy!
+See `.env.example` for a complete list of available configuration options.
+
+#### Audio transcription (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `WHISPER_BIN` | _(unset)_ | Absolute path to the `whisper-cli` (or `whisper-cli.exe`) binary from a [whisper.cpp](https://github.com/ggerganov/whisper.cpp) release. |
+| `WHISPER_MODEL` | _(unset)_ | Absolute path to a `ggml-*.bin` model. The `small` multilingual model is recommended for CPU-only hosts (~466 MB). |
+| `WHISPER_LANGUAGE` | `pt` | ISO 639-1 language code passed to whisper. |
+| `WHISPER_THREADS` | `4` | CPU threads for whisper. Set to your physical core count. |
+
+If `WHISPER_BIN` or `WHISPER_MODEL` is missing, `transcribe_audio_message` returns a clear error pointing at this section. Other tools are unaffected.
 
 ## 🤝 Contributing
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"whatsapp-mcp/paths"
@@ -29,6 +30,7 @@ type Client struct {
 	mediaStore       *storage.MediaStore
 	webhookManager   WebhookManager // optional webhook manager
 	mediaConfig      MediaConfig
+	whisperConfig    WhisperConfig
 	log              waLog.Logger
 	logFile          *os.File
 	historySyncChans map[string]chan bool // tracks pending sync requests by chat JID
@@ -135,6 +137,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webh
 		mediaStore:       mediaStore,
 		webhookManager:   webhookManager,
 		mediaConfig:      mediaConfig,
+		whisperConfig:    LoadWhisperConfig(),
 		log:              logger,
 		logFile:          logFile,
 		historySyncChans: make(map[string]chan bool),
@@ -373,4 +376,42 @@ func getEnabledTypes(types map[string]bool) []string {
 		}
 	}
 	return enabled
+}
+
+// TranscribeMessage transcribes the audio attached to messageID using the
+// configured whisper.cpp pipeline. It looks up the message via the
+// MessageStore the Client was constructed with and reads the already-
+// downloaded media from disk. Returns an error if the message doesn't
+// exist, isn't audio, or hasn't been downloaded yet.
+func (c *Client) TranscribeMessage(ctx context.Context, messageID string) (string, error) {
+	if c.store == nil || c.mediaStore == nil {
+		return "", fmt.Errorf("client not wired with stores")
+	}
+	msg, err := c.store.GetMessageByID(messageID)
+	if err != nil {
+		return "", fmt.Errorf("lookup message %s: %w", messageID, err)
+	}
+	if msg == nil {
+		return "", fmt.Errorf("message %s not found", messageID)
+	}
+
+	meta, err := c.mediaStore.GetMediaMetadata(messageID)
+	if err != nil {
+		return "", fmt.Errorf("lookup media for %s: %w", messageID, err)
+	}
+	if meta == nil {
+		return "", fmt.Errorf("message %s has no media attachment", messageID)
+	}
+	if !strings.HasPrefix(meta.MimeType, "audio/") {
+		return "", fmt.Errorf("message %s is not audio (mime=%s)", messageID, meta.MimeType)
+	}
+	if meta.DownloadStatus != "downloaded" || meta.FilePath == "" {
+		return "", fmt.Errorf(
+			"audio for message %s is not on disk (status=%s); wait for auto-download or re-fetch",
+			messageID, meta.DownloadStatus,
+		)
+	}
+
+	abs := paths.GetMediaPath(meta.FilePath)
+	return Transcribe(ctx, c.whisperConfig, abs)
 }
