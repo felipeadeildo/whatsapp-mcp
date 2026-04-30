@@ -1,8 +1,12 @@
 package whatsapp
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 )
 
 // ErrWhisperNotConfigured is returned when transcription is requested but the
@@ -34,4 +38,62 @@ func detectWhisper(cfg WhisperConfig) (WhisperConfig, error) {
 		cfg.Language = "pt"
 	}
 	return cfg, nil
+}
+
+// convertToWhisperWAV transcodes srcPath to a 16 kHz / mono / 16-bit PCM WAV
+// at a fresh temp path -- the format whisper.cpp accepts as input. The
+// returned cleanup removes the temp file and must be called by the caller
+// (typically via defer) regardless of whether transcription succeeds.
+//
+// Returns ErrFFmpegNotAvailable if ffmpeg cannot be found.
+func convertToWhisperWAV(ctx context.Context, srcPath string) (wavPath string, cleanup func(), err error) {
+	ffmpeg, _, ok := detectFFmpeg()
+	if !ok {
+		return "", func() {}, ErrFFmpegNotAvailable
+	}
+
+	tmpFile, err := os.CreateTemp("", "wamcp-whisper-*.wav")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	_ = tmpFile.Close()
+
+	cleanup = func() { _ = os.Remove(tmpPath) }
+
+	// flags chosen to match whisper.cpp's expected input format:
+	//   -y                  overwrite the output file we just created
+	//   -i src              input
+	//   -vn                 drop any video / cover-art stream
+	//   -ac 1               mono
+	//   -ar 16000           16 kHz (whisper's native sample rate)
+	//   -c:a pcm_s16le      16-bit signed little-endian PCM
+	//   -f wav              force WAV container
+	cmd := exec.CommandContext(ctx, ffmpeg,
+		"-y",
+		"-i", srcPath,
+		"-vn",
+		"-ac", "1",
+		"-ar", "16000",
+		"-c:a", "pcm_s16le",
+		"-f", "wav",
+		tmpPath,
+	)
+
+	output, runErr := cmd.CombinedOutput()
+	if runErr != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf(
+			"ffmpeg conversion failed: %w (output: %s)",
+			runErr, strings.TrimSpace(string(output)),
+		)
+	}
+
+	info, statErr := os.Stat(tmpPath)
+	if statErr != nil || info.Size() == 0 {
+		cleanup()
+		return "", func() {}, fmt.Errorf("ffmpeg produced empty WAV output")
+	}
+
+	return tmpPath, cleanup, nil
 }

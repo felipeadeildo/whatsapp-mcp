@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -58,4 +59,22 @@ func TestDetectWhisperBinAndModel(t *testing.T) {
 			t.Errorf("unexpected language/threads: %+v", got)
 		}
 	})
+}
+
+func TestConvertToWhisperWAVReturnsErrWhenFFmpegMissing(t *testing.T) {
+	origLookPath := lookPath
+	t.Cleanup(func() {
+		lookPath = origLookPath
+		resetFFmpegStateForTesting()
+	})
+	lookPath = func(string) (string, error) { return "", errors.New("not found") }
+	resetFFmpegStateForTesting()
+
+	_, cleanup, err := convertToWhisperWAV(context.Background(), "anything.ogg")
+	if cleanup != nil {
+		cleanup()
+	}
+	if !errors.Is(err, ErrFFmpegNotAvailable) {
+		t.Fatalf("want ErrFFmpegNotAvailable, got %v", err)
+	}
 }
