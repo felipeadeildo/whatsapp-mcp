@@ -9,6 +9,8 @@ func (m *MCPServer) registerTools() {
 	// 1. list all chats
 	m.server.AddTool(
 		mcp.NewTool("list_chats",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("List WhatsApp conversations ordered by most recent activity. Returns chat details including JID, name, last message timestamp, and unread count."),
 			mcp.WithNumber("limit",
 				mcp.Description("maximum number of chats to return (default: 50, max: 100)"),
@@ -20,6 +22,8 @@ func (m *MCPServer) registerTools() {
 	// 2. get messages from specific chat
 	m.server.AddTool(
 		mcp.NewTool("get_chat_messages",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Retrieve message history from a specific WhatsApp chat. Supports pagination via timestamps or offset, and can filter by sender."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
@@ -47,6 +51,8 @@ func (m *MCPServer) registerTools() {
 	// 3. search messages by text
 	m.server.AddTool(
 		mcp.NewTool("search_messages",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Search for messages across all WhatsApp chats by text content or sender. Supports pattern matching with wildcards (*, ?, [abc])."),
 			mcp.WithString("query",
 				mcp.Description("text pattern to search for (optional: can be omitted when using only 'from' parameter)"),
@@ -64,6 +70,8 @@ func (m *MCPServer) registerTools() {
 	// 4. find chat by name or JID
 	m.server.AddTool(
 		mcp.NewTool("find_chat",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Find WhatsApp chats by searching names or JIDs. Supports pattern matching with wildcards. Returns matching chats with their JIDs."),
 			mcp.WithString("search",
 				mcp.Required(),
@@ -76,6 +84,8 @@ func (m *MCPServer) registerTools() {
 	// 5. send message
 	m.server.AddTool(
 		mcp.NewTool("send_message",
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Send a text message to a WhatsApp chat (DM or group)."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
@@ -92,6 +102,8 @@ func (m *MCPServer) registerTools() {
 	// 6. load more messages on-demand
 	m.server.AddTool(
 		mcp.NewTool("load_more_messages",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Fetch additional message history from WhatsApp servers for a specific chat. Use when you need older messages not yet in the database."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
@@ -110,6 +122,8 @@ func (m *MCPServer) registerTools() {
 	// 7. get my info
 	m.server.AddTool(
 		mcp.NewTool("get_my_info",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Get your own WhatsApp profile information including JID, display name, status/bio, and profile picture URL."),
 		),
 		m.handleGetMyInfo,
@@ -118,6 +132,8 @@ func (m *MCPServer) registerTools() {
 	// 8. send a file (image, video, audio, document) to a chat
 	m.server.AddTool(
 		mcp.NewTool("send_file",
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Send a local file as an image, video, audio or document message. The kind is decided from the file extension; unknown extensions are sent as generic documents. Caption is shown on images, videos and documents."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
@@ -137,6 +153,8 @@ func (m *MCPServer) registerTools() {
 	// 9. send an audio file as a voice note (PTT)
 	m.server.AddTool(
 		mcp.NewTool("send_audio_message",
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("Send an audio file as a WhatsApp voice note (PTT). Files in .ogg or .opus format are sent as-is; other formats (mp3, wav, m4a, etc.) are converted to ogg-opus via ffmpeg first. Returns an error mentioning ffmpeg if it isn't installed."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
@@ -153,6 +171,8 @@ func (m *MCPServer) registerTools() {
 	// 10. react to an existing message with an emoji (or remove a reaction)
 	m.server.AddTool(
 		mcp.NewTool("send_reaction",
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(false),
 			mcp.WithDescription("React to an existing message with an emoji. Pass an empty emoji to remove your previous reaction. The message_id can come from get_chat_messages or search_messages."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
@@ -176,6 +196,8 @@ func (m *MCPServer) registerTools() {
 	// 11. edit a previously sent message
 	m.server.AddTool(
 		mcp.NewTool("edit_message",
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithDescription("Edit the text of a message you sent. WhatsApp only accepts edits within roughly 20 minutes of the original send; older edits will fail with a server error."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
@@ -196,6 +218,8 @@ func (m *MCPServer) registerTools() {
 	// 12. delete (revoke) a message for everyone
 	m.server.AddTool(
 		mcp.NewTool("delete_message",
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithDescription("Delete a message for everyone in the chat (revoke). For your own messages, omit sender_jid. For deleting another user's message in a group where you are admin, pass their JID as sender_jid."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
