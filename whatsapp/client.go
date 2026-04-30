@@ -432,5 +432,11 @@ func (c *Client) TranscribeMessage(ctx context.Context, messageID string) (strin
 		}
 	}
 
+	if path, dumpErr := dumpTranscript(messageID, transcript); dumpErr != nil {
+		c.log.Warnf("failed to dump transcript for %s: %v", messageID, dumpErr)
+	} else {
+		c.log.Infof("transcript dumped to %s", path)
+	}
+
 	return transcript, nil
 }
