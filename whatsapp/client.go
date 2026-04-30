@@ -28,6 +28,7 @@ type Client struct {
 	wa               *whatsmeow.Client
 	store            *storage.MessageStore
 	mediaStore       *storage.MediaStore
+	transcriptStore  *storage.TranscriptStore
 	webhookManager   WebhookManager // optional webhook manager
 	mediaConfig      MediaConfig
 	whisperConfig    WhisperConfig
@@ -78,7 +79,7 @@ func (l *fileLogger) Sub(module string) waLog.Logger {
 }
 
 // NewClient creates a new WhatsApp client with the given configuration.
-func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webhookManager WebhookManager, logLevel string) (*Client, error) {
+func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, transcriptStore *storage.TranscriptStore, webhookManager WebhookManager, logLevel string) (*Client, error) {
 	// validate log level, default to INFO if invalid
 	validLevels := map[string]bool{
 		"DEBUG": true,
@@ -135,6 +136,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webh
 		wa:               waClient,
 		store:            store,
 		mediaStore:       mediaStore,
+		transcriptStore:  transcriptStore,
 		webhookManager:   webhookManager,
 		mediaConfig:      mediaConfig,
 		whisperConfig:    LoadWhisperConfig(),
@@ -412,6 +414,23 @@ func (c *Client) TranscribeMessage(ctx context.Context, messageID string) (strin
 		)
 	}
 
+	if c.transcriptStore != nil {
+		if cached, found, getErr := c.transcriptStore.Get(messageID); getErr == nil && found {
+			return cached, nil
+		}
+	}
+
 	abs := paths.GetMediaPath(meta.FilePath)
-	return Transcribe(ctx, c.whisperConfig, abs)
+	transcript, err := Transcribe(ctx, c.whisperConfig, abs)
+	if err != nil {
+		return "", err
+	}
+
+	if c.transcriptStore != nil {
+		if saveErr := c.transcriptStore.Save(messageID, transcript); saveErr != nil {
+			c.log.Warnf("failed to cache transcript for %s: %v", messageID, saveErr)
+		}
+	}
+
+	return transcript, nil
 }

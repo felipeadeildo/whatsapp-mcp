@@ -143,6 +143,9 @@ func main() {
 	mediaStore := storage.NewMediaStore(db)
 	log.Println("Media storage initialized")
 
+	transcriptStore := storage.NewTranscriptStore(db)
+	log.Println("Transcript cache initialized")
+
 	// initialize webhook system
 	webhookConfig := webhook.LoadConfig()
 	webhookStore := storage.NewWebhookStore(db)
@@ -173,7 +176,7 @@ func main() {
 	log.Println("Webhook manager started")
 
 	// initialize WhatsApp client
-	waClient, err := whatsapp.NewClient(store, mediaStore, webhookManager, logLevel)
+	waClient, err := whatsapp.NewClient(store, mediaStore, transcriptStore, webhookManager, logLevel)
 	if err != nil {
 		log.Fatal("Failed to create WhatsApp client:", err)
 	}
