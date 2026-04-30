@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -96,4 +97,71 @@ func convertToWhisperWAV(ctx context.Context, srcPath string) (wavPath string, c
 	}
 
 	return tmpPath, cleanup, nil
+}
+
+// buildWhisperArgs assembles the whisper-cli argv (excluding the binary
+// itself). Pulled out into a pure function so it can be unit-tested without
+// invoking ffmpeg or whisper. The order of flags mirrors what is documented
+// in whisper.cpp's README so future readers can map them 1:1.
+func buildWhisperArgs(cfg WhisperConfig, wavPath, outPrefix string) []string {
+	return []string{
+		"-m", cfg.Model,
+		"-f", wavPath,
+		"-l", cfg.Language,
+		"-t", strconv.Itoa(cfg.Threads),
+		"-nt",          // no timestamps in output
+		"--no-prints",  // suppress whisper's banner / progress on stderr
+		"-otxt",        // write a .txt sidecar
+		"-of", outPrefix,
+	}
+}
+
+// runWhisper invokes whisper-cli, waits for it to finish, and returns the
+// content of the sidecar .txt that whisper writes at <outPrefix>.txt. The
+// caller is responsible for cleaning up wavPath; runWhisper cleans up the
+// .txt sidecar itself.
+func runWhisper(ctx context.Context, cfg WhisperConfig, wavPath string) (string, error) {
+	tmpPrefix, err := os.CreateTemp("", "wamcp-whisper-out-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create whisper output temp: %w", err)
+	}
+	prefixPath := tmpPrefix.Name()
+	_ = tmpPrefix.Close()
+	_ = os.Remove(prefixPath) // whisper recreates with .txt suffix; we just want a unique prefix
+	txtPath := prefixPath + ".txt"
+	defer os.Remove(txtPath)
+
+	cmd := exec.CommandContext(ctx, cfg.Bin, buildWhisperArgs(cfg, wavPath, prefixPath)...)
+	output, runErr := cmd.CombinedOutput()
+	if runErr != nil {
+		return "", fmt.Errorf(
+			"whisper-cli failed: %w (output: %s)",
+			runErr, strings.TrimSpace(string(output)),
+		)
+	}
+
+	data, err := os.ReadFile(txtPath)
+	if err != nil {
+		return "", fmt.Errorf("whisper produced no transcript file: %w", err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// Transcribe is the public entry point. It validates the whisper config,
+// converts audioPath to whisper-compatible WAV via ffmpeg, runs whisper-cli,
+// and returns the transcript text. Returns ErrWhisperNotConfigured or
+// ErrFFmpegNotAvailable when the underlying tooling is missing.
+func Transcribe(ctx context.Context, cfg WhisperConfig, audioPath string) (string, error) {
+	resolved, err := detectWhisper(cfg)
+	if err != nil {
+		return "", err
+	}
+
+	wavPath, cleanup, err := convertToWhisperWAV(ctx, audioPath)
+	if err != nil {
+		return "", err
+	}
+	defer cleanup()
+
+	return runWhisper(ctx, resolved, wavPath)
 }

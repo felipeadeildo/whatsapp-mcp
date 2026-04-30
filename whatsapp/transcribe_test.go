@@ -78,3 +78,40 @@ func TestConvertToWhisperWAVReturnsErrWhenFFmpegMissing(t *testing.T) {
 		t.Fatalf("want ErrFFmpegNotAvailable, got %v", err)
 	}
 }
+
+func TestBuildWhisperArgs(t *testing.T) {
+	cfg := WhisperConfig{
+		Bin:      "/x/whisper-cli",
+		Model:    "/x/ggml-small.bin",
+		Language: "pt",
+		Threads:  6,
+	}
+	got := buildWhisperArgs(cfg, "/tmp/in.wav", "/tmp/out")
+
+	want := []string{
+		"-m", "/x/ggml-small.bin",
+		"-f", "/tmp/in.wav",
+		"-l", "pt",
+		"-t", "6",
+		"-nt",
+		"--no-prints",
+		"-otxt",
+		"-of", "/tmp/out",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("arg count: got %d want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestTranscribeReturnsErrWhenWhisperMissing(t *testing.T) {
+	cfg := WhisperConfig{Bin: "", Model: ""}
+	_, err := Transcribe(context.Background(), cfg, "anything.ogg")
+	if !errors.Is(err, ErrWhisperNotConfigured) {
+		t.Fatalf("want ErrWhisperNotConfigured, got %v", err)
+	}
+}
