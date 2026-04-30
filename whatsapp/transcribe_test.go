@@ -1,0 +1,61 @@
+package whatsapp
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestDetectWhisperBinAndModel(t *testing.T) {
+	t.Run("missing bin", func(t *testing.T) {
+		cfg := WhisperConfig{Bin: "", Model: "anything"}
+		_, err := detectWhisper(cfg)
+		if !errors.Is(err, ErrWhisperNotConfigured) {
+			t.Fatalf("want ErrWhisperNotConfigured, got %v", err)
+		}
+	})
+
+	t.Run("bin does not exist", func(t *testing.T) {
+		cfg := WhisperConfig{Bin: filepath.Join(t.TempDir(), "missing.exe"), Model: "x"}
+		_, err := detectWhisper(cfg)
+		if !errors.Is(err, ErrWhisperNotConfigured) {
+			t.Fatalf("want ErrWhisperNotConfigured, got %v", err)
+		}
+	})
+
+	t.Run("model does not exist", func(t *testing.T) {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "fake.exe")
+		if err := os.WriteFile(bin, []byte("x"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		cfg := WhisperConfig{Bin: bin, Model: filepath.Join(dir, "missing.bin")}
+		_, err := detectWhisper(cfg)
+		if !errors.Is(err, ErrWhisperNotConfigured) {
+			t.Fatalf("want ErrWhisperNotConfigured, got %v", err)
+		}
+	})
+
+	t.Run("both present returns resolved paths", func(t *testing.T) {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "whisper-cli")
+		model := filepath.Join(dir, "ggml.bin")
+		for _, p := range []string{bin, model} {
+			if err := os.WriteFile(p, []byte("x"), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cfg := WhisperConfig{Bin: bin, Model: model, Language: "pt", Threads: 2}
+		got, err := detectWhisper(cfg)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.Bin != bin || got.Model != model {
+			t.Errorf("unexpected resolved paths: %+v", got)
+		}
+		if got.Language != "pt" || got.Threads != 2 {
+			t.Errorf("unexpected language/threads: %+v", got)
+		}
+	})
+}
