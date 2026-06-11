@@ -477,6 +477,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 			SenderPushName:    senderPushName,
 			SenderContactName: senderContactName,
 			MediaMetadata:     mediaMetadata,
+			Referral:          extractReferral(evt.Message),
 		}
 
 		// Emit webhook event (already non-blocking via worker queue)
@@ -817,6 +818,60 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 			}
 		}
 		c.historySyncMux.Unlock()
+	}
+}
+
+// extractReferral extracts Click-to-WhatsApp (CTWA) ad referral metadata from a message.
+// CTWA clicks arrive as ExtendedTextMessage, ImageMessage, or VideoMessage with
+// ExternalAdReply in ContextInfo. Returns nil when no ad referral is present.
+func extractReferral(msg *waE2E.Message) *storage.ReferralInfo {
+	if msg == nil {
+		return nil
+	}
+
+	var adReply interface {
+		GetCtwaClid() string
+		GetSourceID() string
+		GetSourceType() string
+		GetSourceURL() string
+		GetTitle() string
+	}
+
+	if ext := msg.GetExtendedTextMessage(); ext != nil {
+		if ci := ext.GetContextInfo(); ci != nil {
+			adReply = ci.GetExternalAdReply()
+		}
+	} else if img := msg.GetImageMessage(); img != nil {
+		if ci := img.GetContextInfo(); ci != nil {
+			adReply = ci.GetExternalAdReply()
+		}
+	} else if vid := msg.GetVideoMessage(); vid != nil {
+		if ci := vid.GetContextInfo(); ci != nil {
+			adReply = ci.GetExternalAdReply()
+		}
+	}
+
+	if adReply == nil {
+		return nil
+	}
+
+	clid := adReply.GetCtwaClid()
+	sid := adReply.GetSourceID()
+	stype := adReply.GetSourceType()
+	surl := adReply.GetSourceURL()
+	headline := adReply.GetTitle()
+
+	// Only return referral when at least ctwa_clid or source_id is present
+	if clid == "" && sid == "" {
+		return nil
+	}
+
+	return &storage.ReferralInfo{
+		CtwaClid:   clid,
+		SourceID:   sid,
+		SourceType: stype,
+		SourceURL:  surl,
+		Headline:   headline,
 	}
 }
 

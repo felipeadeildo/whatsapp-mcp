@@ -20,6 +20,15 @@ type WebhookPayload struct {
 	Data      MessageEventData `json:"data"`
 }
 
+// ReferralInfo holds Click-to-WhatsApp (CTWA) ad referral metadata.
+type ReferralInfo struct {
+	CtwaClid   string `json:"ctwa_clid,omitempty"`
+	SourceID   string `json:"source_id,omitempty"`
+	SourceType string `json:"source_type,omitempty"`
+	SourceURL  string `json:"source_url,omitempty"`
+	Headline   string `json:"headline,omitempty"`
+}
+
 // MessageEventData contains the message event details.
 type MessageEventData struct {
 	MessageID         string          `json:"message_id"`
@@ -34,6 +43,7 @@ type MessageEventData struct {
 	SenderContactName string          `json:"sender_contact_name,omitempty"`
 	IsGroup           bool            `json:"is_group"`
 	MediaMetadata     *MediaReference `json:"media_metadata,omitempty"`
+	Referral          *ReferralInfo   `json:"referral,omitempty"`
 }
 
 // MediaReference contains metadata about media attachments.
@@ -189,6 +199,17 @@ func (m *WebhookManager) buildMessagePayload(msg storage.MessageWithNames) Webho
 			FileSize:  msg.MediaMetadata.FileSize,
 			MimeType:  msg.MediaMetadata.MimeType,
 			HasMedia:  msg.MediaMetadata.FilePath != "",
+		}
+	}
+
+	// Forward CTWA ad referral if present
+	if msg.Referral != nil {
+		data.Referral = &ReferralInfo{
+			CtwaClid:   msg.Referral.CtwaClid,
+			SourceID:   msg.Referral.SourceID,
+			SourceType: msg.Referral.SourceType,
+			SourceURL:  msg.Referral.SourceURL,
+			Headline:   msg.Referral.Headline,
 		}
 	}
 
