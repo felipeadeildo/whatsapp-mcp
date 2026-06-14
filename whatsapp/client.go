@@ -193,15 +193,44 @@ func (c *Client) GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelIt
 }
 
 // SendTextMessage sends a text message to a chat.
-func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text string) error {
+// If replyToID is non-empty, the message is sent as a reply linked to that message.
+func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text string, replyToID string) error {
 	targetJID, err := types.ParseJID(chatJID)
 	if err != nil {
 		return err
 	}
 
-	resp, err := c.wa.SendMessage(ctx, targetJID, &waE2E.Message{
-		Conversation: proto.String(text),
-	})
+	var msg *waE2E.Message
+
+	if replyToID != "" {
+		// Build a quoted reply message
+		quotedMsg, err := c.store.GetMessageByID(replyToID)
+		if err != nil {
+			return fmt.Errorf("failed to look up quoted message: %w", err)
+		}
+		if quotedMsg == nil {
+			return fmt.Errorf("quoted message %s not found in database", replyToID)
+		}
+
+		participant := quotedMsg.SenderJID
+
+		msg = &waE2E.Message{
+			ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+				Text: proto.String(text),
+				ContextInfo: &waE2E.ContextInfo{
+					StanzaID:      proto.String(replyToID),
+					Participant:   proto.String(participant),
+					QuotedMessage: &waE2E.Message{Conversation: proto.String(quotedMsg.Text)},
+				},
+			},
+		}
+	} else {
+		msg = &waE2E.Message{
+			Conversation: proto.String(text),
+		}
+	}
+
+	resp, err := c.wa.SendMessage(ctx, targetJID, msg)
 
 	if err != nil {
 		return err

@@ -428,8 +428,11 @@ func (m *MCPServer) handleSendMessage(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultError("WhatsApp is not connected"), nil
 	}
 
+	// get optional reply_to parameter
+	replyTo := request.GetString("reply_to", "")
+
 	// send message
-	err = m.wa.SendTextMessage(ctx, chatJID, text)
+	err = m.wa.SendTextMessage(ctx, chatJID, text, replyTo)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to send message: %v", err)), nil
 	}

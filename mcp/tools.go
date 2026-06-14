@@ -76,7 +76,7 @@ func (m *MCPServer) registerTools() {
 	// 5. send message
 	m.server.AddTool(
 		mcp.NewTool("send_message",
-			mcp.WithDescription("Send a text message to a WhatsApp chat (DM or group)."),
+			mcp.WithDescription("Send a text message to a WhatsApp chat (DM or group). Supports replying to a specific message."),
 			mcp.WithString("chat_jid",
 				mcp.Required(),
 				mcp.Description("recipient chat JID from find_chat or list_chats"),
@@ -84,6 +84,9 @@ func (m *MCPServer) registerTools() {
 			mcp.WithString("text",
 				mcp.Required(),
 				mcp.Description("message text to send"),
+			),
+			mcp.WithString("reply_to",
+				mcp.Description("message ID to reply to (the reply will appear linked/quoted in the chat)"),
 			),
 		),
 		m.handleSendMessage,
