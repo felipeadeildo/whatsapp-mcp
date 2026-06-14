@@ -80,6 +80,7 @@ type messageData struct {
 	MessageType string
 	PushName    string // sender's WhatsApp display name from message
 	IsGroup     bool
+	ReplyToID   string // ID of message being replied to or reacted to (for reactions/replies)
 }
 
 // getGroupInfoCached fetches group info with database caching to avoid excessive API calls.
@@ -199,6 +200,7 @@ func (c *Client) processMessageData(ctx context.Context, data messageData) error
 		Timestamp:   data.Timestamp,
 		IsFromMe:    data.IsFromMe,
 		MessageType: data.MessageType,
+		ReplyToID:   data.ReplyToID,
 	}
 
 	if err := c.store.SaveMessage(msg); err != nil {
@@ -238,6 +240,7 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 		}
 
 		text := extractText(msg.GetMessage())
+		var replyToID string
 		if text == "" {
 			message := msg.GetMessage()
 			// skip nil messages (can happen with deleted or corrupted messages, idk TODO: check)
@@ -260,7 +263,10 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 			} else if message.GetLocationMessage() != nil || message.GetLiveLocationMessage() != nil {
 				text = "[Location]"
 			} else if message.GetReactionMessage() != nil || message.GetEncReactionMessage() != nil {
-				text = "[Reaction]"
+				text, replyToID = extractReactionData(message)
+				if text == "" {
+					text = "[Reaction]"
+				}
 			} else if message.GetProtocolMessage() != nil {
 				text = "[Protocol]"
 			} else {
@@ -279,6 +285,7 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 			MessageType: c.getMessageType(msg.GetMessage()),
 			PushName:    pushName,
 			IsGroup:     chatJID.Server == "g.us",
+			ReplyToID:   replyToID,
 		}
 	}
 
@@ -359,6 +366,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 	}
 
 	text := extractText(evt.Message)
+	var replyToID string
 	if text == "" {
 		if evt.Message.GetImageMessage() != nil {
 			text = "[Image]"
@@ -375,7 +383,10 @@ func (c *Client) handleMessage(evt *events.Message) {
 		} else if evt.Message.GetLocationMessage() != nil || evt.Message.GetLiveLocationMessage() != nil {
 			text = "[Location]"
 		} else if evt.Message.GetReactionMessage() != nil || evt.Message.GetEncReactionMessage() != nil {
-			text = "[Reaction]"
+			text, replyToID = extractReactionData(evt.Message)
+			if text == "" {
+				text = "[Reaction]"
+			}
 		} else if evt.Message.GetProtocolMessage() != nil {
 			text = "[Protocol]"
 		} else {
@@ -395,6 +406,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 		MessageType: c.getMessageType(evt.Message),
 		PushName:    info.PushName,
 		IsGroup:     info.Chat.Server == "g.us",
+		ReplyToID:   replyToID,
 	}
 
 	// skip saving poll-related messages
@@ -472,6 +484,7 @@ func (c *Client) handleMessage(evt *events.Message) {
 				Timestamp:   data.Timestamp,
 				IsFromMe:    data.IsFromMe,
 				MessageType: data.MessageType,
+				ReplyToID:   data.ReplyToID,
 			},
 			ChatName:          chatName,
 			SenderPushName:    senderPushName,
@@ -659,6 +672,7 @@ func (c *Client) handleHistorySync(evt *events.HistorySync) {
 				Timestamp:   msgData.Timestamp,
 				IsFromMe:    msgData.IsFromMe,
 				MessageType: msgData.MessageType,
+				ReplyToID:   msgData.ReplyToID,
 			})
 		}
 	}
@@ -1014,4 +1028,29 @@ func (c *Client) getMessageType(msg *waE2E.Message) string {
 	}
 
 	return msgType
+}
+
+// extractReactionData extracts the emoji text and target message ID from a ReactionMessage.
+// Returns the emoji string and the ID of the message being reacted to.
+// Note: EncReactionMessage is encrypted and doesn't expose the data directly.
+func extractReactionData(msg *waE2E.Message) (emoji string, targetMessageID string) {
+	if msg == nil {
+		return "", ""
+	}
+
+	// ReactionMessage contains the actual emoji and target message key
+	if reaction := msg.GetReactionMessage(); reaction != nil {
+		if text := reaction.GetText(); text != "" {
+			emoji = text
+		}
+		// Extract target message ID from the Key
+		if key := reaction.GetKey(); key != nil {
+			targetMessageID = key.GetID()
+		}
+	}
+
+	// EncReactionMessage is encrypted, we can't extract the data from it
+	// It will fall back to "[Reaction]" in the caller
+
+	return emoji, targetMessageID
 }
