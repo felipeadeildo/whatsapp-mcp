@@ -203,8 +203,11 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 {
   "mcpServers": {
     "whatsapp": {
-      "url": "http://localhost:8080/mcp/your-secret-api-key",
-      "transport": "http"
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-secret-api-key"
+      }
     }
   }
 }
@@ -212,11 +215,44 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 ### Connect to Other MCP Clients
 
-The server exposes an HTTP+SSE endpoint compatible with any MCP client:
+The server exposes a Streamable HTTP endpoint compatible with any MCP client:
 
-- **URL:** `http://localhost:8080/mcp/{API_KEY}`
+- **URL:** `http://localhost:8080/mcp`
 - **Transport:** Streamable HTTP
-- **Authentication:** API key in URL path
+- **Authentication:** Two methods supported (Bearer header preferred)
+
+**Option A — Authorization header (recommended):**
+
+Keeps the key out of URLs, proxy logs, and shell history.
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-secret-api-key"
+      }
+    }
+  }
+}
+```
+
+**Option B — Key in URL path (backward compatible):**
+
+Existing clients using `/mcp/{key}` continue to work unchanged.
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "url": "http://localhost:8080/mcp/your-secret-api-key",
+      "transport": "http"
+    }
+  }
+}
+```
 
 ## 🎨 Usage Examples
 
