@@ -25,6 +25,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net/http"
@@ -193,20 +194,32 @@ func main() {
 		server.WithEndpointPath("/mcp"),
 	)
 
-	// MCP endpoint with API key in path
+	// MCP endpoint. Authenticates via either an "Authorization: Bearer <key>"
+	// header (preferred — keeps the key out of URLs/logs) or the API key as the
+	// first path segment (/mcp/{apiKey}) for backward compatibility.
 	mux.HandleFunc("/mcp/", func(w http.ResponseWriter, r *http.Request) {
-		// Extract API key from URL path: /mcp/{apiKey}
 		path := strings.TrimPrefix(r.URL.Path, "/mcp/")
-		providedKey := strings.Split(path, "/")[0] // Get first segment after /mcp/
+		providedKey := strings.Split(path, "/")[0] // first segment after /mcp/
 
-		if providedKey != apiKey {
+		authHeader := r.Header.Get("Authorization")
+		headerOK := subtle.ConstantTimeCompare([]byte(authHeader), []byte("Bearer "+apiKey)) == 1
+		pathOK := subtle.ConstantTimeCompare([]byte(providedKey), []byte(apiKey)) == 1
+
+		// remainingPath is the MCP path after the auth segment is stripped.
+		var remainingPath string
+		switch {
+		case headerOK:
+			// Key is in the header; the whole path after /mcp/ is the MCP path.
+			remainingPath = path
+		case pathOK:
+			// Key is in the path; strip it.
+			remainingPath = strings.TrimPrefix(path, providedKey)
+		default:
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte("Unauthorized: Invalid API key"))
 			return
 		}
 
-		// Create a new request with the remaining path
-		remainingPath := strings.TrimPrefix(path, providedKey)
 		if !strings.HasPrefix(remainingPath, "/") {
 			remainingPath = "/" + remainingPath
 		}
