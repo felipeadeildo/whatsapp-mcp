@@ -437,6 +437,65 @@ func (m *MCPServer) handleSendMessage(ctx context.Context, request mcp.CallToolR
 	return mcp.NewToolResultText(fmt.Sprintf("Message sent successfully to %s", chatJID)), nil
 }
 
+// handleSendImage handles the send_image tool request.
+func (m *MCPServer) handleSendImage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+
+	imageURL, err := request.RequireString("image_url")
+	if err != nil {
+		return mcp.NewToolResultError("image_url parameter is required"), nil
+	}
+
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	caption := request.GetString("caption", "")
+	replyTo := request.GetString("reply_to", "")
+
+	err = m.wa.SendImageMessage(ctx, chatJID, imageURL, caption, replyTo)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send image: %v", err)), nil
+	}
+
+	mediaType := "Image"
+	if strings.Contains(strings.ToLower(imageURL), ".gif") {
+		mediaType = "GIF"
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("%s sent successfully to %s", mediaType, chatJID)), nil
+}
+
+// handleSendVideo handles the send_video tool request.
+func (m *MCPServer) handleSendVideo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	chatJID, err := request.RequireString("chat_jid")
+	if err != nil {
+		return mcp.NewToolResultError("chat_jid parameter is required"), nil
+	}
+
+	video, err := request.RequireString("video")
+	if err != nil {
+		return mcp.NewToolResultError("video parameter is required"), nil
+	}
+
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+
+	caption := request.GetString("caption", "")
+	replyTo := request.GetString("reply_to", "")
+
+	err = m.wa.SendVideoMessage(ctx, chatJID, video, caption, replyTo)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to send video: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Video sent successfully to %s", chatJID)), nil
+}
+
 // handleLoadMoreMessages handles the load_more_messages tool request.
 func (m *MCPServer) handleLoadMoreMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// get required chat_jid

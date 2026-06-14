@@ -89,7 +89,51 @@ func (m *MCPServer) registerTools() {
 		m.handleSendMessage,
 	)
 
-	// 6. load more messages on-demand
+	// 6. send image/GIF
+	m.server.AddTool(
+		mcp.NewTool("send_image",
+			mcp.WithDescription("Send an image or GIF to a WhatsApp chat. Accepts a URL (http/https) or a local file path (absolute or ~/...). For GIFs, the image is sent as an animated GIF. Supports optional caption and reply."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID from find_chat or list_chats"),
+			),
+			mcp.WithString("image_url",
+				mcp.Required(),
+				mcp.Description("URL or local file path of the image or GIF to send"),
+			),
+			mcp.WithString("caption",
+				mcp.Description("optional caption text for the image"),
+			),
+			mcp.WithString("reply_to",
+				mcp.Description("message ID to reply to (the reply will appear linked/quoted in the chat)"),
+			),
+		),
+		m.handleSendImage,
+	)
+
+	// 7. send video
+	m.server.AddTool(
+		mcp.NewTool("send_video",
+			mcp.WithDescription("Send a video to a WhatsApp chat. Accepts a URL (http/https) or a local file path (absolute or ~/...). Supports optional caption and reply."),
+			mcp.WithString("chat_jid",
+				mcp.Required(),
+				mcp.Description("recipient chat JID from find_chat or list_chats"),
+			),
+			mcp.WithString("video",
+				mcp.Required(),
+				mcp.Description("URL or local file path of the video to send"),
+			),
+			mcp.WithString("caption",
+				mcp.Description("optional caption text for the video"),
+			),
+			mcp.WithString("reply_to",
+				mcp.Description("message ID to reply to (the reply will appear linked/quoted in the chat)"),
+			),
+		),
+		m.handleSendVideo,
+	)
+
+	// 8. load more messages on-demand
 	m.server.AddTool(
 		mcp.NewTool("load_more_messages",
 			mcp.WithDescription("Fetch additional message history from WhatsApp servers for a specific chat. Use when you need older messages not yet in the database."),
@@ -107,7 +151,7 @@ func (m *MCPServer) registerTools() {
 		m.handleLoadMoreMessages,
 	)
 
-	// 7. get my info
+	// 9. get my info
 	m.server.AddTool(
 		mcp.NewTool("get_my_info",
 			mcp.WithDescription("Get your own WhatsApp profile information including JID, display name, status/bio, and profile picture URL."),

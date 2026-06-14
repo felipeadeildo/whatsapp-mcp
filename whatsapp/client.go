@@ -3,7 +3,12 @@ package whatsapp
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 	"whatsapp-mcp/paths"
@@ -215,6 +220,315 @@ func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text strin
 		Timestamp:   resp.Timestamp,
 		IsFromMe:    true,
 		MessageType: "text",
+	})
+
+	return nil
+}
+
+// readMediaSource reads media data from a local file path or URL.
+// Returns the data bytes and MIME type.
+func (c *Client) readMediaSource(source string) ([]byte, string, error) {
+	const maxSize = 16 * 1024 * 1024
+
+	// Expand ~ to home directory
+	if strings.HasPrefix(source, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to expand home directory: %w", err)
+		}
+		source = home + source[1:]
+	}
+
+	if strings.HasPrefix(source, "/") {
+		// Local file
+		c.log.Infof("Reading local file: %s", source)
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to read local file: %w", err)
+		}
+		if len(data) > maxSize {
+			return nil, "", fmt.Errorf("file too large (max 16MB)")
+		}
+		mimeType := http.DetectContentType(data)
+		return data, mimeType, nil
+	}
+
+	// URL
+	c.log.Infof("Downloading from URL: %s", source)
+	resp, err := http.Get(source)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("failed to download: HTTP %d", resp.StatusCode)
+	}
+
+	limitedReader := io.LimitReader(resp.Body, int64(maxSize)+1)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read data: %w", err)
+	}
+	if len(data) > maxSize {
+		return nil, "", fmt.Errorf("file too large (max 16MB)")
+	}
+
+	mimeType := resp.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return data, mimeType, nil
+}
+
+// convertGifToMp4 converts a GIF file to MP4 using ffmpeg.
+// Returns the MP4 data or an error if ffmpeg is not available or conversion fails.
+func convertGifToMp4(gifData []byte) ([]byte, error) {
+	tmpDir, err := os.MkdirTemp("", "wa-gif-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	gifPath := filepath.Join(tmpDir, "input.gif")
+	mp4Path := filepath.Join(tmpDir, "output.mp4")
+
+	if err := os.WriteFile(gifPath, gifData, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write temp gif: %w", err)
+	}
+
+	// Try common ffmpeg paths since LaunchAgents may have limited PATH
+	ffmpegPath := "ffmpeg"
+	for _, p := range []string{"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"} {
+		if _, err := os.Stat(p); err == nil {
+			ffmpegPath = p
+			break
+		}
+	}
+
+	cmd := exec.Command(ffmpegPath, "-y", "-i", gifPath,
+		"-movflags", "faststart",
+		"-pix_fmt", "yuv420p",
+		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+		"-an", mp4Path)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("ffmpeg conversion failed: %w\n%s", err, string(output))
+	}
+
+	return os.ReadFile(mp4Path)
+}
+
+// SendImageMessage sends an image or GIF to a WhatsApp chat.
+// imageSource can be a URL (http/https) or a local file path (absolute or ~/...).
+// For GIF sources, it sends as a video with GifPlayback=true (WhatsApp requirement).
+func (c *Client) SendImageMessage(ctx context.Context, chatJID string, imageSource string, caption string, replyToID string) error {
+	c.log.Infof("SendImageMessage called: chatJID=%s, imageSource=%s, caption=%s", chatJID, imageSource, caption)
+
+	targetJID, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID: %w", err)
+	}
+
+	data, mimeType, err := c.readMediaSource(imageSource)
+	if err != nil {
+		return fmt.Errorf("failed to read image: %w", err)
+	}
+
+	isGif := strings.Contains(mimeType, "gif") || strings.HasSuffix(strings.ToLower(imageSource), ".gif")
+
+	// For GIFs: WhatsApp requires MP4 data with GifPlayback flag.
+	const maxMediaSize = 16 * 1024 * 1024
+	if isGif && strings.Contains(mimeType, "gif") && !strings.HasPrefix(imageSource, "/") {
+		mp4URL := strings.Replace(imageSource, "/giphy.gif", "/giphy.mp4", 1)
+		mp4URL = strings.Replace(mp4URL, "rid=giphy.gif", "rid=giphy.mp4", 1)
+		if mp4URL != imageSource {
+			c.log.Infof("GIF detected, fetching MP4 version: %s", mp4URL)
+			mp4Resp, err := http.Get(mp4URL)
+			if err == nil && mp4Resp.StatusCode == http.StatusOK {
+				mp4Data, err := io.ReadAll(io.LimitReader(mp4Resp.Body, maxMediaSize+1))
+				mp4Resp.Body.Close()
+				if err == nil && len(mp4Data) <= maxMediaSize && len(mp4Data) > 0 {
+					data = mp4Data
+					mimeType = "video/mp4"
+				}
+			} else if mp4Resp != nil {
+				mp4Resp.Body.Close()
+			}
+		}
+	}
+
+	// For local GIFs (or URL GIFs where MP4 fetch failed), convert with ffmpeg
+	if isGif && strings.Contains(mimeType, "gif") {
+		mp4Data, err := convertGifToMp4(data)
+		if err != nil {
+			c.log.Warnf("ffmpeg GIF conversion failed: %v (sending raw GIF)", err)
+		} else {
+			data = mp4Data
+			mimeType = "video/mp4"
+		}
+	}
+
+	var msg *waE2E.Message
+
+	if isGif {
+		uploaded, err := c.wa.Upload(ctx, data, whatsmeow.MediaVideo)
+		if err != nil {
+			return fmt.Errorf("failed to upload GIF: %w", err)
+		}
+
+		videoMsg := &waE2E.VideoMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			Mimetype:      proto.String(mimeType),
+			GifPlayback:   proto.Bool(true),
+		}
+		if caption != "" {
+			videoMsg.Caption = proto.String(caption)
+		}
+		msg = &waE2E.Message{VideoMessage: videoMsg}
+	} else {
+		uploaded, err := c.wa.Upload(ctx, data, whatsmeow.MediaImage)
+		if err != nil {
+			return fmt.Errorf("failed to upload image: %w", err)
+		}
+
+		imageMsg := &waE2E.ImageMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uint64(len(data))),
+			Mimetype:      proto.String(mimeType),
+		}
+		if caption != "" {
+			imageMsg.Caption = proto.String(caption)
+		}
+		msg = &waE2E.Message{ImageMessage: imageMsg}
+	}
+
+	// Add reply context if specified
+	if replyToID != "" {
+		quotedMsg, err := c.store.GetMessageByID(replyToID)
+		if err != nil {
+			return fmt.Errorf("failed to look up quoted message: %w", err)
+		}
+		if quotedMsg == nil {
+			return fmt.Errorf("quoted message %s not found in database", replyToID)
+		}
+
+		contextInfo := &waE2E.ContextInfo{
+			StanzaID:      proto.String(replyToID),
+			Participant:   proto.String(quotedMsg.SenderJID),
+			QuotedMessage: &waE2E.Message{Conversation: proto.String(quotedMsg.Text)},
+		}
+
+		if isGif {
+			msg.VideoMessage.ContextInfo = contextInfo
+		} else {
+			msg.ImageMessage.ContextInfo = contextInfo
+		}
+	}
+
+	sendResp, err := c.wa.SendMessage(ctx, targetJID, msg)
+	if err != nil {
+		return fmt.Errorf("failed to send image: %w", err)
+	}
+
+	c.log.Infof("Image sent successfully! ID=%s", sendResp.ID)
+	msgType := "image"
+	if isGif {
+		msgType = "gif"
+	}
+	text := caption
+	if text == "" {
+		text = "[" + msgType + "]"
+	}
+
+	c.store.SaveMessage(storage.Message{
+		ID:          sendResp.ID,
+		ChatJID:     chatJID,
+		SenderJID:   sendResp.Sender.String(),
+		Text:        text,
+		Timestamp:   sendResp.Timestamp,
+		IsFromMe:    true,
+		MessageType: msgType,
+	})
+
+	return nil
+}
+
+// SendVideoMessage sends a video to a WhatsApp chat.
+// videoSource can be a URL (http/https) or a local file path (absolute or ~/...).
+func (c *Client) SendVideoMessage(ctx context.Context, chatJID string, videoSource string, caption string, replyToID string) error {
+	targetJID, err := types.ParseJID(chatJID)
+	if err != nil {
+		return fmt.Errorf("invalid chat JID: %w", err)
+	}
+
+	data, mimeType, err := c.readMediaSource(videoSource)
+	if err != nil {
+		return fmt.Errorf("failed to read video: %w", err)
+	}
+
+	uploaded, err := c.wa.Upload(ctx, data, whatsmeow.MediaVideo)
+	if err != nil {
+		return fmt.Errorf("failed to upload video: %w", err)
+	}
+
+	videoMsg := &waE2E.VideoMessage{
+		URL:           proto.String(uploaded.URL),
+		DirectPath:    proto.String(uploaded.DirectPath),
+		MediaKey:      uploaded.MediaKey,
+		FileEncSHA256: uploaded.FileEncSHA256,
+		FileSHA256:    uploaded.FileSHA256,
+		FileLength:    proto.Uint64(uint64(len(data))),
+		Mimetype:      proto.String(mimeType),
+	}
+	if caption != "" {
+		videoMsg.Caption = proto.String(caption)
+	}
+
+	msg := &waE2E.Message{VideoMessage: videoMsg}
+
+	// Add reply context if specified
+	if replyToID != "" {
+		quotedMsg, err := c.store.GetMessageByID(replyToID)
+		if err != nil {
+			return fmt.Errorf("failed to look up quoted message: %w", err)
+		}
+		if quotedMsg == nil {
+			return fmt.Errorf("quoted message %s not found in database", replyToID)
+		}
+		msg.VideoMessage.ContextInfo = &waE2E.ContextInfo{
+			StanzaID:      proto.String(replyToID),
+			Participant:   proto.String(quotedMsg.SenderJID),
+			QuotedMessage: &waE2E.Message{Conversation: proto.String(quotedMsg.Text)},
+		}
+	}
+
+	sendResp, err := c.wa.SendMessage(ctx, targetJID, msg)
+	if err != nil {
+		return fmt.Errorf("failed to send video: %w", err)
+	}
+
+	text := caption
+	if text == "" {
+		text = "[video]"
+	}
+
+	c.store.SaveMessage(storage.Message{
+		ID:          sendResp.ID,
+		ChatJID:     chatJID,
+		SenderJID:   sendResp.Sender.String(),
+		Text:        text,
+		Timestamp:   sendResp.Timestamp,
+		IsFromMe:    true,
+		MessageType: "video",
 	})
 
 	return nil
