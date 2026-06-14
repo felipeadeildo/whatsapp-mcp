@@ -329,6 +329,98 @@ AI assistants can access these guides through the MCP Resources API.
 
 See `.env.example` and be happy!
 
+## 🔔 Webhook Events
+
+When `WEBHOOK_URL` is set, the server POSTs a JSON payload to that URL for every incoming and outgoing message.
+
+### Payload Structure
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "event_type": "message.received",
+  "timestamp": "2026-06-14T10:00:00Z",
+  "data": {
+    "message_id": "3EB0...",
+    "chat_jid": "6281234567890@s.whatsapp.net",
+    "sender_jid": "6281234567890@s.whatsapp.net",
+    "text": "Hello!",
+    "timestamp": "2026-06-14T10:00:00Z",
+    "is_from_me": false,
+    "message_type": "text",
+    "chat_name": "John Doe",
+    "sender_push_name": "John",
+    "sender_contact_name": "John Doe",
+    "is_group": false,
+    "media_metadata": null,
+    "referral": null
+  }
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string (UUID) | Unique event identifier |
+| `event_type` | string | `message.received` or `message.sent` |
+| `timestamp` | string (RFC3339) | When the event was generated |
+| `data.message_id` | string | WhatsApp message ID |
+| `data.chat_jid` | string | JID of the chat (DM or group) |
+| `data.sender_jid` | string | JID of the sender |
+| `data.text` | string | Message text content |
+| `data.timestamp` | string (RFC3339) | When the message was sent |
+| `data.is_from_me` | bool | `true` if sent from your account |
+| `data.message_type` | string | `text`, `image`, `video`, `audio`, `document`, `sticker`, `ptt`, `gif` |
+| `data.chat_name` | string | Display name of the chat (omitted if empty) |
+| `data.sender_push_name` | string | WhatsApp display name of the sender (omitted if empty) |
+| `data.sender_contact_name` | string | Local contact name for the sender (omitted if empty) |
+| `data.is_group` | bool | `true` if the message is in a group chat |
+| `data.media_metadata` | object \| null | Present when message has a media attachment (see below) |
+| `data.referral` | object \| null | Present when message originated from a Meta Click-to-WhatsApp ad (see below) |
+
+### Media Metadata
+
+Present when `message_type` is `image`, `video`, `audio`, `document`, `sticker`, `ptt`, or `gif`.
+
+```json
+"media_metadata": {
+  "message_id": "3EB0...",
+  "file_name": "photo.jpg",
+  "file_size": 204800,
+  "mime_type": "image/jpeg",
+  "has_media": true
+}
+```
+
+### Referral (Click-to-WhatsApp Ads)
+
+When a user taps a Meta ad with a "Message on WhatsApp" button, their first message carries ad attribution metadata (`ExternalAdReply` in the WhatsApp protocol). The server extracts this and populates `referral`:
+
+```json
+"referral": {
+  "ctwa_clid": "ARAkLkA8...",
+  "source_id": "120208468219880053",
+  "source_type": "AD",
+  "source_url": "https://fb.com/ads/...",
+  "headline": "Order Now"
+}
+```
+
+| Field | Description |
+|---|---|
+| `ctwa_clid` | Meta's click ID — use this for offline conversion attribution via Meta Conversions API |
+| `source_id` | The ad ID that originated the conversation |
+| `source_type` | Ad placement type (e.g. `AD`) |
+| `source_url` | Destination URL of the ad |
+| `headline` | Ad creative headline text |
+
+`referral` is `null` for all non-ad messages. It is supported on text, image, and video messages (the message types where WhatsApp carries `ExternalAdReply`).
+
+### Delivery & Retries
+
+Failed deliveries are retried up to `WEBHOOK_MAX_RETRIES` times with exponential backoff. Delivery attempts are logged in the database and visible via the webhook management API (`GET /webhooks/deliveries`).
+
 ## 🤝 Contributing
 
 This is a personal project I maintain for daily use. Contributions are welcome!
