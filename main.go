@@ -71,6 +71,12 @@ func main() {
 		httpPort = "8080"
 	}
 
+	// get HTTP host from environment (default to localhost-only for security)
+	host := os.Getenv("MCP_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+
 	// get log level from environment
 	logLevel := os.Getenv("LOG_LEVEL")
 	if logLevel == "" {
@@ -258,15 +264,15 @@ func main() {
 	})
 
 	httpServer := &http.Server{
-		Addr:    ":" + httpPort,
+		Addr:    host + ":" + httpPort,
 		Handler: mux,
 	}
 
 	// start server in background
 	go func() {
-		log.Printf("Starting server on http://0.0.0.0:%s", httpPort)
-		log.Printf("- Health check: http://0.0.0.0:%s/health", httpPort)
-		log.Printf("- MCP endpoint: http://0.0.0.0:%s/mcp/{API_KEY}", httpPort)
+		log.Printf("Starting server on http://%s:%s", host, httpPort)
+		log.Printf("- Health check: http://%s:%s/health", host, httpPort)
+		log.Printf("- MCP endpoint: http://%s:%s/mcp/{API_KEY}", host, httpPort)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
 		}
