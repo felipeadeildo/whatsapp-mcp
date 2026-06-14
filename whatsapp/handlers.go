@@ -239,6 +239,12 @@ func (c *Client) parseHistoryMessage(chatJID types.JID, msg *waWeb.WebMessageInf
 			pushName = pushNameMap[info.Sender.String()]
 		}
 
+		// skip protocol messages in history sync
+		if msg.GetMessage().GetProtocolMessage() != nil {
+			c.log.Debugf("Skipping protocol message in history sync")
+			return nil
+		}
+
 		text := extractText(msg.GetMessage())
 		var replyToID string
 		if text == "" {
@@ -363,6 +369,12 @@ func (c *Client) handleMessage(evt *events.Message) {
 	mediaType := getMediaTypeFromMessage(evt.Message)
 	if mediaType != "" && mediaType != "vcard" && mediaType != "contact_array" {
 		mediaMetadata = c.extractMediaMetadata(evt.Message, info.ID, false)
+	}
+
+	// skip protocol messages (edits, deletes, encryption updates, etc.)
+	if evt.Message.GetProtocolMessage() != nil {
+		c.log.Debugf("Skipping protocol message (system message type)")
+		return
 	}
 
 	text := extractText(evt.Message)
