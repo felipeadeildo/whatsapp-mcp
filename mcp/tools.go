@@ -241,12 +241,75 @@ func (m *MCPServer) registerTools() {
 		mcp.NewTool("transcribe_audio_message",
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
-			mcp.WithDescription("Transcribe a WhatsApp audio message (voice note or audio file) to text using a locally-hosted whisper.cpp model. The audio must already be downloaded (auto-download is on for audio by default). Default language is Brazilian Portuguese; configure via WHISPER_LANGUAGE."),
+			mcp.WithDescription("Transcribe a WhatsApp audio message (voice note or audio file) to text. Uses OpenRouter STT (whisper-large-v3) when configured, falling back to a local whisper.cpp model. If the audio isn't on disk yet, the server fetches it from the CDN on demand. Default language is Brazilian Portuguese (WHISPER_LANGUAGE)."),
 			mcp.WithString("message_id",
 				mcp.Required(),
 				mcp.Description("ID of the audio message to transcribe (from get_chat_messages or search_messages)"),
 			),
 		),
 		m.handleTranscribeAudioMessage,
+	)
+
+	// 13b. transcribe MANY audio messages concurrently (batch) — fixes the burst
+	// bottleneck by fanning out to OpenRouter with a bounded worker pool.
+	m.server.AddTool(
+		mcp.NewTool("transcribe_audios_batch",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithDescription("Transcribe MANY WhatsApp audio messages at once, concurrently. Provide either 'message_ids' (an explicit array) OR 'chat_jid' to auto-collect that chat's recent voice notes/audios (up to 'limit'). Returns per-message transcripts plus a failures section; partial results are returned if some fail. Uses the transcript cache (already-transcribed messages are free). Capped at 200 per call."),
+			mcp.WithArray("message_ids",
+				mcp.Description("Explicit list of audio message IDs to transcribe. Takes precedence over chat_jid."),
+				mcp.Items(map[string]any{"type": "string"}),
+			),
+			mcp.WithString("chat_jid",
+				mcp.Description("If message_ids is omitted, auto-collect audio/voice-note messages from this chat JID (e.g. '5521998568008@s.whatsapp.net')."),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Max audios to collect when using chat_jid (default 50, hard cap 200)."),
+			),
+		),
+		m.handleTranscribeAudiosBatch,
+	)
+
+	// 14. force-download a media attachment (audio/image/video/document) on demand
+	m.server.AddTool(
+		mcp.NewTool("download_media",
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithDescription("Force-download a media attachment by message_id. Use when auto-download was skipped, failed, or the file was deleted by flush_media_cache. Re-fetches from the WhatsApp CDN using media_key+direct_path stored in the local DB and decrypts to data/media/. CDN URLs expire after some weeks (returns 'expired' status when that happens)."),
+			mcp.WithString("message_id",
+				mcp.Required(),
+				mcp.Description("ID of the message whose media should be downloaded"),
+			),
+			mcp.WithBoolean("force",
+				mcp.Description("Re-download even if the file is already on disk (default: false). Use when you suspect on-disk corruption."),
+			),
+		),
+		m.handleDownloadMedia,
+	)
+
+	// 15. delete cached media files (and optionally reset DB so they can be re-fetched)
+	m.server.AddTool(
+		mcp.NewTool("flush_media_cache",
+			mcp.WithReadOnlyHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
+			mcp.WithDescription("Delete cached media files in data/media/ to free disk space. By default, resets download_status='skipped' on each affected row so download_media can re-fetch on demand (CDN expiry permitting). All filters are optional and combine with AND. Always run with dry_run=true first to preview."),
+			mcp.WithString("chat_jid",
+				mcp.Description("Limit flush to one chat (e.g. '5521998568008@s.whatsapp.net')"),
+			),
+			mcp.WithString("media_type",
+				mcp.Description("Limit by media type: image | video | audio | ptt | sticker | document"),
+			),
+			mcp.WithString("before_date",
+				mcp.Description("Only flush files whose message timestamp is older than this ISO date (e.g. '2026-04-01')"),
+			),
+			mcp.WithBoolean("reset_state",
+				mcp.Description("After deleting, set download_status='skipped' so on-demand re-fetch is possible. Default: true."),
+			),
+			mcp.WithBoolean("dry_run",
+				mcp.Description("Preview what would be removed without touching disk or DB. Default: false."),
+			),
+		),
+		m.handleFlushMediaCache,
 	)
 }

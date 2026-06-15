@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -319,6 +320,35 @@ func (c *Client) EditMessage(ctx context.Context, chatJID, messageID, newText st
 
 	if strings.TrimSpace(newText) == "" {
 		return fmt.Errorf("new text is empty -- to delete a message use delete_message instead")
+	}
+
+	// Pre-validate the edit against the local message store. whatsmeow itself
+	// does NOT enforce the 20-minute edit window: it will happily build and
+	// send the edit envelope, the WhatsApp server will ack the IQ, but the
+	// edit is silently dropped on the recipient side if the original message
+	// is older than whatsmeow.EditWindow (or if we never sent it / it's not
+	// from us). The previous version of this function returned success in all
+	// those cases, leading the LLM to claim "edited" when nothing actually
+	// changed in the client. Catch those cases here so the caller sees a
+	// clear error.
+	if c.store != nil {
+		original, lookupErr := c.store.GetMessageByID(messageID)
+		if lookupErr != nil {
+			c.log.Warnf("could not look up message %s before edit: %v", messageID, lookupErr)
+		} else if original == nil {
+			return fmt.Errorf("message %s not found in local store -- cannot edit a message we never observed", messageID)
+		} else {
+			if !original.IsFromMe {
+				return fmt.Errorf("message %s is not from us (is_from_me=false) -- WhatsApp only allows editing your own messages", messageID)
+			}
+			if original.ChatJID != chat.String() {
+				return fmt.Errorf("message %s belongs to chat %s, not %s -- refusing to edit", messageID, original.ChatJID, chat.String())
+			}
+			age := time.Since(original.Timestamp)
+			if age > whatsmeow.EditWindow {
+				return fmt.Errorf("edit window expired: message %s was sent %s ago, WhatsApp only allows edits within %s", messageID, age.Round(time.Second), whatsmeow.EditWindow)
+			}
+		}
 	}
 
 	editMsg := c.wa.BuildEdit(chat, types.MessageID(messageID), &waE2E.Message{

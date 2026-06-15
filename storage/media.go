@@ -326,3 +326,52 @@ func (s *MediaStore) DeleteMediaMetadata(messageID string) error {
 	_, err := s.db.Exec(query, messageID)
 	return err
 }
+
+// QueryFlushCandidates runs an arbitrary SELECT prepared by the whatsapp
+// package's FlushMediaCache and returns a minimal MediaMetadata projection.
+// The caller assembles the WHERE clause; this method only enforces the
+// expected column order: message_id, file_path, file_name, file_size,
+// mime_type, download_status.
+func (s *MediaStore) QueryFlushCandidates(query string, args ...any) ([]MediaMetadata, error) {
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []MediaMetadata
+	for rows.Next() {
+		var meta MediaMetadata
+		var filePath sql.NullString
+		err := rows.Scan(
+			&meta.MessageID,
+			&filePath,
+			&meta.FileName,
+			&meta.FileSize,
+			&meta.MimeType,
+			&meta.DownloadStatus,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if filePath.Valid {
+			meta.FilePath = filePath.String
+		}
+		results = append(results, meta)
+	}
+	return results, rows.Err()
+}
+
+// ResetDownloadState clears file_path and sets download_status='skipped'
+// without touching media_key/direct_path, so EnsureMediaDownloaded can
+// later re-fetch from the CDN. Distinct from UpdateDownloadStatus because
+// COALESCE in that statement cannot blank the file_path.
+func (s *MediaStore) ResetDownloadState(messageID string) error {
+	query := `
+	UPDATE media_metadata
+	SET file_path = '', download_status = 'skipped', download_timestamp = NULL, download_error = NULL
+	WHERE message_id = ?
+	`
+	_, err := s.db.Exec(query, messageID)
+	return err
+}

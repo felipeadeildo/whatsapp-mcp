@@ -32,6 +32,7 @@ type Client struct {
 	webhookManager   WebhookManager // optional webhook manager
 	mediaConfig      MediaConfig
 	whisperConfig    WhisperConfig
+	transcribeConfig TranscribeConfig
 	log              waLog.Logger
 	logFile          *os.File
 	historySyncChans map[string]chan bool // tracks pending sync requests by chat JID
@@ -140,6 +141,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, tran
 		webhookManager:   webhookManager,
 		mediaConfig:      mediaConfig,
 		whisperConfig:    LoadWhisperConfig(),
+		transcribeConfig: LoadTranscribeConfig(),
 		log:              logger,
 		logFile:          logFile,
 		historySyncChans: make(map[string]chan bool),
@@ -148,6 +150,12 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, tran
 	}
 
 	waClient.AddEventHandler(client.eventHandler)
+
+	logger.Infof("Transcription backend: %s (openrouter_key=%v, model=%s, batch_concurrency=%d)",
+		client.transcribeConfig.Backend,
+		client.transcribeConfig.OpenRouterKey != "",
+		client.transcribeConfig.Model,
+		client.transcribeConfig.BatchConcurrency)
 
 	return client, nil
 }
@@ -408,10 +416,18 @@ func (c *Client) TranscribeMessage(ctx context.Context, messageID string) (strin
 		return "", fmt.Errorf("message %s is not audio (mime=%s)", messageID, meta.MimeType)
 	}
 	if meta.DownloadStatus != "downloaded" || meta.FilePath == "" {
-		return "", fmt.Errorf(
-			"audio for message %s is not on disk (status=%s); wait for auto-download or re-fetch",
-			messageID, meta.DownloadStatus,
-		)
+		// lazy-download fallback: try to fetch via CDN before giving up
+		c.log.Infof("Transcribe: media %s not on disk (status=%s), attempting lazy download", messageID, meta.DownloadStatus)
+		dl, dlErr := c.EnsureMediaDownloaded(ctx, messageID, false)
+		if dlErr != nil {
+			return "", fmt.Errorf(
+				"audio for message %s is not on disk (status=%s) and lazy download failed: %w",
+				messageID, meta.DownloadStatus, dlErr,
+			)
+		}
+		// refresh meta with the freshly-written path
+		meta.FilePath = dl.FilePath
+		meta.DownloadStatus = "downloaded"
 	}
 
 	if c.transcriptStore != nil {
@@ -421,10 +437,11 @@ func (c *Client) TranscribeMessage(ctx context.Context, messageID string) (strin
 	}
 
 	abs := paths.GetMediaPath(meta.FilePath)
-	transcript, err := Transcribe(ctx, c.whisperConfig, abs)
+	transcript, backend, err := TranscribeWithBackend(ctx, c.transcribeConfig, abs)
 	if err != nil {
 		return "", err
 	}
+	c.log.Infof("transcribed %s via %s (%d chars)", messageID, backend, len(transcript))
 
 	if c.transcriptStore != nil {
 		if saveErr := c.transcriptStore.Save(messageID, transcript); saveErr != nil {

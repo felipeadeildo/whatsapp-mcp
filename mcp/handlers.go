@@ -2,14 +2,27 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"whatsapp-mcp/config"
 	"whatsapp-mcp/storage"
+	"whatsapp-mcp/whatsapp"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// maxInlineImageBytes caps how large an image we return inline in a tool result.
+// Base64 inflates ~33% and the bytes land in the model's context, so a multi-MB
+// image would blow token budget. WhatsApp images are typically <100KB.
+const maxInlineImageBytes = 5 * 1024 * 1024
+
+// maxBatchTranscribe caps how many audios a single batch call will process,
+// keeping wall-clock and cost bounded.
+const maxBatchTranscribe = 200
 
 // getDisplayName returns the best available name for a chat
 // Priority: ContactName > PushName > JID
@@ -704,13 +717,21 @@ func (m *MCPServer) handleGetMyInfo(ctx context.Context, request mcp.CallToolReq
 }
 
 // handleTranscribeAudioMessage handles the transcribe_audio_message tool request.
+// Decoupled from the MCP RPC ctx so whisper isn't killed by the upstream
+// proxy's request timeout (mcpproxy defaults to ~30s, whisper-cli with the
+// small model can run 60-120s on longer voice notes). Configurable via
+// TRANSCRIBE_TIMEOUT_SECONDS (default 300s).
 func (m *MCPServer) handleTranscribeAudioMessage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	messageID, err := request.RequireString("message_id")
 	if err != nil {
 		return mcp.NewToolResultError("message_id parameter is required"), nil
 	}
 
-	transcript, err := m.wa.TranscribeMessage(ctx, messageID)
+	transcribeTimeout := time.Duration(config.GetEnvInt64("TRANSCRIBE_TIMEOUT_SECONDS", 300)) * time.Second
+	transcribeCtx, cancel := context.WithTimeout(context.Background(), transcribeTimeout)
+	defer cancel()
+
+	transcript, err := m.wa.TranscribeMessage(transcribeCtx, messageID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to transcribe %s: %v", messageID, err)), nil
 	}
@@ -720,4 +741,159 @@ func (m *MCPServer) handleTranscribeAudioMessage(ctx context.Context, request mc
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf("Transcript of message %s:\n\n%s", messageID, transcript)), nil
+}
+
+// handleTranscribeAudiosBatch transcribes many audio messages concurrently.
+// Accepts either an explicit message_ids array or a chat_jid (+ optional limit)
+// to auto-collect the chat's audio/voice-note messages. Returns partial results:
+// per-message transcripts plus a failures section. Bounded by maxBatchTranscribe.
+func (m *MCPServer) handleTranscribeAudiosBatch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+
+	var ids []string
+	if raw, ok := args["message_ids"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				ids = append(ids, strings.TrimSpace(s))
+			}
+		}
+	}
+
+	chatJID := request.GetString("chat_jid", "")
+	limit := 50
+	if v, ok := args["limit"].(float64); ok && v > 0 {
+		limit = int(v)
+	}
+
+	if len(ids) == 0 && chatJID != "" {
+		collected, err := m.wa.CollectAudioMessageIDs(chatJID, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to collect audios for chat %s: %v", chatJID, err)), nil
+		}
+		ids = collected
+	}
+
+	if len(ids) == 0 {
+		return mcp.NewToolResultError("provide either 'message_ids' (array) or 'chat_jid' with at least one audio message"), nil
+	}
+	if len(ids) > maxBatchTranscribe {
+		ids = ids[:maxBatchTranscribe]
+	}
+
+	// Generous timeout: bounded by item count, capped. Per-item HTTP has its own 120s.
+	batchTimeout := time.Duration(300+len(ids)*10) * time.Second
+	if batchTimeout > 15*time.Minute {
+		batchTimeout = 15 * time.Minute
+	}
+	bctx, cancel := context.WithTimeout(context.Background(), batchTimeout)
+	defer cancel()
+
+	items := m.wa.TranscribeBatch(bctx, ids)
+
+	var ok, failed int
+	var body, failures strings.Builder
+	for _, it := range items {
+		if it.Error != "" {
+			failed++
+			fmt.Fprintf(&failures, "  [%s] %s\n", it.MessageID, it.Error)
+			continue
+		}
+		ok++
+		text := it.Text
+		if text == "" {
+			text = "(no text — silent audio?)"
+		}
+		fmt.Fprintf(&body, "[%s]\n%s\n\n", it.MessageID, text)
+	}
+
+	var out strings.Builder
+	fmt.Fprintf(&out, "Transcribed %d/%d audios (failures: %d).\n\n", ok, len(items), failed)
+	out.WriteString(body.String())
+	if failed > 0 {
+		out.WriteString("Failures:\n")
+		out.WriteString(failures.String())
+	}
+	return mcp.NewToolResultText(out.String()), nil
+}
+
+// handleDownloadMedia handles on-demand media downloads for messages whose
+// auto-download was skipped, failed, or where the on-disk file was deleted.
+// Falls back to CDN fetch + decrypt using media_key/direct_path stored in the DB.
+func (m *MCPServer) handleDownloadMedia(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	messageID, err := request.RequireString("message_id")
+	if err != nil {
+		return mcp.NewToolResultError("message_id parameter is required"), nil
+	}
+	force := request.GetBool("force", false)
+
+	result, err := m.wa.EnsureMediaDownloaded(ctx, messageID, force)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("download failed for %s: %v", messageID, err)), nil
+	}
+
+	var sb strings.Builder
+	if result.WasAlreadyOnDisk {
+		fmt.Fprintf(&sb, "Media %s already on disk (status was '%s').\n", messageID, result.ExistingStatus)
+	} else {
+		fmt.Fprintf(&sb, "Media %s downloaded (was '%s', %d bytes written).\n",
+			messageID, result.ExistingStatus, result.BytesWritten)
+	}
+	fmt.Fprintf(&sb, "File path (relative): %s\n", result.FilePath)
+	fmt.Fprintf(&sb, "Absolute path: %s\n", result.AbsolutePath)
+	fmt.Fprintf(&sb, "MIME type: %s\n", result.ResolvedMimeType)
+
+	// For images, return the bytes INLINE so the model can actually see the image,
+	// not just a path it can't open. Guarded by size to protect the context budget.
+	if strings.HasPrefix(result.ResolvedMimeType, "image/") {
+		if data, rerr := os.ReadFile(result.AbsolutePath); rerr == nil && len(data) > 0 {
+			if len(data) <= maxInlineImageBytes {
+				b64 := base64.StdEncoding.EncodeToString(data)
+				fmt.Fprintf(&sb, "(image returned inline, %d bytes)", len(data))
+				return mcp.NewToolResultImage(sb.String(), b64, result.ResolvedMimeType), nil
+			}
+			fmt.Fprintf(&sb, "(image too large to inline: %d bytes > %d cap; read from the path above)", len(data), maxInlineImageBytes)
+		}
+	}
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// handleFlushMediaCache deletes downloaded media files matching the filter
+// and resets their download_status so they can be re-fetched on demand.
+func (m *MCPServer) handleFlushMediaCache(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	filter := whatsapp.FlushFilter{
+		ChatJID:    request.GetString("chat_jid", ""),
+		MediaType:  request.GetString("media_type", ""),
+		DryRun:     request.GetBool("dry_run", false),
+		ResetState: request.GetBool("reset_state", true),
+	}
+	if before := request.GetString("before_date", ""); before != "" {
+		t, err := m.parseTimestamp(before)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("invalid before_date: %v", err)), nil
+		}
+		filter.BeforeDate = t
+	}
+
+	result, err := m.wa.FlushMediaCache(ctx, filter)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("flush failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	if result.DryRun {
+		fmt.Fprintf(&sb, "DRY RUN — no files deleted.\n")
+	}
+	fmt.Fprintf(&sb, "Files removed: %d\n", result.FilesRemoved)
+	fmt.Fprintf(&sb, "Bytes freed: %s (%d bytes)\n", formatFileSize(result.BytesFreed), result.BytesFreed)
+	fmt.Fprintf(&sb, "DB rows reset (download_status='skipped'): %d\n", result.DBRowsUpdated)
+	if len(result.SampleRemoved) > 0 {
+		fmt.Fprintf(&sb, "Sample paths (%d shown):\n", len(result.SampleRemoved))
+		for _, p := range result.SampleRemoved {
+			fmt.Fprintf(&sb, "  - %s\n", p)
+		}
+	}
+	if !result.DryRun && result.DBRowsUpdated > 0 {
+		fmt.Fprintf(&sb, "\nNote: media_metadata rows kept (media_key/direct_path preserved). Use download_media to re-fetch any of these on demand while the CDN URL is still valid.\n")
+	}
+	return mcp.NewToolResultText(sb.String()), nil
 }
