@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"whatsapp-mcp/paths"
@@ -27,8 +28,10 @@ type Client struct {
 	wa               *whatsmeow.Client
 	store            *storage.MessageStore
 	mediaStore       *storage.MediaStore
+	transcriptStore  *storage.TranscriptStore
 	webhookManager   WebhookManager // optional webhook manager
 	mediaConfig      MediaConfig
+	whisperConfig    WhisperConfig
 	log              waLog.Logger
 	logFile          *os.File
 	historySyncChans map[string]chan bool // tracks pending sync requests by chat JID
@@ -76,7 +79,7 @@ func (l *fileLogger) Sub(module string) waLog.Logger {
 }
 
 // NewClient creates a new WhatsApp client with the given configuration.
-func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webhookManager WebhookManager, logLevel string) (*Client, error) {
+func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, transcriptStore *storage.TranscriptStore, webhookManager WebhookManager, logLevel string) (*Client, error) {
 	// validate log level, default to INFO if invalid
 	validLevels := map[string]bool{
 		"DEBUG": true,
@@ -133,8 +136,10 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webh
 		wa:               waClient,
 		store:            store,
 		mediaStore:       mediaStore,
+		transcriptStore:  transcriptStore,
 		webhookManager:   webhookManager,
 		mediaConfig:      mediaConfig,
+		whisperConfig:    LoadWhisperConfig(),
 		log:              logger,
 		logFile:          logFile,
 		historySyncChans: make(map[string]chan bool),
@@ -373,4 +378,65 @@ func getEnabledTypes(types map[string]bool) []string {
 		}
 	}
 	return enabled
+}
+
+// TranscribeMessage transcribes the audio attached to messageID using the
+// configured whisper.cpp pipeline. It looks up the message via the
+// MessageStore the Client was constructed with and reads the already-
+// downloaded media from disk. Returns an error if the message doesn't
+// exist, isn't audio, or hasn't been downloaded yet.
+func (c *Client) TranscribeMessage(ctx context.Context, messageID string) (string, error) {
+	if c.store == nil || c.mediaStore == nil {
+		return "", fmt.Errorf("client not wired with stores")
+	}
+	msg, err := c.store.GetMessageByID(messageID)
+	if err != nil {
+		return "", fmt.Errorf("lookup message %s: %w", messageID, err)
+	}
+	if msg == nil {
+		return "", fmt.Errorf("message %s not found", messageID)
+	}
+
+	meta, err := c.mediaStore.GetMediaMetadata(messageID)
+	if err != nil {
+		return "", fmt.Errorf("lookup media for %s: %w", messageID, err)
+	}
+	if meta == nil {
+		return "", fmt.Errorf("message %s has no media attachment", messageID)
+	}
+	if !strings.HasPrefix(meta.MimeType, "audio/") {
+		return "", fmt.Errorf("message %s is not audio (mime=%s)", messageID, meta.MimeType)
+	}
+	if meta.DownloadStatus != "downloaded" || meta.FilePath == "" {
+		return "", fmt.Errorf(
+			"audio for message %s is not on disk (status=%s); wait for auto-download or re-fetch",
+			messageID, meta.DownloadStatus,
+		)
+	}
+
+	if c.transcriptStore != nil {
+		if cached, found, getErr := c.transcriptStore.Get(messageID); getErr == nil && found {
+			return cached, nil
+		}
+	}
+
+	abs := paths.GetMediaPath(meta.FilePath)
+	transcript, err := Transcribe(ctx, c.whisperConfig, abs)
+	if err != nil {
+		return "", err
+	}
+
+	if c.transcriptStore != nil {
+		if saveErr := c.transcriptStore.Save(messageID, transcript); saveErr != nil {
+			c.log.Warnf("failed to cache transcript for %s: %v", messageID, saveErr)
+		}
+	}
+
+	if path, dumpErr := dumpTranscript(messageID, transcript); dumpErr != nil {
+		c.log.Warnf("failed to dump transcript for %s: %v", messageID, dumpErr)
+	} else {
+		c.log.Infof("transcript dumped to %s", path)
+	}
+
+	return transcript, nil
 }

@@ -45,7 +45,7 @@ AI:  *reads context, sends reply* → "Sent! I've proposed Thursday at noon"
 
 This server implements the full MCP specification with:
 
-- **7 Tools** for WhatsApp operations
+- **12 Tools** for WhatsApp operations
 - **4 Prompts** for common workflows
 - **4 Resources** for interactive guides
 - **Server Instructions** for optimal AI interactions
@@ -59,8 +59,14 @@ This server implements the full MCP specification with:
 | `search_messages` | Search across all chats | Pattern matching, wildcards |
 | `find_chat` | Locate chat by name | Fuzzy search support |
 | `send_message` | Send WhatsApp messages | To any chat or group |
+| `send_file` | Send image/video/audio/document | Extension-based routing, optional caption |
+| `send_audio_message` | Send a voice note (PTT) | Auto-converts MP3/WAV/M4A via ffmpeg |
+| `send_reaction` | React with an emoji | Empty string removes the reaction |
+| `edit_message` | Edit a sent message | Within ~20 minutes of original send |
+| `delete_message` | Revoke for everyone | Self or admin-revoke in groups |
 | `load_more_messages` | Fetch older history | On-demand from servers |
 | `get_my_info` | Get your profile info | JID, name, status, picture |
+| `transcribe_audio_message` | Transcribe a voice note to text | Uses whisper.cpp, default language Brazilian Portuguese |
 
 #### Prompts
 
@@ -97,7 +103,7 @@ graph TB
         B -->|/mcp endpoint| C
         B -->|/health| B
 
-        C -->|Tools| C1[list_chats<br/>get_chat_messages<br/>search_messages<br/>find_chat<br/>send_message<br/>load_more_messages<br/>get_my_info]
+        C -->|Tools| C1[list_chats<br/>get_chat_messages<br/>search_messages<br/>find_chat<br/>send_message<br/>send_file<br/>send_audio_message<br/>send_reaction<br/>edit_message<br/>delete_message<br/>load_more_messages<br/>get_my_info]
         C -->|Prompts| C2[search_person_messages<br/>get_context_about_person<br/>analyze_conversation<br/>search_keyword]
         C -->|Resources| C3[Workflow Guides<br/>Search Patterns<br/>JID Format]
 
@@ -337,12 +343,14 @@ All data is stored in `./data/`:
   - Context-aware recommendations
 
 - [ ] **Enhanced Tools**
-  - Mark messages as read
-  - React to messages (emoji reactions)
-  - Send media files
-  - Group management (create, members)
-  - Status updates
-  - Account management (profile picture, name)
+  - [ ] Mark messages as read
+  - [x] React to messages (emoji reactions)
+  - [x] Send media files (images, videos, audio, documents)
+  - [x] Voice notes via ffmpeg (PTT)
+  - [x] Edit and delete (revoke) messages
+  - [ ] Group management (create, members)
+  - [ ] Status updates
+  - [ ] Account management (profile picture, name)
 
 - [ ] **Analytics** (maybe)
   - Message statistics
@@ -363,7 +371,18 @@ AI assistants can access these guides through the MCP Resources API.
 
 ### Environment Variables
 
-See `.env.example` and be happy!
+See `.env.example` for a complete list of available configuration options.
+
+#### Audio transcription (optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `WHISPER_BIN` | _(unset)_ | Absolute path to the `whisper-cli` (or `whisper-cli.exe`) binary from a [whisper.cpp](https://github.com/ggerganov/whisper.cpp) release. |
+| `WHISPER_MODEL` | _(unset)_ | Absolute path to a `ggml-*.bin` model. The `small` multilingual model is recommended for CPU-only hosts (~466 MB). |
+| `WHISPER_LANGUAGE` | `pt` | ISO 639-1 language code passed to whisper. |
+| `WHISPER_THREADS` | `4` | CPU threads for whisper. Set to your physical core count. |
+
+If `WHISPER_BIN` or `WHISPER_MODEL` is missing, `transcribe_audio_message` returns a clear error pointing at this section. Other tools are unaffected.
 
 ## 🔔 Webhook Events
 

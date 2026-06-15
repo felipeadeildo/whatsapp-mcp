@@ -30,7 +30,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -46,6 +49,39 @@ import (
 	"github.com/mdp/qrterminal/v3"
 	"github.com/skip2/go-qrcode"
 )
+
+// popQRImage opens the freshly-written qr.png in the OS default image
+// viewer so the user actually SEES it. Without this, the auto-start
+// scheduled task keeps stdout/stderr redirected to a logfile and the
+// "scan QR" prompt vanishes silently — daemon stays running, mcpproxy
+// reports "Authentication required", but no human ever notices.
+//
+// Best-effort: any failure here is logged and ignored, since the QR is
+// still on disk for the user to open manually if needed.
+func popQRImage(qrPath string) {
+	abs, err := filepath.Abs(qrPath)
+	if err != nil {
+		log.Printf("popQRImage: cannot resolve %q: %v", qrPath, err)
+		return
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		// `cmd /c start "" "<path>"` invokes ShellExecute, which honours
+		// the user's default-program association for .png and is
+		// independent of whether the parent task is hidden.
+		cmd = exec.Command("cmd", "/c", "start", "", abs)
+	case "darwin":
+		cmd = exec.Command("open", abs)
+	default:
+		cmd = exec.Command("xdg-open", abs)
+	}
+	if err := cmd.Start(); err != nil {
+		log.Printf("popQRImage: failed to launch viewer for %s: %v", abs, err)
+		return
+	}
+	log.Printf("popQRImage: viewer launched for %s", abs)
+}
 
 // TODO: cleanup main entry
 // TODO: move dotenv loading to a separate package
@@ -114,6 +150,9 @@ func main() {
 	mediaStore := storage.NewMediaStore(db)
 	log.Println("Media storage initialized")
 
+	transcriptStore := storage.NewTranscriptStore(db)
+	log.Println("Transcript cache initialized")
+
 	// initialize webhook system
 	webhookConfig := webhook.LoadConfig()
 	webhookStore := storage.NewWebhookStore(db)
@@ -144,7 +183,7 @@ func main() {
 	log.Println("Webhook manager started")
 
 	// initialize WhatsApp client
-	waClient, err := whatsapp.NewClient(store, mediaStore, webhookManager, logLevel)
+	waClient, err := whatsapp.NewClient(store, mediaStore, transcriptStore, webhookManager, logLevel)
 	if err != nil {
 		log.Fatal("Failed to create WhatsApp client:", err)
 	}
@@ -165,9 +204,20 @@ func main() {
 				fmt.Println("\nScan the QR code below:")
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 				fmt.Println("\nQR Code also saved to qr.png")
-				qrcode.WriteFile(evt.Code, qrcode.Low, 256, paths.QRCodePath)
+				if err := qrcode.WriteFile(evt.Code, qrcode.Low, 256, paths.QRCodePath); err != nil {
+					log.Printf("failed to write qr.png: %v", err)
+				} else {
+					popQRImage(paths.QRCodePath)
+				}
 			} else {
 				log.Println("QR event:", evt.Event)
+				// "success" fires once the phone has scanned and paired.
+				// Drop the QR image so a stale copy doesn't confuse anyone.
+				if evt.Event == "success" {
+					if err := os.Remove(paths.QRCodePath); err != nil && !os.IsNotExist(err) {
+						log.Printf("failed to remove stale qr.png: %v", err)
+					}
+				}
 			}
 		}
 	} else {
