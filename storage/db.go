@@ -10,7 +10,7 @@ import (
 
 // GetConnectionString returns the SQLite connection string with pragmas
 func GetConnectionString() string {
-	return paths.MessagesDBPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+	return paths.MessagesDBPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(20000)&_pragma=synchronous(NORMAL)"
 }
 
 // InitDB initializes the database and runs migrations
