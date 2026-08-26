@@ -22,6 +22,11 @@ type WebhookManager interface {
 	EmitMessageEvent(msg storage.MessageWithNames) error
 }
 
+// sendDedupWindow is how long a successfully sent outbound (chat JID + text)
+// pair is remembered so that duplicate send calls (e.g. MCP client retries)
+// are suppressed instead of delivering a second copy of the message.
+const sendDedupWindow = 30 * time.Second
+
 // Client wraps the WhatsApp client with additional functionality.
 type Client struct {
 	wa               *whatsmeow.Client
@@ -35,6 +40,11 @@ type Client struct {
 	historySyncMux   sync.Mutex           // protects the map
 	ctx              context.Context      // client lifecycle context
 	cancel           context.CancelFunc   // cancel function to stop all goroutines
+
+	// recentSends tracks recently sent outbound (chat JID + text) pairs so
+	// that duplicate send calls are suppressed; recentSendsM protects it.
+	recentSends  map[string]time.Time
+	recentSendsM sync.Mutex
 }
 
 // fileLogger wraps a logger to write to both stdout and a file.
@@ -138,6 +148,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webh
 		log:              logger,
 		logFile:          logFile,
 		historySyncChans: make(map[string]chan bool),
+		recentSends:      make(map[string]time.Time),
 		ctx:              clientCtx,
 		cancel:           cancel,
 	}
@@ -193,10 +204,38 @@ func (c *Client) GetQRChannel(ctx context.Context) (<-chan whatsmeow.QRChannelIt
 }
 
 // SendTextMessage sends a text message to a chat.
+//
+// Sending is not idempotent, and MCP clients (e.g. ChatGPT) may invoke the
+// send tool more than once for the same user action due to retries or SSE
+// behavior. To avoid delivering the same message twice, identical outbound
+// sends (same chat and text) made within sendDedupWindow are suppressed and
+// reported as successes.
 func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text string) error {
 	targetJID, err := types.ParseJID(chatJID)
 	if err != nil {
 		return err
+	}
+
+	// Deduplicate identical (chat + text) sends made within sendDedupWindow.
+	// The lock is held across the send so that concurrent duplicate calls
+	// are serialized: the first call sends and records the message, the
+	// rest are detected as duplicates and return without sending.
+	dedupKey := targetJID.String() + "\x00" + text
+
+	c.recentSendsM.Lock()
+	defer c.recentSendsM.Unlock()
+
+	// Drop entries older than the dedup window so the map stays bounded.
+	now := time.Now()
+	for k, sentAt := range c.recentSends {
+		if now.Sub(sentAt) >= sendDedupWindow {
+			delete(c.recentSends, k)
+		}
+	}
+
+	if sentAt, ok := c.recentSends[dedupKey]; ok {
+		c.log.Infof("Suppressing duplicate outbound message to %s (identical message sent %s ago)", chatJID, now.Sub(sentAt).Round(time.Millisecond))
+		return nil
 	}
 
 	resp, err := c.wa.SendMessage(ctx, targetJID, &waE2E.Message{
@@ -206,6 +245,8 @@ func (c *Client) SendTextMessage(ctx context.Context, chatJID string, text strin
 	if err != nil {
 		return err
 	}
+
+	c.recentSends[dedupKey] = now
 
 	c.store.SaveMessage(storage.Message{
 		ID:          resp.ID,
