@@ -570,3 +570,39 @@ func (m *MCPServer) handleGetMyInfo(ctx context.Context, request mcp.CallToolReq
 
 	return mcp.NewToolResultText(result.String()), nil
 }
+
+// handleCheckNumbers handles the check_numbers tool request.
+func (m *MCPServer) handleCheckNumbers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw, err := request.RequireString("phones")
+	if err != nil {
+		return mcp.NewToolResultError("phones parameter is required"), nil
+	}
+	var phones []string
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimPrefix(strings.TrimSpace(p), "+")
+		if p == "" {
+			continue
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return mcp.NewToolResultError(fmt.Sprintf("invalid phone %q: digits only", p)), nil
+			}
+		}
+		phones = append(phones, p)
+	}
+	if len(phones) == 0 || len(phones) > 50 {
+		return mcp.NewToolResultError("provide 1-50 phone numbers"), nil
+	}
+	if !m.wa.IsLoggedIn() {
+		return mcp.NewToolResultError("WhatsApp is not connected"), nil
+	}
+	res, err := m.wa.CheckNumbers(ctx, phones)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to check numbers: %v", err)), nil
+	}
+	var out strings.Builder
+	for _, r := range res {
+		fmt.Fprintf(&out, "%s\t%t\t%s\n", strings.TrimPrefix(r.Query, "+"), r.IsIn, r.JID.User)
+	}
+	return mcp.NewToolResultText(out.String()), nil
+}
