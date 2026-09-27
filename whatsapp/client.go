@@ -313,6 +313,19 @@ type MyInfo struct {
 	BusinessName string // Verified business name (if applicable)
 }
 
+// CheckNumbers asks WhatsApp's servers which phone numbers (digits only, with
+// country code) are registered. Read-only: nothing is sent to the numbers.
+func (c *Client) CheckNumbers(ctx context.Context, phones []string) ([]types.IsOnWhatsAppResponse, error) {
+	if !c.IsLoggedIn() {
+		return nil, fmt.Errorf("not logged in")
+	}
+	q := make([]string, len(phones))
+	for i, p := range phones {
+		q[i] = "+" + p
+	}
+	return c.wa.IsOnWhatsApp(ctx, q)
+}
+
 // GetMyInfo retrieves the current user's WhatsApp profile information
 func (c *Client) GetMyInfo(ctx context.Context) (*MyInfo, error) {
 	if !c.IsLoggedIn() {

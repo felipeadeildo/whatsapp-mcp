@@ -114,4 +114,16 @@ func (m *MCPServer) registerTools() {
 		),
 		m.handleGetMyInfo,
 	)
+
+	// 8. check which phone numbers are registered on WhatsApp
+	m.server.AddTool(
+		mcp.NewTool("check_numbers",
+			mcp.WithDescription("Check whether phone numbers are registered on WhatsApp (fresh server lookup, nothing is sent). Up to 50 numbers per call."),
+			mcp.WithString("phones",
+				mcp.Required(),
+				mcp.Description("comma-separated phone numbers, digits with country code (e.g. 6281234567890)"),
+			),
+		),
+		m.handleCheckNumbers,
+	)
 }
