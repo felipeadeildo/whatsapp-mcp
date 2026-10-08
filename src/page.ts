@@ -32,7 +32,14 @@ body {
   color: var(--ink);
   font: 1rem/1.55 var(--text);
 }
-main { max-width: 60rem; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+main {
+  max-width: 60rem;
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+}
 .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 .brand { display: flex; align-items: baseline; gap: 0.5rem; color: var(--muted); font-size: 0.95rem; }
 .brand strong { color: var(--ink); font-weight: 600; }
@@ -200,15 +207,13 @@ button:disabled { cursor: progress; opacity: 0.7; }
   border: 1px solid var(--line);
   border-radius: 0.5rem;
   font: 0.88rem/1.5 var(--code);
-  white-space: pre;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 .copy {
   position: absolute;
-  top: 50%;
+  top: 0.45rem;
   right: 0.45rem;
-  translate: 0 -50%;
   display: grid;
   place-items: center;
   width: 2rem;
@@ -222,6 +227,8 @@ button:disabled { cursor: progress; opacity: 0.7; }
 .tok-bin { color: var(--signal); font-weight: 600; }
 .tok-flag { color: var(--muted); }
 .tok-str { color: var(--wait); }
+/* A URL moves to the next line whole, and breaks inside only when it cannot fit alone. */
+.tok-url { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
 .copy:hover { color: var(--ink); background: var(--line); }
 .copy[data-copied] { color: var(--signal); }
 .field-note { margin: 0.4rem 0 0; color: var(--muted); font-size: 0.88rem; }
@@ -250,7 +257,7 @@ button:disabled { cursor: progress; opacity: 0.7; }
 @media (max-width: 47.99rem) {
   .viewfinder.aside { display: none; }
 }
-.credit { margin-top: 5rem; display: flex; justify-content: center; }
+.credit { margin-top: auto; padding-top: 4rem; display: flex; justify-content: center; }
 .credit a {
   display: inline-flex;
   align-items: center;

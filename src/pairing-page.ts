@@ -143,7 +143,9 @@ function viewFor(status) {
   switch (status.state) {
     case "open": {
       const archive = status.archive
-      const syncing = status.history.active || archive.messages === 0
+      // An account object still on older code sends no history; treat it as not syncing.
+      const history = status.history || { active: false, progress: null }
+      const syncing = history.active || archive.messages === 0
       const counts = { messages: counter("messages", archive.messages), chats: counter("chats", archive.chats) }
       let lead
       if (archive.messages === 0) lead = escapeHtml(t.syncStart)
@@ -156,7 +158,7 @@ function viewFor(status) {
         lead,
         mode: syncing ? "sync" : "done",
         glyph: syncing ? "ring" : "done",
-        progress: status.history.progress,
+        progress: history.progress,
         live: syncing ? null : archive.newestMessageAt,
         connect: true,
       }
@@ -234,6 +236,7 @@ function highlight(command) {
     if (index === 0) span.className = "tok-bin"
     else if (token.startsWith("--")) span.className = "tok-flag"
     else if (token.startsWith('"')) span.className = "tok-str"
+    else if (token.startsWith("http")) span.className = "tok-url"
     span.textContent = token
     return span
   })
