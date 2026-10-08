@@ -4,13 +4,19 @@
 
 Give your AI agents your WhatsApp.
 
-An [MCP](https://modelcontextprotocol.io) server on Cloudflare that links to your account the way WhatsApp Web does, keeps a searchable archive of your chats, and lets agents read, search and send messages. Each WhatsApp account gets its own Durable Object, and there is no server for you to run.
+[![MCP server](https://img.shields.io/badge/MCP-server-3cc488?style=flat-square)](https://modelcontextprotocol.io) [![Runs on Cloudflare Workers](https://img.shields.io/badge/runs_on-Cloudflare_Workers-f38020?style=flat-square&logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/durable-objects/) [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-8ba69d?style=flat-square)](LICENSE)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/felipeadeildo/whatsapp-mcp)
+
+[Deploy](#deploy) &nbsp;|&nbsp; [Link your WhatsApp](#link-your-whatsapp) &nbsp;|&nbsp; [Connect your agent](#connect-your-agent) &nbsp;|&nbsp; [Tools](#tools)
+
+<br>
 
 <img src="docs/pairing.png" alt="Pairing page with a QR code inside a camera viewfinder and the three steps to link a device" width="820">
 
 </div>
+
+An [MCP](https://modelcontextprotocol.io) server on Cloudflare that links to your account the way WhatsApp Web does, keeps a searchable archive of your chats, and lets agents read, search and send messages. Each WhatsApp account gets its own Durable Object, and there is no server for you to run.
 
 Once linked, ask your agent things like:
 
