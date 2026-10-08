@@ -64,6 +64,13 @@ The app opens your server in the browser. Sign in with your `SECRET` and select 
 claude mcp add --transport http whatsapp https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
 ```
 
+In [pi](https://pi.dev), add it and sign in from the terminal:
+
+```sh
+pi mcp add whatsapp --url https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
+pi mcp login whatsapp
+```
+
 Scripts and clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>` instead.
 
 ## What your assistant can do
