@@ -3,11 +3,9 @@
  * owns a named list; applied steps are recorded by position, so steps are only
  * ever appended, never edited or reordered, once a version has been deployed.
  */
-export function migrate(
-  storage: DurableObjectStorage,
-  name: string,
-  steps: readonly string[],
-): void {
+import type { SqlDatabase } from "./sql"
+
+export function migrate(storage: SqlDatabase, name: string, steps: readonly string[]): void {
   const sql = storage.sql
   sql.exec(
     "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied INTEGER NOT NULL)",

@@ -14,13 +14,29 @@ type Account = DurableObjectStub<WhatsAppAccount>
 
 const INSTRUCTIONS = `Read and act on one WhatsApp account.
 
-Chats are identified by JID: "<number>@s.whatsapp.net" or "<id>@lid" for people, "<id>@g.us" for groups. Tools that take a chat also accept a phone number with country code. When you only have a name, call find_chats (or find_contacts) first.
+Chats and people are identified by JID: "<id>@lid" or "<number>@s.whatsapp.net" for people (the same person can have both; results always use one), "<id>@g.us" for groups. Tools that take a chat or person also accept a phone number with country code. When you only have a name, call find_chats or find_people first.
 
 Reading comes from the account's archive, which holds what WhatsApp synced at pairing plus everything since. If a chat's history stops too early, load_older_messages asks the phone for more.
 
 Times are shown in the account's time zone as "YYYY-MM-DD HH:mm". Date filters accept the same format, a bare date, or ISO 8601 with an offset.
 
 Sending is visible to other people and cannot be taken back silently: confirm intent before send_message, edit_message or delete_message unless the user was explicit.`
+
+/** Drops absent fields, which only cost the model tokens. */
+function withoutNulls<V>(record: Record<string, V | null>): Record<string, V> {
+  const out: Record<string, V> = {}
+  for (const [key, value] of Object.entries(record)) if (value !== null) out[key] = value
+  return out
+}
+
+/** Writes `@<number>` mentions as `@<name>`, as the WhatsApp app shows them. */
+function withMentionNames(text: string, mentions: ArchivedMessage["mentions"]): string {
+  let out = text
+  for (const mention of mentions) {
+    if (mention.name) out = out.replaceAll(`@${mention.user}`, `@${mention.name}`)
+  }
+  return out
+}
 
 /** A message as the model sees it: no nulls, local time, sender resolved. */
 function presentMessage(
@@ -34,12 +50,11 @@ function presentMessage(
   }
   if (!message.fromMe && message.senderJid && message.senderName) out.from_jid = message.senderJid
   if (message.kind !== "text") out.kind = message.kind
-  if (message.text) out.text = message.text
+  if (message.forwarded) out.forwarded = true
+  if (message.text) out.text = withMentionNames(message.text, message.mentions)
   if (message.media) {
     const { mimetype, fileName, bytes, seconds } = message.media
-    out.media = Object.fromEntries(
-      Object.entries({ mimetype, fileName, bytes, seconds }).filter(([, value]) => value !== null),
-    )
+    out.media = withoutNulls({ mimetype, fileName, bytes, seconds })
   }
   if (message.quotedId) out.reply_to = message.quotedId
   if (message.reactions.length > 0)
@@ -56,8 +71,9 @@ function presentChat(
   const out: Record<string, string | number | boolean> = {
     jid: chat.jid,
     name: chat.name ?? chat.jid,
-    type: chat.isGroup ? "group" : "direct",
+    type: chat.type,
   }
+  if (chat.phone && chat.phone !== chat.name) out.phone = chat.phone
   if (chat.lastMessageAt) out.last_message_at = formatLocal(chat.lastMessageAt, timeZone)
   if (chat.unreadCount > 0) out.unread = chat.unreadCount
   if (chat.pinned) out.pinned = true
@@ -167,18 +183,23 @@ export function createServer(account: Account, timeZone: string): McpServer {
   )
 
   server.registerTool(
-    "find_contacts",
+    "find_people",
     {
-      title: "Find contacts",
+      title: "Find people",
       description:
-        "Contacts whose saved name, WhatsApp name, business name, JID or phone contains the text. Includes people you have no chat with.",
+        "People whose saved name, WhatsApp name, business name, phone or JID contains the text, including people you have no chat with (e.g. fellow group members).",
       inputSchema: z.object({
         query: z.string().min(1),
         limit: z.number().int().min(1).max(100).default(20),
       }),
       annotations: READ,
     },
-    async ({ query, limit }) => json({ contacts: await account.findContacts(query, limit) }),
+    async ({ query, limit }) => {
+      const people = await account.findPeople(query, limit)
+      return json({
+        people: people.map((person) => withoutNulls({ ...person })),
+      })
+    },
   )
 
   server.registerTool(

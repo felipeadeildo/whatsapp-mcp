@@ -3,35 +3,52 @@ exclude = "^(LICENSE|worker-configuration\\.d\\.ts)$"
 
 [[repos]]
 repo = "builtin"
-hooks = [
-  { id = "trailing-whitespace" },
-  { id = "end-of-file-fixer" },
-  { id = "check-json" },
-  { id = "check-merge-conflict" },
-]
 
-# Run the versions pinned in bun.lock. oxlint runs on the whole project
-# (pass_filenames = false) because type-aware rules and --type-check need the
-# full TypeScript program, not only the staged files.
+[[repos.hooks]]
+id = "trailing-whitespace"
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+
+[[repos.hooks]]
+id = "check-json"
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+
+# The tools below run the versions pinned in bun.lock.
 [[repos]]
 repo = "local"
-hooks = [
-  { id = "oxlint", name = "oxlint", language = "system", entry = "bun run lint:fix", pass_filenames = false, types_or = [
-    "ts",
-    "javascript",
-    "json",
-  ] },
-  { id = "oxfmt", name = "oxfmt", language = "system", entry = "bunx oxfmt --no-error-on-unmatched-pattern", types_or = [
-    "ts",
-    "javascript",
-    "json",
-    "markdown",
-  ] },
-]
 
-[[repos]]
-repo = "local"
-hooks = [
-  { id = "wrangler-types", name = "wrangler types --check", language = "system", entry = "bunx wrangler types --check", pass_filenames = false, files = "^wrangler\\.jsonc$" },
-  { id = "bun-test", name = "bun test", language = "system", entry = "bun test", pass_filenames = false, types_or = ["ts"] },
-]
+# Whole project (pass_filenames = false): type-aware rules and type checking
+# need the full TypeScript program, not only the staged files.
+[[repos.hooks]]
+id = "oxlint"
+name = "oxlint"
+language = "system"
+entry = "bun run lint:fix"
+pass_filenames = false
+types_or = ["ts", "javascript", "json"]
+
+[[repos.hooks]]
+id = "oxfmt"
+name = "oxfmt"
+language = "system"
+entry = "bunx oxfmt --no-error-on-unmatched-pattern"
+types_or = ["ts", "javascript", "json", "markdown"]
+
+[[repos.hooks]]
+id = "wrangler-types"
+name = "wrangler types --check"
+language = "system"
+entry = "bunx wrangler types --check"
+pass_filenames = false
+files = "^wrangler\\.jsonc$"
+
+[[repos.hooks]]
+id = "bun-test"
+name = "bun test"
+language = "system"
+entry = "bun test"
+pass_filenames = false
+types_or = ["ts"]

@@ -18,7 +18,7 @@ import {
   type HostConnectionUpdate,
 } from "@oxidezap/baileyrs/host"
 import { isBoom } from "@oxidezap/baileyrs/lib/Utils/boom.js"
-import type { WAMessageKey } from "@oxidezap/baileyrs/lib/Types/Message.js"
+import { jidNormalizedUser } from "@oxidezap/baileyrs/lib/WABinary/jid-utils.js"
 import { DurableObject } from "cloudflare:workers"
 import { renderSVG } from "uqr"
 import { z } from "zod"
@@ -29,15 +29,16 @@ import {
   type ArchiveStats,
   type ChatListQuery,
   type ChatSummary,
-  type ContactSummary,
   type MessageQuery,
+  type Person,
   type SearchHit,
   type SearchQuery,
 } from "./store/archive"
 import { durableKvStore } from "./store/durable-kv"
 import { fetchWaWebVersion } from "./wa-version"
+import { decodeRaw, type KeyedMessage } from "./whatsapp/raw"
 import { makeSocket, type Socket } from "./whatsapp/socket"
-import { chatOf, syncArchive } from "./whatsapp/sync"
+import { refreshGroupNames, syncArchive } from "./whatsapp/sync"
 import "./wasm"
 
 const HEARTBEAT_MS = 30_000
@@ -46,6 +47,8 @@ const WANTS_CONNECTION = "wants_connection"
 const IMPLICIT_DEDUP_SECONDS = 120
 const EXPLICIT_DEDUP_SECONDS = 24 * 60 * 60
 const HISTORY_WAIT_MS = 20_000
+const GROUPS_REFRESHED_AT = "groups_refreshed_at"
+const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
 
 /** The status protocol's entry in a USync result, typed `unknown` by the library. */
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })
@@ -97,6 +100,8 @@ export interface GroupInfo {
   readonly restricted: boolean
   readonly participants: readonly {
     readonly jid: string
+    readonly name: string | null
+    readonly phone: string | null
     readonly admin: "admin" | "superadmin" | null
   }[]
 }
@@ -104,8 +109,17 @@ export interface GroupInfo {
 export interface Profile {
   readonly jid: string
   readonly name: string | null
+  readonly phone: string | null
   readonly about: string | null
   readonly pictureUrl: string | null
+}
+
+async function digest(parts: readonly string[]): Promise<string> {
+  const bytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(parts.join("\u0000")),
+  )
+  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
 export class WhatsAppAccount extends DurableObject<Env> {
@@ -139,10 +153,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   status(): AccountStatus {
+    const user = this.socket?.user
     return {
       state: this.state,
-      me: this.socket?.user?.id ? chatOf(this.socket.user.id) : null,
-      myName: this.socket?.user?.name ?? null,
+      me: user?.id ? jidNormalizedUser(user.id) : null,
+      myName: user?.name || null,
       qrSvg: this.state === "pairing" ? this.qrSvg : null,
       lastError: this.lastError,
       startedAt: this.startedAt,
@@ -167,8 +182,17 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.archive.findChats(text, limit)
   }
 
+  findPeople(text: string, limit: number): Person[] {
+    return this.archive.findPeople(text, limit)
+  }
+
   getMessages(query: MessageQuery): ArchivedMessage[] {
-    return this.archive.getMessages({ ...query, chatJid: this.resolveChat(query.chatJid) })
+    const senderJid = query.senderJid === undefined ? undefined : this.resolveChat(query.senderJid)
+    return this.archive.getMessages({
+      ...query,
+      chatJid: this.resolveChat(query.chatJid),
+      senderJid,
+    })
   }
 
   getMessageContext(chatJid: string, id: string, around: number): ArchivedMessage[] {
@@ -177,11 +201,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   searchMessages(query: SearchQuery): SearchHit[] {
     const chatJid = query.chatJid === undefined ? undefined : this.resolveChat(query.chatJid)
-    return this.archive.searchMessages({ ...query, chatJid })
-  }
-
-  findContacts(text: string, limit: number): ContactSummary[] {
-    return this.archive.findContacts(text, limit)
+    const senderJid = query.senderJid === undefined ? undefined : this.resolveChat(query.senderJid)
+    return this.archive.searchMessages({ ...query, chatJid, senderJid })
   }
 
   // Actions (socket)
@@ -189,26 +210,16 @@ export class WhatsAppAccount extends DurableObject<Env> {
   async send(request: SendRequest): Promise<SendResult> {
     const socket = this.connectedSocket()
     const chatJid = this.resolveChat(request.to)
+    const mentions = (request.mentions ?? []).map((jid) => this.resolveChat(jid))
     const requestKey =
       request.idempotencyKey ??
-      (await digest([chatJid, request.text, request.replyTo ?? "", ...(request.mentions ?? [])]))
+      (await digest([chatJid, request.text, request.replyTo ?? "", ...mentions]))
     const window = request.idempotencyKey ? EXPLICIT_DEDUP_SECONDS : IMPLICIT_DEDUP_SECONDS
     const previous = this.archive.findSend(requestKey, window)
     if (previous) return { chatJid, id: previous, deduplicated: true }
 
-    const quoted = request.replyTo ? this.archive.getMessage(chatJid, request.replyTo) : null
-    if (request.replyTo && !quoted)
-      throw new Error(`message ${request.replyTo} not found in ${chatJid}`)
-    const sent = await socket.sendMessage(
-      chatJid,
-      {
-        text: request.text,
-        mentions: (request.mentions ?? []).map((jid) => this.resolveChat(jid)),
-      },
-      quoted
-        ? { quoted: { key: keyOf(quoted), message: { conversation: quoted.text ?? "" } } }
-        : undefined,
-    )
+    const quoted = request.replyTo ? this.rawMessage(chatJid, request.replyTo) : undefined
+    const sent = await socket.sendMessage(chatJid, { text: request.text, mentions }, { quoted })
     const id = sent?.key.id
     if (!id) throw new Error("WhatsApp did not return a message id")
     this.archive.rememberSend(requestKey, id)
@@ -217,48 +228,41 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   async react(chatJid: string, messageId: string, emoji: string): Promise<void> {
     const socket = this.connectedSocket()
-    const message = this.requireMessage(chatJid, messageId)
-    await socket.sendMessage(message.chatJid, { react: { text: emoji, key: keyOf(message) } })
-    this.archive.saveReaction(message.chatJid, message.id, null, emoji, Date.now())
+    const jid = this.resolveChat(chatJid)
+    const { key } = this.rawMessage(jid, messageId)
+    await socket.sendMessage(jid, { react: { text: emoji, key } })
+    this.archive.saveReaction(jid, messageId, null, emoji, Date.now())
   }
 
   async editMessage(chatJid: string, messageId: string, text: string): Promise<void> {
     const socket = this.connectedSocket()
-    const message = this.requireMessage(chatJid, messageId)
-    if (!message.fromMe) throw new Error("only messages sent by this account can be edited")
-    await socket.sendMessage(message.chatJid, { text, edit: keyOf(message) })
-    this.archive.applyEdit(message.chatJid, message.id, text)
+    const jid = this.resolveChat(chatJid)
+    const { key } = this.rawMessage(jid, messageId)
+    if (!key.fromMe) throw new Error("only messages sent by this account can be edited")
+    await socket.sendMessage(jid, { text, edit: key })
+    this.archive.applyEdit(jid, messageId, text)
   }
 
   async deleteMessage(chatJid: string, messageId: string): Promise<void> {
     const socket = this.connectedSocket()
-    const message = this.requireMessage(chatJid, messageId)
-    await socket.sendMessage(message.chatJid, { delete: keyOf(message) })
-    this.archive.applyRevoke(message.chatJid, message.id)
+    const jid = this.resolveChat(chatJid)
+    const { key } = this.rawMessage(jid, messageId)
+    await socket.sendMessage(jid, { delete: key })
+    this.archive.applyRevoke(jid, messageId)
   }
 
   /** Marks the chat read up to its latest message, as opening it on the phone does. */
   async markRead(chatJid: string): Promise<number> {
     const socket = this.connectedSocket()
     const jid = this.resolveChat(chatJid)
-    const chat = this.archive.getChat(jid)
-    const unread = Math.max(chat?.unreadCount ?? 0, 1)
-    const incoming = this.archive
-      .getMessages({ chatJid: jid, limit: unread })
-      .filter((message) => !message.fromMe)
-    if (incoming.length > 0) await socket.readMessages(incoming.map(keyOf))
-    this.archive.saveChats([
-      {
-        jid,
-        name: null,
-        unreadCount: 0,
-        lastMessageAt: null,
-        archived: null,
-        pinned: null,
-        mutedUntil: null,
-      },
-    ])
-    return incoming.length
+    const unread = Math.max(this.archive.getChat(jid)?.unreadCount ?? 0, 1)
+    const keys = this.archive
+      .latestIncoming(jid, unread)
+      .flatMap(({ id }) => this.archive.getRaw(jid, id) ?? [])
+      .map((raw) => decodeRaw(raw).key)
+    if (keys.length > 0) await socket.readMessages(keys)
+    this.archive.saveChats([{ jid, unreadCount: 0 }])
+    return keys.length
   }
 
   async checkNumbers(phones: readonly string[]): Promise<NumberCheck[]> {
@@ -273,20 +277,25 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   async getGroupInfo(groupJid: string): Promise<GroupInfo> {
     const socket = this.connectedSocket()
-    const group = await socket.groupMetadata(this.resolveChat(groupJid))
+    const group = await socket.groupMetadata(jidNormalizedUser(groupJid))
     return {
       jid: group.id,
       subject: group.subject,
       description: group.desc ?? null,
-      owner: group.owner ?? null,
+      owner: group.ownerPn ?? group.owner ?? null,
       createdAt: group.creation ?? null,
       size: group.size ?? group.participants.length,
       announceOnly: group.announce ?? false,
       restricted: group.restrict ?? false,
-      participants: group.participants.map((participant) => ({
-        jid: participant.phoneNumber ?? participant.id,
-        admin: participant.admin ?? null,
-      })),
+      participants: group.participants.map((participant) => {
+        const person = this.archive.getPerson(participant.id)
+        return {
+          jid: person?.jid ?? participant.id,
+          name: person?.name ?? participant.notify ?? null,
+          phone: person?.phone ?? null,
+          admin: participant.admin ?? null,
+        }
+      }),
     }
   }
 
@@ -298,36 +307,32 @@ export class WhatsAppAccount extends DurableObject<Env> {
       socket.profilePictureUrl(target, "image").catch(() => undefined),
       socket.fetchStatus(target).catch(() => undefined),
     ])
-    const about = AboutResult.safeParse(statuses?.[0]).data?.status.status ?? null
-    const name =
-      this.archive.getChat(target)?.name ?? this.archive.findContacts(target, 1)[0]?.name ?? null
+    const person = this.archive.getPerson(target)
     return {
       jid: target,
-      name,
-      about,
+      name: person?.name ?? null,
+      phone: person?.phone ?? null,
+      about: AboutResult.safeParse(statuses?.[0]).data?.status.status ?? null,
       pictureUrl: picture ?? null,
     }
   }
 
   /**
-   * Asks the phone for messages older than the oldest archived one and waits
-   * briefly for them to arrive. Returns how many new messages were stored.
+   * Asks the phone for messages older than the oldest one archived for a chat
+   * and waits briefly for them to arrive. Returns how many new messages were stored.
    */
   async loadOlderMessages(chatJid: string, count: number): Promise<number> {
     const socket = this.connectedSocket()
     const jid = this.resolveChat(chatJid)
     const oldest = this.archive.oldestMessage(jid)
     if (!oldest) throw new Error(`no archived messages in ${jid} to page back from`)
+    const { key } = this.rawMessage(jid, oldest.id)
     const before = this.archive.stats().messages
     const arrived = new Promise<void>((resolve) => {
       this.historyWaiters.set(jid, resolve)
       setTimeout(resolve, HISTORY_WAIT_MS)
     })
-    await socket.fetchMessageHistory(
-      count,
-      { remoteJid: jid, id: oldest.id, fromMe: oldest.fromMe },
-      oldest.sentAt,
-    )
+    await socket.fetchMessageHistory(count, key, oldest.sentAt)
     await arrived
     this.historyWaiters.delete(jid)
     return this.archive.stats().messages - before
@@ -373,11 +378,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (update.qr) {
       this.state = "pairing"
       this.qrSvg = renderSVG(update.qr)
+      this.lastError = null
     }
     if (update.connection === "open") {
       this.state = "open"
       this.qrSvg = null
       this.lastError = null
+      this.ctx.waitUntil(this.refreshGroups())
     } else if (update.connection === "close") {
       // `close` is terminal for this socket; the next heartbeat builds a new one,
       // unless the device was unlinked.
@@ -393,8 +400,20 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
+  /** Refreshes group subjects at most every few hours; reconnects alone do not trigger it. */
+  private async refreshGroups(): Promise<void> {
+    const last = (await this.ctx.storage.get<number>(GROUPS_REFRESHED_AT)) ?? 0
+    if (!this.socket || Date.now() - last < GROUP_REFRESH_MS) return
+    await this.ctx.storage.put(GROUPS_REFRESHED_AT, Date.now())
+    await refreshGroupNames(this.socket, this.archive).catch((error: Error) => {
+      console.warn("group refresh failed:", error.message)
+    })
+  }
+
   private forgetDevice(): void {
     this.socket = null
+    // A new pairing starts from an empty archive, so it should not wait for the throttle.
+    void this.ctx.storage.delete(GROUPS_REFRESHED_AT)
     this.store.clear()
     this.archive.clear()
     this.state = "logged_out"
@@ -403,40 +422,28 @@ export class WhatsAppAccount extends DurableObject<Env> {
   // Helpers
 
   private connectedSocket(): Socket {
-    if (!this.socket || this.state !== "open")
+    if (!this.socket || this.state !== "open") {
       throw new Error(`WhatsApp is not connected (${this.state})`)
+    }
     return this.socket
   }
 
-  /** Accepts a JID or a phone number with country code, returns a normalized JID. */
+  /** Accepts a JID or a phone number with country code; returns the JID it is archived under. */
   private resolveChat(to: string): string {
-    if (to.includes("@")) return chatOf(to) ?? to
+    if (to.includes("@")) return this.archive.canonical(jidNormalizedUser(to))
     const digits = to.replace(/\D/g, "")
     if (!digits) throw new Error(`not a JID or phone number: ${to}`)
-    return `${digits}@s.whatsapp.net`
+    return this.archive.canonical(`${digits}@s.whatsapp.net`)
   }
 
-  private requireMessage(chatJid: string, messageId: string): ArchivedMessage {
-    const jid = this.resolveChat(chatJid)
-    const message = this.archive.getMessage(jid, messageId)
-    if (!message) throw new Error(`message ${messageId} not found in ${jid}`)
-    return message
+  /**
+   * The archived message as WhatsApp sent it. Its key keeps the chat and sender
+   * JIDs the message was addressed with, which is what edits, reactions,
+   * receipts and history requests must reference.
+   */
+  private rawMessage(chatJid: string, messageId: string): KeyedMessage {
+    const raw = this.archive.getRaw(chatJid, messageId)
+    if (!raw) throw new Error(`message ${messageId} not found in ${chatJid}`)
+    return decodeRaw(raw)
   }
-}
-
-function keyOf(message: ArchivedMessage): WAMessageKey {
-  return {
-    remoteJid: message.chatJid,
-    id: message.id,
-    fromMe: message.fromMe,
-    participant: message.chatJid.endsWith("@g.us") ? (message.senderJid ?? undefined) : undefined,
-  }
-}
-
-async function digest(parts: readonly string[]): Promise<string> {
-  const bytes = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(parts.join("\u0000")),
-  )
-  return Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
