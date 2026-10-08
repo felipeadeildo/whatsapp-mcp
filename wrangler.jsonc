@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whatsapp-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "secrets": { "required": ["API_KEY"] },
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNT", "class_name": "WhatsAppAccount" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WhatsAppAccount"] }],
+}

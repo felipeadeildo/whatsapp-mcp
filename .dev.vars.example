@@ -1,0 +1,2 @@
+# Bearer token required by every API call. Generate with: openssl rand -hex 32
+API_KEY=change-me

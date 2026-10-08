@@ -1,0 +1,36 @@
+minimum_prek_version = "0.5.0"
+exclude = "^(LICENSE|worker-configuration\\.d\\.ts)$"
+
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "check-json" },
+  { id = "check-merge-conflict" },
+]
+
+# Run the versions pinned in bun.lock. oxlint runs on the whole project
+# (pass_filenames = false) because type-aware rules and --type-check need the
+# full TypeScript program, not only the staged files.
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "oxlint", name = "oxlint", language = "system", entry = "bun run lint:fix", pass_filenames = false, types_or = [
+    "ts",
+    "javascript",
+    "json",
+  ] },
+  { id = "oxfmt", name = "oxfmt", language = "system", entry = "bunx oxfmt --no-error-on-unmatched-pattern", types_or = [
+    "ts",
+    "javascript",
+    "json",
+    "markdown",
+  ] },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "wrangler-types", name = "wrangler types --check", language = "system", entry = "bunx wrangler types --check", pass_filenames = false, files = "^wrangler\\.jsonc$" },
+]
