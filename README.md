@@ -16,7 +16,7 @@
 
 whatsapp-mcp lets an AI assistant like Claude read your WhatsApp chats, search them and send messages for you. It connects to your account the same way [WhatsApp Web](https://faq.whatsapp.com/1317564962315842) does, as a linked device, and keeps a searchable copy of your chats.
 
-It speaks [MCP](https://modelcontextprotocol.io/introduction), the standard way AI apps connect to tools, so it works with Claude Code, Cursor and other MCP clients. It runs on your own [Cloudflare](https://www.cloudflare.com) account, so your messages stay with you.
+It speaks [MCP](https://modelcontextprotocol.io/introduction), the standard way AI apps connect to tools, so it works with Claude, ChatGPT, Claude Code, Cursor and other MCP clients. It runs on your own [Cloudflare](https://www.cloudflare.com) account, so your messages stay with you.
 
 Once it is set up, you can ask things like:
 
@@ -32,14 +32,14 @@ You need a [Cloudflare account](https://dash.cloudflare.com/sign-up), a [GitHub 
 
 Click **Deploy to Cloudflare** above. Cloudflare copies this project to your GitHub, builds it and puts it online at an address like `https://whatsapp-mcp.<your-name>.workers.dev`.
 
-During the setup it asks for an `API_KEY`. That is a password you make up for your server. Generate a strong one in a terminal with `openssl rand -hex 32`, or use a password manager, and keep it safe. Anyone who has it can read and send your messages.
+During the setup it asks for a `SECRET`. That is the password of your server, at least 16 characters. Generate a strong one in a terminal with `openssl rand -hex 32`, or use a password manager, and keep it safe. Anyone who has it can read and send your messages.
 
 ### 2. Link your WhatsApp
 
-Open this address in your browser, with your API key after the `#`:
+Open this address in your browser and sign in with your `SECRET`:
 
 ```
-https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal#<API_KEY>
+https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal
 ```
 
 Select **Link WhatsApp**. On your phone, open WhatsApp, go to **Settings → Linked devices → Link a device** and point the camera at the code. The page then counts your chats as they arrive.
@@ -52,15 +52,19 @@ Select **Link WhatsApp**. On your phone, open WhatsApp, go to **Settings → Lin
 
 ### 3. Connect your AI assistant
 
-The pairing page shows the command for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp) with a copy button:
+Add this address as a custom connector in Claude or ChatGPT, or as a remote MCP server in any other client:
 
-```sh
-claude mcp add --transport http whatsapp \
-  https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp \
-  --header "Authorization: Bearer <API_KEY>"
+```
+https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
 ```
 
-Other MCP clients need the same address and an `Authorization: Bearer <API_KEY>` header. See your client's documentation for where to put them.
+The app opens your server in the browser. Sign in with your `SECRET` and select **Allow**. In [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp) that is:
+
+```sh
+claude mcp add --transport http whatsapp https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
+```
+
+Scripts and clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>` instead.
 
 ## What your assistant can do
 
@@ -91,7 +95,7 @@ Tools that send or change something tell your assistant so, and most assistants 
 
 ```mermaid
 flowchart LR
-  agent["AI assistant"] -- "MCP + API key" --> worker["Worker"]
+  agent["AI assistant"] -- "MCP + OAuth" --> worker["Worker"]
   worker -- "RPC" --> account
   subgraph account["Durable Object, one per WhatsApp account"]
     socket["WhatsApp session<br/>whatsapp-rust in WASM"]
@@ -107,12 +111,15 @@ WhatsApp sends your recent history once, when you link, and the archive keeps ev
 
 ## Configuration
 
-| Name       | Kind     | Purpose                                                       |
-| ---------- | -------- | ------------------------------------------------------------- |
-| `API_KEY`  | Secret   | The password every request needs                              |
-| `TIMEZONE` | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset |
+| Name        | Kind     | Purpose                                                               |
+| ----------- | -------- | --------------------------------------------------------------------- |
+| `SECRET`    | Secret   | The password of your server, at least 16 characters                   |
+| `AUTH_MODE` | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset |
+| `TIMEZONE`  | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset         |
 
-Change `TIMEZONE` in `wrangler.jsonc`, or pass `--var TIMEZONE:<zone>` to `wrangler deploy`. The pairing page also uses a small REST API under `/accounts/:id`: `status`, `start`, `send` and `logout`.
+With `oauth`, an app connects after you sign in with `SECRET` in the browser and allow it. With `api_key`, clients send `Authorization: Bearer <SECRET>` on every request. The pairing page asks for `SECRET` in every mode, and allows five attempts per minute.
+
+Change the variables in `wrangler.jsonc`, or pass `--var TIMEZONE:<zone>` to `wrangler deploy`. OAuth grants live in a KV namespace that the first deploy creates. The pairing page also uses a small REST API under `/accounts/:id`: `status`, `start`, `send` and `logout`.
 
 ## Costs
 
@@ -137,7 +144,7 @@ See [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing
 
 ## Is it safe?
 
-Your session and your messages stay in your Cloudflare account. The server talks only to WhatsApp, and only someone with your API key can use it.
+Your session and your messages stay in your Cloudflare account. The server talks only to WhatsApp, and only someone who knows your `SECRET` can use it or allow an app in.
 
 This is an unofficial WhatsApp client, not affiliated with WhatsApp or Meta, and WhatsApp can ban accounts that use one. Link a number you can afford to lose, and keep your assistant asking before it sends messages.
 
@@ -147,12 +154,12 @@ You need [Bun](https://bun.sh). [Wrangler](https://developers.cloudflare.com/wor
 
 ```sh
 bun install
-printf 'API_KEY=%s\nTIMEZONE=UTC\n' "$(openssl rand -hex 32)" > .dev.vars
-bun run dev     # http://localhost:8787/accounts/dev#<API_KEY>
+printf 'SECRET=%s\n' "$(openssl rand -hex 32)" > .dev.vars   # see .dev.vars.example
+bun run dev     # http://localhost:8787/accounts/dev
 bun run check   # types, lint, format and tests
 ```
 
-To deploy from your machine, run `bunx wrangler secret put API_KEY` once and then `bun run deploy`.
+To deploy from your machine, run `bunx wrangler secret put SECRET` once and then `bun run deploy`.
 
 Built on [baileyrs](https://github.com/oxidezap/baileyrs) and [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust). Message rendering and identity rules follow [mautrix-whatsapp](https://github.com/mautrix/whatsapp). Licensed under [GPL-3.0](LICENSE).
 
