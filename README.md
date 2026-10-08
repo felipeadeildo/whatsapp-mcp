@@ -18,11 +18,11 @@ whatsapp-mcp lets an AI assistant like Claude read your WhatsApp chats, search t
 
 It speaks [MCP](https://modelcontextprotocol.io/introduction), the standard way AI apps connect to tools, so it works with Claude, ChatGPT, Claude Code, Cursor and other MCP clients. It runs on your own [Cloudflare](https://www.cloudflare.com) account, so your messages stay with you.
 
-Once it is set up, you can ask things like:
+Once it is set up, you ask in plain words and your assistant calls the tools for you:
 
-- "What did Marina say about the trip?"
-- "Which chats have unread messages since yesterday?"
-- "Reply to the family group saying I'll be late."
+<div align="center">
+<img src="docs/use-cases.svg" alt="Three examples. You ask what Marina said about the trip, the assistant calls find_people and search_messages, and you get her message. You ask which chats are unread since yesterday, it calls list_chats, and you get Family, Book club and Marina with their counts. You ask it to tell the family group you'll be late, it calls find_chats and send_message, and the message is delivered once." width="820">
+</div>
 
 ## Get started
 
@@ -166,7 +166,7 @@ Built on [baileyrs](https://github.com/oxidezap/baileyrs) and [whatsapp-rust](ht
 <br>
 
 <div align="center">
-<a href="https://adeildo.dev"><img src="docs/cat.svg" width="44" alt="A cat asleep on a laptop, the adeildo.dev logo"></a>
+<a href="https://adeildo.dev"><img src="https://adeildo.dev/assets/images/cat.svg" width="44" alt="A cat asleep on a laptop, the adeildo.dev logo"></a>
 <br>
 <sub>Brought to you by <a href="https://adeildo.dev">adeildo.dev</a></sub>
 </div>

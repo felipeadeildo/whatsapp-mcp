@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="642" viewBox="0 0 900 642" role="img" aria-labelledby="title desc">
+  <title id="title">Things you can ask your AI assistant</title>
+  <desc id="desc">You ask &quot;What did Marina say about the trip?&quot;, the assistant calls find_people(query: &quot;Marina&quot;) then search_messages(query: &quot;trip&quot;, from: marina), and you get: Marina, Sep 12: &quot;Flights are booked, we land on the 14th.&quot; You ask &quot;Which chats are unread since yesterday?&quot;, the assistant calls list_chats(unread_only: true), and you get: Family (12), Book club (5) and Marina (3) You ask &quot;Reply to the family group saying I&#x27;ll be late.&quot;, the assistant calls find_chats(query: &quot;family&quot;) then send_message(to: family, text: &quot;Running late!&quot;), and you get: Delivered to Family, and never twice on a retry</desc>
+  <style>
+    .ask { font: 500 20px -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: #dce9e3; }
+    .tool { font: 13.5px ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace; fill: #dce9e3; white-space: pre; }
+    .fn { fill: #3cc488; font-weight: 600; }
+    .key { fill: #8ba69d; }
+    .str { fill: #e0a43a; }
+    .value { fill: #dce9e3; }
+    .punct { fill: #8ba69d; fill-opacity: 0.75; }
+    .note { font: 15px -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: #dce9e3; }
+    .who { font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: #8ba69d; }
+    .bubble { fill: #11201b; stroke: #24372f; stroke-width: 1.5; }
+    .rail { stroke: #3cc488; stroke-opacity: 0.6; stroke-width: 1.5; stroke-dasharray: 3 5; stroke-linecap: round; }
+    .arrow { fill: none; stroke: #3cc488; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .divider { stroke: #24372f; stroke-width: 1.5; }
+  </style>
+  <rect width="900" height="642" rx="20" fill="#0a1512"/>
+  <text x="40" y="48" class="who" text-anchor="start">You ask</text>
+  <path class="bubble" d="M58 58 H542 A18 18 0 0 1 560 76 V187 A18 18 0 0 1 542 205 H45 A5 5 0 0 1 40 200 V76 A18 18 0 0 1 58 58 Z"/>
+  <text x="64" y="98" class="ask">What did Marina say about the trip?</text>
+  <line class="divider" x1="64" y1="116" x2="536" y2="116"/>
+  <text x="64" y="140" class="who">Your assistant calls</text>
+  <text x="64" y="162" class="tool"><tspan class="fn">find_people</tspan><tspan class="punct">(</tspan><tspan class="key">query</tspan><tspan class="punct">:</tspan> <tspan class="str">&quot;Marina&quot;</tspan><tspan class="punct">)</tspan></text>
+  <text x="64" y="183" class="tool"><tspan class="fn">search_messages</tspan><tspan class="punct">(</tspan><tspan class="key">query</tspan><tspan class="punct">:</tspan> <tspan class="str">&quot;trip&quot;</tspan><tspan class="punct">,</tspan> <tspan class="key">from</tspan><tspan class="punct">:</tspan> <tspan class="value">marina</tspan><tspan class="punct">)</tspan></text>
+  <line class="rail" x1="574" y1="131.5" x2="606" y2="131.5"/>
+  <path class="arrow" d="M601 125.5 L608 131.5 L601 137.5"/>
+  <text x="622" y="99.5" class="who" text-anchor="start">You get</text>
+  <text x="622" y="126.5" class="note" text-anchor="start">Marina, Sep 12: &quot;Flights are</text>
+  <text x="622" y="147.5" class="note" text-anchor="start">booked, we land on the 14th.&quot;</text>
+  <text x="860" y="257" class="who" text-anchor="end">You ask</text>
+  <path class="bubble" d="M358 267 H842 A18 18 0 0 1 860 285 V388 A5 5 0 0 1 855 393 H358 A18 18 0 0 1 340 375 V285 A18 18 0 0 1 358 267 Z"/>
+  <text x="364" y="307" class="ask">Which chats are unread since yesterday?</text>
+  <line class="divider" x1="364" y1="325" x2="836" y2="325"/>
+  <text x="364" y="349" class="who">Your assistant calls</text>
+  <text x="364" y="371" class="tool"><tspan class="fn">list_chats</tspan><tspan class="punct">(</tspan><tspan class="key">unread_only</tspan><tspan class="punct">:</tspan> <tspan class="value">true</tspan><tspan class="punct">)</tspan></text>
+  <line class="rail" x1="326" y1="330.0" x2="294" y2="330.0"/>
+  <path class="arrow" d="M299 324.0 L292 330.0 L299 336.0"/>
+  <text x="278" y="298.0" class="who" text-anchor="end">You get</text>
+  <text x="278" y="325.0" class="note" text-anchor="end">Family (12), Book club (5)</text>
+  <text x="278" y="346.0" class="note" text-anchor="end">and Marina (3)</text>
+  <text x="40" y="445" class="who" text-anchor="start">You ask</text>
+  <path class="bubble" d="M58 455 H542 A18 18 0 0 1 560 473 V584 A18 18 0 0 1 542 602 H45 A5 5 0 0 1 40 597 V473 A18 18 0 0 1 58 455 Z"/>
+  <text x="64" y="495" class="ask">Reply to the family group saying I&#x27;ll be late.</text>
+  <line class="divider" x1="64" y1="513" x2="536" y2="513"/>
+  <text x="64" y="537" class="who">Your assistant calls</text>
+  <text x="64" y="559" class="tool"><tspan class="fn">find_chats</tspan><tspan class="punct">(</tspan><tspan class="key">query</tspan><tspan class="punct">:</tspan> <tspan class="str">&quot;family&quot;</tspan><tspan class="punct">)</tspan></text>
+  <text x="64" y="580" class="tool"><tspan class="fn">send_message</tspan><tspan class="punct">(</tspan><tspan class="key">to</tspan><tspan class="punct">:</tspan> <tspan class="value">family</tspan><tspan class="punct">,</tspan> <tspan class="key">text</tspan><tspan class="punct">:</tspan> <tspan class="str">&quot;Running late!&quot;</tspan><tspan class="punct">)</tspan></text>
+  <line class="rail" x1="574" y1="528.5" x2="606" y2="528.5"/>
+  <path class="arrow" d="M601 522.5 L608 528.5 L601 534.5"/>
+  <text x="622" y="496.5" class="who" text-anchor="start">You get</text>
+  <text x="622" y="523.5" class="note" text-anchor="start">Delivered to Family, and</text>
+  <text x="622" y="544.5" class="note" text-anchor="start">never twice on a retry</text>
+</svg>
