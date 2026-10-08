@@ -33,4 +33,5 @@ hooks = [
 repo = "local"
 hooks = [
   { id = "wrangler-types", name = "wrangler types --check", language = "system", entry = "bunx wrangler types --check", pass_filenames = false, files = "^wrangler\\.jsonc$" },
+  { id = "bun-test", name = "bun test", language = "system", entry = "bun test", pass_filenames = false, types_or = ["ts"] },
 ]

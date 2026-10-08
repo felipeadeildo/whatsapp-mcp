@@ -5,6 +5,8 @@
   "compatibility_date": "2026-10-08",
   "observability": { "enabled": true },
   "secrets": { "required": ["API_KEY"] },
+  // IANA zone the tools show and read times in.
+  "vars": { "TIMEZONE": "UTC" },
   "durable_objects": {
     "bindings": [{ "name": "ACCOUNT", "class_name": "WhatsAppAccount" }],
   },
