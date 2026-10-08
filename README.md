@@ -1,495 +1,218 @@
 <div align="center">
 
-# WhatsApp MCP Server
+# whatsapp-mcp
 
-**Give AI assistants access to your WhatsApp conversations**
+Give your AI agents your WhatsApp.
 
-[![Go Version](https://img.shields.io/badge/Go-1.25%2B-00ADD8?style=flat&logo=go)](https://go.dev/)
-[![MCP Protocol](https://img.shields.io/badge/MCP-Compatible-7C3AED?style=flat)](https://modelcontextprotocol.io)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg?style=flat)](LICENSE)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/felipeadeildo/whatsapp-mcp)
+[![MCP server](https://img.shields.io/badge/MCP-server-3cc488?style=flat-square)](https://modelcontextprotocol.io) [![Runs on Cloudflare Workers](https://img.shields.io/badge/runs_on-Cloudflare_Workers-f38020?style=flat-square&logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/durable-objects/) [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-8ba69d?style=flat-square)](LICENSE)
 
-*Built with [whatsmeow](https://github.com/tulir/whatsmeow) and [mcp-go](https://github.com/mark3labs/mcp-go)*
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/felipeadeildo/whatsapp-mcp)
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [MCP Integration](#-mcp-integration)
+[Deploy](#deploy) &nbsp;|&nbsp; [Link your WhatsApp](#link-your-whatsapp) &nbsp;|&nbsp; [Connect your agent](#connect-your-agent) &nbsp;|&nbsp; [Tools](#tools)
+
+<br>
+
+<img src="docs/pairing.png" alt="Pairing page with a QR code inside a camera viewfinder and the three steps to link a device" width="820">
 
 </div>
 
-## 🎯 What is This?
+An [MCP](https://modelcontextprotocol.io) server on Cloudflare that links to your account the way WhatsApp Web does, keeps a searchable archive of your chats, and lets agents read, search and send messages. Each WhatsApp account gets its own Durable Object, and there is no server for you to run.
 
-A **Model Context Protocol (MCP) server** that bridges WhatsApp and AI assistants like Claude. It exposes your WhatsApp messages through standardized MCP tools, prompts, and resources - allowing AI to read, search, and send messages on your behalf.
+Once linked, ask your agent things like:
 
-**The Vision:** Let AI handle your WhatsApp conversations intelligently, with full context and natural language understanding.
+- "What did Marina say about the trip?"
+- "Which chats have unread messages since yesterday, and what do they want from me?"
+- "Find the address João sent me in March."
+- "Reply to the last message in the family group saying I'll be late."
 
-```
-You: "Summarize what João said about the budget meeting"
-AI:  *searches all your chats* → "João mentioned in the Tech Team group..."
-
-You: "Reply to Maria's last message and schedule lunch"
-AI:  *reads context, sends reply* → "Sent! I've proposed Thursday at noon"
-```
-
-## ✨ Features
-
-### Core Capabilities
-
-- **📱 Full WhatsApp Integration** - Connect to WhatsApp Web using your existing account
-- **💾 Local-First Storage** - All messages stored in SQLite, synced in real-time
-- **🔍 Powerful Search** - Pattern matching, cross-chat queries, sender filtering
-- **⏱️ Timezone Support** - Messages displayed in your local timezone
-- **📥 On-Demand Loading** - Fetch older messages from WhatsApp servers as needed
-- **🔐 Secure by Design** - API key authentication, local data storage, HTTPS ready
-
-### MCP Features
-
-This server implements the full MCP specification with:
-
-- **7 Tools** for WhatsApp operations
-- **4 Prompts** for common workflows
-- **4 Resources** for interactive guides
-- **Server Instructions** for optimal AI interactions
-
-#### Tools
-
-| Tool | Purpose | Highlights |
-|------|---------|-----------|
-| `list_chats` | Browse conversations | Ordered by recent activity |
-| `get_chat_messages` | Read specific chat | Pagination, sender filtering |
-| `search_messages` | Search across all chats | Pattern matching, wildcards |
-| `find_chat` | Locate chat by name | Fuzzy search support |
-| `send_message` | Send WhatsApp messages | To any chat or group |
-| `load_more_messages` | Fetch older history | On-demand from servers |
-| `get_my_info` | Get your profile info | JID, name, status, picture |
-| `check_numbers` | Check numbers are on WhatsApp | Up to 50 per call, read-only |
-
-#### Prompts
-
-Pre-built workflows that guide AI assistants:
-
-- **`search_person_messages`** - Find ALL messages from someone across all chats
-- **`get_context_about_person`** - Comprehensive analysis of someone's messages
-- **`analyze_conversation`** - Summarize recent chat activity
-- **`search_keyword`** - Find specific topics across conversations
-
-#### Resources
-
-Interactive documentation embedded in the MCP server:
-
-- **Cross-Chat Search Guide** - Master advanced search workflows
-- **Workflow Guide** - Common operations and best practices
-- **JID Format Guide** - Understanding WhatsApp identifiers
-- **Search Patterns Guide** - Wildcards and pattern matching
-
-## 🏗️ Architecture
+## How it works
 
 ```mermaid
-graph TB
-    subgraph "AI Client"
-        A[AI Assistant <br/> e.g., Claude Web]
-    end
-
-    subgraph "WhatsApp MCP Server"
-        B[MCP HTTP Server :8080]
-        C[MCP Layer]
-        D[WhatsApp Client]
-        E[(SQLite Database)]
-
-        B -->|/mcp endpoint| C
-        B -->|/health| B
-
-        C -->|Tools| C1[list_chats<br/>get_chat_messages<br/>search_messages<br/>find_chat<br/>send_message<br/>load_more_messages<br/>get_my_info<br/>check_numbers]
-        C -->|Prompts| C2[search_person_messages<br/>get_context_about_person<br/>analyze_conversation<br/>search_keyword]
-        C -->|Resources| C3[Workflow Guides<br/>Search Patterns<br/>JID Format]
-
-        C1 -.->|read/write| E
-        C1 -.->|send| D
-
-        D -->|sync messages| E
-        D <-->|WhatsApp Protocol| F
-    end
-
-    subgraph "WhatsApp"
-        F[WhatsApp Servers]
-    end
-
-    A <-->|Streamable HTTP<br/>API Key Auth| B
-
-    style A fill:#4A90E2,stroke:#2E5C8A,stroke-width:2px,color:#000
-    style B fill:#F5A623,stroke:#C67E1B,stroke-width:2px,color:#000
-    style C fill:#9013FE,stroke:#6B0FC7,stroke-width:2px,color:#fff
-    style C1 fill:#50E3C2,stroke:#3AAA94,stroke-width:2px,color:#000
-    style C2 fill:#BD10E0,stroke:#9012FE,stroke-width:2px,color:#fff
-    style C3 fill:#F5A623,stroke:#C67E1B,stroke-width:2px,color:#000
-    style D fill:#50E3C2,stroke:#3AAA94,stroke-width:2px,color:#000
-    style E fill:#E85D75,stroke:#B5475C,stroke-width:2px,color:#fff
-    style F fill:#25D366,stroke:#1DA851,stroke-width:2px,color:#000
+flowchart LR
+  agent["AI agent<br/>Claude Code, Cursor, …"] -- "MCP over HTTP<br/>Bearer API key" --> worker["Worker"]
+  browser["Pairing page"] -- "REST" --> worker
+  worker -- "RPC" --> account
+  subgraph account["Durable Object, one per WhatsApp account"]
+    socket["WhatsApp session<br/>whatsapp-rust in WASM"]
+    archive[("SQLite archive<br/>messages, names, full-text search")]
+    socket --> archive
+  end
+  socket <-- "WebSocket" --> whatsapp["WhatsApp"]
 ```
 
-### How It Works
+The WhatsApp session runs inside the Durable Object, which holds the outbound WebSocket to WhatsApp. It uses [baileyrs](https://github.com/oxidezap/baileyrs), a Baileys-compatible library whose protocol core is [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) compiled to WebAssembly. A 30-second alarm keeps the object in memory and rebuilds the session after deploys and evictions. The Rust engine retries short drops by itself.
 
-1. **Initial Sync** - WhatsApp sends message history on first connection
-2. **Real-Time Updates** - All new messages automatically stored in SQLite
-3. **MCP Exposure** - Tools, prompts, and resources expose functionality to AI
-4. **On-Demand Loading** - Fetch older messages from WhatsApp when needed
-5. **AI Integration** - Claude (or any MCP client) accesses WhatsApp through standardized protocol
+The archive lives in the Durable Object's SQLite. WhatsApp sends your recent history once, when you link, and the archive adds everything that arrives afterwards. Search uses SQLite FTS5 and ignores accents and case. Each message also keeps the raw protobuf WhatsApp sent, so replies, reactions, edits and receipts reference it exactly as WhatsApp expects.
 
-## 🚀 Quick Start
+WhatsApp addresses the same person by phone number or by an anonymous ID called a LID, and the archive treats both as one person. It keeps every name it sees for someone with its source: your address book, the name they chose on WhatsApp, a business name, a group subject. Results show the best one, and search matches all of them, including past names.
 
-### Prerequisites
+The MCP endpoint is stateless. It uses the Cloudflare [Agents SDK](https://developers.cloudflare.com/agents/model-context-protocol/) with MCP SDK v2, and every request builds a fresh server that calls into the account's Durable Object.
 
-- **Go 1.25.5+** (for local setup) or **Docker** (recommended)
-- **WhatsApp account** (will be linked via QR code)
-- **MCP-compatible AI client** (Claude, Cursor, etc.)
+## Deploy
 
-### Option 1: Docker Setup (Recommended)
+You need a Cloudflare account and a WhatsApp account. Read [Privacy and risk](#privacy-and-risk) before you link one.
 
-1. **Clone and configure**
-   ```bash
-   git clone https://github.com/felipeadeildo/whatsapp-mcp
-   cd whatsapp-mcp
-   cp .env.example .env
-   # Edit .env with your settings (API key, timezone, etc.)
+### One click
+
+The **Deploy to Cloudflare** button copies this repository to your GitHub, asks for an `API_KEY`, and deploys it. Every push to your copy deploys again.
+
+Generate the key with `openssl rand -hex 32` and keep it in your password manager. Anyone holding it can read and send your messages.
+
+### From your own fork, with Workers Builds
+
+1. Fork this repository.
+2. Create the Worker and its secret first, because a deploy fails while `API_KEY` is missing:
+   ```sh
+   bun install
+   bunx wrangler secret put API_KEY
    ```
+   Pick your account, accept creating the `whatsapp-mcp` Worker, and paste the key.
+3. In the Cloudflare dashboard, open **Workers & Pages → whatsapp-mcp → Settings → Build → Connect**. Authorize GitHub for your fork and set the build:
 
-2. **Start the server**
-   ```bash
-   docker compose up -d
-   ```
+   | Setting        | Value                                                  |
+   | -------------- | ------------------------------------------------------ |
+   | Branch         | `main`                                                 |
+   | Build command  | Leave empty                                            |
+   | Deploy command | `npx wrangler deploy --var TIMEZONE:America/Sao_Paulo` |
 
-3. **Link WhatsApp**
-   ```bash
-   # View logs to see QR code
-   docker compose logs -f whatsapp-mcp
+   Replace `America/Sao_Paulo` with your time zone. Every push to the branch now deploys.
 
-   # Scan QR code with WhatsApp mobile app:
-   # Settings → Linked Devices → Link a Device
-   ```
+### From your machine
 
-4. **Verify it's running**
-   ```bash
-   curl http://localhost:8080/health
-   # Expected: "OK"
-   ```
-
-### Option 2: Local Setup
-
-1. **Install dependencies**
-   ```bash
-   git clone https://github.com/felipeadeildo/whatsapp-mcp
-   cd whatsapp-mcp
-   go mod download
-   ```
-
-2. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your settings
-   ```
-
-3. **Run the server**
-   ```bash
-   go run main.go
-   ```
-
-4. **Link WhatsApp** (scan QR code shown in terminal)
-
-## 🔌 MCP Integration
-
-### Connect to Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "whatsapp": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer your-secret-api-key"
-      }
-    }
-  }
-}
+```sh
+bun install
+bunx wrangler secret put API_KEY
+bun run deploy
 ```
 
-### Connect to Other MCP Clients
+## Link your WhatsApp
 
-The server exposes a Streamable HTTP endpoint compatible with any MCP client:
+Open the pairing page of an account with your API key after `#`:
 
-- **URL:** `http://localhost:8080/mcp`
-- **Transport:** Streamable HTTP
-- **Authentication:** Two methods supported (Bearer header preferred)
-
-**Option A — Authorization header (recommended):**
-
-Keeps the key out of URLs, proxy logs, and shell history.
-
-```json
-{
-  "mcpServers": {
-    "whatsapp": {
-      "type": "http",
-      "url": "http://localhost:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer your-secret-api-key"
-      }
-    }
-  }
-}
+```
+https://whatsapp-mcp.<your-subdomain>.workers.dev/accounts/personal#<API_KEY>
 ```
 
-**Option B — Key in URL path (backward compatible):**
+Browsers never send the part after `#` to the server. `personal` is a name you choose, and each name is a separate WhatsApp account, so one deployment can hold several.
 
-Existing clients using `/mcp/{key}` continue to work unchanged.
-
-```json
-{
-  "mcpServers": {
-    "whatsapp": {
-      "url": "http://localhost:8080/mcp/your-secret-api-key",
-      "type": "http"
-    }
-  }
-}
-```
-
-## 🎨 Usage Examples
-
-Once connected, your AI assistant can:
-
-### Search for People
-```
-You: "Find all messages from Arthur across all my chats"
-AI: [Uses search_person_messages prompt]
-    → Finds messages in DMs, groups, everywhere
-    → Analyzes communication patterns
-    → Provides context about Arthur
-```
-
-### Analyze Conversations
-```
-You: "What did we discuss in the Tech Team group this week?"
-AI: [Uses analyze_conversation prompt]
-    → Reads recent messages
-    → Summarizes key topics
-    → Lists action items and deadlines
-```
-
-### Smart Messaging
-```
-You: "Tell Maria I'll be 10 minutes late"
-AI: [Uses find_chat + send_message]
-    → Finds Maria's chat
-    → Sends contextual message
-    → Confirms delivery
-```
-
-### Deep Search
-```
-You: "Find all mentions of 'budget meeting' in any chat"
-AI: [Uses search_keyword prompt]
-    → Searches across all conversations
-    → Shows context around each mention
-    → Orders by relevance/date
-```
-
-## 📊 Data & Privacy
-
-### Local Storage
-
-All data is stored in `./data/`:
-- **`db/`** - Database files
-  - `messages.db` - SQLite database with messages and chats
-  - `whatsapp_auth.db` - WhatsApp session credentials
-- **`media/`** - Downloaded media files
-- **`whatsapp.log`** - WhatsApp client logs
-
-**⚠️ Important:** Database files contain sensitive data. Keep them secure (file permissions `600`) and backed up.
-
-## 🛣️ Roadmap
-
-### ✅ Implemented
-
-- [x] WhatsApp Web integration via whatsmeow
-- [x] Real-time message sync to SQLite
-- [x] MCP server with Streamable HTTP transport
-- [x] Pattern matching and wildcards
-- [x] Sender filtering and cross-chat search
-- [x] Timestamp-based pagination
-- [x] Timezone support
-- [x] On-demand message loading from servers
-- [x] Docker deployment (with healthcheck!)
-
-### 🚧 Planned
-
-- [ ] **Media Support**
-  - Voice message transcription
-  - Image OCR and analysis
-  - Video metadata extraction
-  - Document parsing
-  - Contact card handling
-
-- [ ] **GraphRAG Integration**
-  - Entity extraction from conversations
-  - Relationship mapping between contacts
-  - Semantic search capabilities
-  - Context-aware recommendations
-
-- [ ] **Enhanced Tools**
-  - Mark messages as read
-  - React to messages (emoji reactions)
-  - Send media files
-  - Group management (create, members)
-  - Status updates
-  - Account management (profile picture, name)
-
-- [ ] **Analytics** (maybe)
-  - Message statistics
-  - Conversation insights
-  - Response time tracking
-
-## 📚 Documentation
-
-### MCP Resources (Built-In)
-
-The server includes interactive guides accessible through MCP:
-- **Workflow Guide** - Common operations and patterns
-- **Cross-Chat Search** - Master advanced search techniques
-- **JID Format Guide** - Understanding WhatsApp identifiers
-- **Search Patterns** - Wildcards and pattern matching
-
-AI assistants can access these guides through the MCP Resources API.
-
-### Environment Variables
-
-See `.env.example` and be happy!
-
-## 🔔 Webhook Events
-
-When `WEBHOOK_URL` is set, the server POSTs a JSON payload to that URL for every incoming and outgoing message.
-
-### Payload Structure
-
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "event_type": "message.received",
-  "timestamp": "2026-06-14T10:00:00Z",
-  "data": {
-    "message_id": "3EB0...",
-    "chat_jid": "6281234567890@s.whatsapp.net",
-    "sender_jid": "6281234567890@s.whatsapp.net",
-    "text": "Hello!",
-    "timestamp": "2026-06-14T10:00:00Z",
-    "is_from_me": false,
-    "message_type": "text",
-    "chat_name": "John Doe",
-    "sender_push_name": "John",
-    "sender_contact_name": "John Doe",
-    "is_group": false,
-    "media_metadata": null,
-    "referral": null
-  }
-}
-```
-
-### Fields
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | string (UUID) | Unique event identifier |
-| `event_type` | string | `message.received` or `message.sent` |
-| `timestamp` | string (RFC3339) | When the event was generated |
-| `data.message_id` | string | WhatsApp message ID |
-| `data.chat_jid` | string | JID of the chat (DM or group) |
-| `data.sender_jid` | string | JID of the sender |
-| `data.text` | string | Message text content |
-| `data.timestamp` | string (RFC3339) | When the message was sent |
-| `data.is_from_me` | bool | `true` if sent from your account |
-| `data.message_type` | string | `text`, `image`, `video`, `audio`, `document`, `sticker`, `ptt`, `gif` |
-| `data.chat_name` | string | Display name of the chat (omitted if empty) |
-| `data.sender_push_name` | string | WhatsApp display name of the sender (omitted if empty) |
-| `data.sender_contact_name` | string | Local contact name for the sender (omitted if empty) |
-| `data.is_group` | bool | `true` if the message is in a group chat |
-| `data.media_metadata` | object \| null | Present when message has a media attachment (see below) |
-| `data.referral` | object \| null | Present when message originated from a Meta Click-to-WhatsApp ad (see below) |
-
-### Media Metadata
-
-Present when `message_type` is `image`, `video`, `audio`, `document`, `sticker`, `ptt`, or `gif`.
-
-```json
-"media_metadata": {
-  "message_id": "3EB0...",
-  "file_name": "photo.jpg",
-  "file_size": 204800,
-  "mime_type": "image/jpeg",
-  "has_media": true
-}
-```
-
-### Referral (Click-to-WhatsApp Ads)
-
-When a user taps a Meta ad with a "Message on WhatsApp" button, their first message carries ad attribution metadata (`ExternalAdReply` in the WhatsApp protocol). The server extracts this and populates `referral`:
-
-```json
-"referral": {
-  "ctwa_clid": "ARAkLkA8...",
-  "source_id": "120208468219880053",
-  "source_type": "AD",
-  "source_url": "https://fb.com/ads/...",
-  "headline": "Order Now"
-}
-```
-
-| Field | Description |
-|---|---|
-| `ctwa_clid` | Meta's click ID — use this for offline conversion attribution via Meta Conversions API |
-| `source_id` | The ad ID that originated the conversation |
-| `source_type` | Ad placement type (e.g. `AD`) |
-| `source_url` | Destination URL of the ad |
-| `headline` | Ad creative headline text |
-
-`referral` is `null` for all non-ad messages. It is supported on text, image, and video messages (the message types where WhatsApp carries `ExternalAdReply`).
-
-### Delivery & Retries
-
-Failed deliveries are retried up to `WEBHOOK_MAX_RETRIES` times with exponential backoff. Delivery attempts are logged in the database and visible via the webhook management API (`GET /webhooks/deliveries`).
-
-## 🤝 Contributing
-
-This is a personal project I maintain for daily use. Contributions are welcome!
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for:
-- Development setup and workflow
-- Project structure (main server vs migration CLI)
-- Database migration system
-- Code style guidelines
-
-Quick start:
-1. Fork the repository
-2. Create your feature branch
-3. Follow the guidelines in CONTRIBUTING.md
-4. Submit a pull request
-
-## ⚠️ Disclaimer
-
-This project is **not affiliated with WhatsApp or Meta**. It uses the unofficial WhatsApp Web API through the whatsmeow library. Use at your own risk.
-
-**Important Notes:**
-- WhatsApp may change their API at any time
-- Using unofficial APIs may violate WhatsApp's Terms of Service
-- This is provided as-is with no warranties
-- Keep your session data secure
-
----
+Select **Link WhatsApp**. On your phone, open **Settings → Linked devices → Link a device** and scan the code. The page counts your history as it arrives, and once linked it shows how to connect an agent.
 
 <div align="center">
-
-**Built with ❤️ for the MCP community**
-
-[Report Bug](https://github.com/felipeadeildo/whatsapp-mcp/issues) • [Request Feature](https://github.com/felipeadeildo/whatsapp-mcp/issues)
-
+<img src="docs/linked.png" alt="Pairing page after linking, with the number of archived messages and chats and the MCP endpoint ready to copy" width="820">
 </div>
+
+## Connect your agent
+
+The MCP endpoint is the account's address plus `/mcp`. Send the API key as a Bearer token.
+
+Claude Code:
+
+```sh
+claude mcp add --transport http whatsapp \
+  https://whatsapp-mcp.<your-subdomain>.workers.dev/accounts/personal/mcp \
+  --header "Authorization: Bearer <API_KEY>"
+```
+
+Cursor and other clients configured with JSON:
+
+```json
+{
+  "mcpServers": {
+    "whatsapp": {
+      "url": "https://whatsapp-mcp.<your-subdomain>.workers.dev/accounts/personal/mcp",
+      "headers": { "Authorization": "Bearer <API_KEY>" }
+    }
+  }
+}
+```
+
+Clients that connect only through OAuth, such as custom connectors on claude.ai, cannot connect yet.
+
+## Tools
+
+The reading tools answer from the archive, so they work while your phone is offline. They show times in the configured time zone.
+
+| Tool                  | What it does                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `get_status`          | Connection state, the linked number, and what the archive holds                                     |
+| `list_chats`          | Chats in the order your phone shows them, with unread counts and filters                            |
+| `find_chats`          | Chats whose names or phone number match, past names included                                        |
+| `find_people`         | People by any of their names or phone, including group members you never chatted with               |
+| `get_messages`        | A chat's messages, oldest first, with paging and filters by date or sender                          |
+| `get_message_context` | A message and the conversation around it                                                            |
+| `search_messages`     | Full-text search across all chats, ranked, with filters by chat, sender and date                    |
+| `send_message`        | Sends text, as a reply or with mentions. A retried request does not send the message twice          |
+| `react_to_message`    | Adds, changes or removes a reaction                                                                 |
+| `edit_message`        | Edits a message you sent                                                                            |
+| `delete_message`      | Deletes a message for everyone                                                                      |
+| `mark_as_read`        | Marks a chat as read                                                                                |
+| `save_contact`        | Saves a person to your address book, or renames them, and syncs it to your phone and linked devices |
+| `remove_contact`      | Removes a person from your address book on your phone and linked devices                            |
+| `load_older_messages` | Asks your phone for history older than the archive holds                                            |
+| `check_numbers`       | Which phone numbers have WhatsApp, without messaging them                                           |
+| `get_group_info`      | A group's subject, description, settings and members with their roles                               |
+| `get_profile`         | Someone's name, phone, About text and profile picture, as their privacy settings allow              |
+
+Each tool tells the client whether it only reads or changes something other people see, so the client can ask you before it acts. The tools render every kind of message as text, including captions, locations, contacts, polls, events, and business messages with their buttons and lists.
+
+## Configuration
+
+| Name       | Kind     | Purpose                                                         |
+| ---------- | -------- | --------------------------------------------------------------- |
+| `API_KEY`  | Secret   | Bearer token for the API and the MCP endpoint. Required.        |
+| `TIMEZONE` | Variable | IANA time zone the tools show and read dates in. Default `UTC`. |
+
+Set `TIMEZONE` in `wrangler.jsonc` or with `--var TIMEZONE:<zone>` on deploy. The next deploy replaces a value set in the dashboard.
+
+## HTTP API
+
+The pairing page uses a small REST API that also works from scripts. Every call needs `Authorization: Bearer <API_KEY>`.
+
+| Request                     | What it does                                                   |
+| --------------------------- | -------------------------------------------------------------- |
+| `GET /accounts/:id/status`  | Connection state, the QR code while linking, archive counts    |
+| `POST /accounts/:id/start`  | Connects, or starts linking when the account is not linked yet |
+| `POST /accounts/:id/send`   | Sends `{ "to", "text", "replyTo"?, "idempotencyKey"? }`        |
+| `POST /accounts/:id/logout` | Unlinks the device and deletes the account's archive           |
+| `POST /accounts/:id/mcp`    | The MCP endpoint                                               |
+
+## Costs and limits
+
+Each account keeps its Durable Object in memory around the clock. Cloudflare bills that as duration at 128 MB, about 324,000 GB-s per month.
+
+- **Workers Paid** costs $5 per month and includes 400,000 GB-s, which covers one account. Each additional account adds about $4 per month.
+- **Workers Free** includes 13,000 GB-s per day, enough for one account. It documents a 10 ms CPU limit per invocation. Nobody has tested yet whether processing the history WhatsApp sends when you link fits under it.
+- **Storage** stays small. 33,000 messages take about 40 MB, raw protobufs included, and a Durable Object holds up to 10 GB.
+
+[Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) has the current numbers.
+
+## Privacy and risk
+
+Your session keys and your archive stay in the account's Durable Object, in your Cloudflare account. The Worker talks only to WhatsApp.
+
+The API key gives full access to the account. If it leaks, replace it with `bunx wrangler secret put API_KEY`.
+
+This project uses the unofficial WhatsApp Web protocol and has no affiliation with WhatsApp or Meta. Using it may break WhatsApp's terms, and WhatsApp can ban accounts that use unofficial clients. Link a number you can afford to lose, and have your agent confirm messages with you before it sends them.
+
+## Development
+
+You need [Bun](https://bun.sh) and a Cloudflare account for `wrangler`.
+
+```sh
+bun install
+printf 'API_KEY=%s\nTIMEZONE=America/Sao_Paulo\n' "$(openssl rand -hex 32)" > .dev.vars
+bun run dev
+bun run check
+```
+
+`bun install` also installs the pre-commit hooks. `bun run dev` serves the pairing page at `http://localhost:8787/accounts/dev#<API_KEY>` and keeps the local session and archive in `.wrangler/state`. `bun run check` runs the type check, lint, format check and tests. The tests run the archive's real SQL against an in-memory SQLite that has the same interface as the Durable Object's.
+
+## Credits
+
+The WhatsApp session comes from [baileyrs](https://github.com/oxidezap/baileyrs) and [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) by [oxidezap](https://github.com/oxidezap), whose API follows [Baileys](https://github.com/WhiskeySockets/Baileys). The rules for turning messages into text and for matching people across phone numbers and LIDs follow [mautrix-whatsapp](https://github.com/mautrix/whatsapp) and [whatsmeow](https://github.com/tulir/whatsmeow). The MCP endpoint uses Cloudflare's [Agents SDK](https://github.com/cloudflare/agents).
+
+The previous version of this project, a Go server for Docker, is in the history before this rewrite.
+
+## License
+
+[GPL-3.0](LICENSE)

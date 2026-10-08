@@ -1,0 +1,17 @@
+diff --git a/lib/Utils/optional-peer.js b/lib/Utils/optional-peer.js
+index d3f374db0e26e5bd8cb4b13d3c15baee3447fda2..257e5a68fa3f9417171508a76256eef842558b75 100644
+--- a/lib/Utils/optional-peer.js
++++ b/lib/Utils/optional-peer.js
+@@ -22,9 +22,11 @@ const isAbsent = (error) => error?.code === 'MODULE_NOT_FOUND';
+  * fallback.
+  */
+ export const loadOptionalPeer = (specifier, loader) => {
++    // Bundled hosts (workerd) can expose process.getBuiltinModule while having
++    // no import.meta.url, and createRequire(undefined) throws: treat as no loader.
+     const effectiveLoader = loader ??
+         (typeof globalThis.process
+-            ?.getBuiltinModule === 'function'
++            ?.getBuiltinModule === 'function' && import.meta.url
+             ? nodePeerLoader(import.meta.url)
+             : undefined);
+     if (!effectiveLoader)

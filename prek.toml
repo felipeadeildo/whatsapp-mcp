@@ -1,0 +1,54 @@
+minimum_prek_version = "0.5.0"
+exclude = "^(LICENSE|worker-configuration\\.d\\.ts)$"
+
+[[repos]]
+repo = "builtin"
+
+[[repos.hooks]]
+id = "trailing-whitespace"
+
+[[repos.hooks]]
+id = "end-of-file-fixer"
+
+[[repos.hooks]]
+id = "check-json"
+
+[[repos.hooks]]
+id = "check-merge-conflict"
+
+# The tools below run the versions pinned in bun.lock.
+[[repos]]
+repo = "local"
+
+# Whole project (pass_filenames = false): type-aware rules and type checking
+# need the full TypeScript program, not only the staged files.
+[[repos.hooks]]
+id = "oxlint"
+name = "oxlint"
+language = "system"
+entry = "bun run lint:fix"
+pass_filenames = false
+types_or = ["ts", "javascript", "json"]
+
+[[repos.hooks]]
+id = "oxfmt"
+name = "oxfmt"
+language = "system"
+entry = "bunx oxfmt --no-error-on-unmatched-pattern"
+types_or = ["ts", "javascript", "json", "markdown"]
+
+[[repos.hooks]]
+id = "wrangler-types"
+name = "wrangler types --check"
+language = "system"
+entry = "bunx wrangler types --check"
+pass_filenames = false
+files = "^wrangler\\.jsonc$"
+
+[[repos.hooks]]
+id = "bun-test"
+name = "bun test"
+language = "system"
+entry = "bun test"
+pass_filenames = false
+types_or = ["ts"]

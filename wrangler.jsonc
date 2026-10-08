@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "whatsapp-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-08",
+  // The pairing page and the MCP endpoint live on the workers.dev address;
+  // per-version preview URLs would only add more ways in.
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "secrets": { "required": ["API_KEY"] },
+  // IANA zone the tools show and read times in.
+  "vars": { "TIMEZONE": "UTC" },
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNT", "class_name": "WhatsAppAccount" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WhatsAppAccount"] }],
+}
