@@ -14,79 +14,65 @@
 
 </div>
 
-An [MCP](https://modelcontextprotocol.io) server that links to your WhatsApp the way WhatsApp Web does, keeps a searchable archive of your chats, and lets agents read, search and send messages. It runs on your own Cloudflare account, one Durable Object per WhatsApp account.
+whatsapp-mcp lets an AI assistant like Claude read your WhatsApp chats, search them and send messages for you. It connects to your account the same way [WhatsApp Web](https://faq.whatsapp.com/1317564962315842) does, as a linked device, and keeps a searchable copy of your chats.
 
-Once linked, ask your agent things like:
+It speaks [MCP](https://modelcontextprotocol.io/introduction), the standard way AI apps connect to tools, so it works with Claude Code, Cursor and other MCP clients. It runs on your own [Cloudflare](https://www.cloudflare.com) account, so your messages stay with you.
+
+Once it is set up, you can ask things like:
 
 - "What did Marina say about the trip?"
 - "Which chats have unread messages since yesterday?"
 - "Reply to the family group saying I'll be late."
 
-## How it works
+## Get started
 
-```mermaid
-flowchart LR
-  agent["AI agent"] -- "MCP + API key" --> worker["Worker"]
-  worker -- "RPC" --> account
-  subgraph account["Durable Object, one per WhatsApp account"]
-    socket["WhatsApp session<br/>whatsapp-rust in WASM"]
-    archive[("SQLite archive<br/>full-text search")]
-    socket --> archive
-  end
-  socket <-- "WebSocket" --> whatsapp["WhatsApp"]
-```
+You need a [Cloudflare account](https://dash.cloudflare.com/sign-up), a [GitHub account](https://github.com/signup) and your phone with WhatsApp.
 
-The session is [baileyrs](https://github.com/oxidezap/baileyrs), whose protocol core is [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) compiled to WebAssembly. A 30-second alarm keeps the Durable Object in memory and reconnects it after deploys.
+### 1. Deploy
 
-WhatsApp sends your recent history once, when you link, and the archive keeps everything after that. Search ignores accents and case, and finds people by any name they have had.
+Click **Deploy to Cloudflare** above. Cloudflare copies this project to your GitHub, builds it and puts it online at an address like `https://whatsapp-mcp.<your-name>.workers.dev`.
 
-## Deploy
+During the setup it asks for an `API_KEY`. That is a password you make up for your server. Generate a strong one in a terminal with `openssl rand -hex 32`, or use a password manager, and keep it safe. Anyone who has it can read and send your messages.
 
-Click **Deploy to Cloudflare** above. It copies the repository to your GitHub, asks for an `API_KEY` and deploys. Generate the key with `openssl rand -hex 32`. Anyone holding it can read and send your messages.
+### 2. Link your WhatsApp
 
-From your machine:
-
-```sh
-bun install
-bunx wrangler secret put API_KEY
-bun run deploy
-```
-
-## Link your WhatsApp
-
-Open this page with your API key after `#`, select **Link WhatsApp** and scan the code from **Settings → Linked devices** on your phone:
+Open this address in your browser, with your API key after the `#`:
 
 ```
-https://whatsapp-mcp.<your-subdomain>.workers.dev/accounts/personal#<API_KEY>
+https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal#<API_KEY>
 ```
 
-`personal` is any name you choose. Each name is a separate WhatsApp account.
+Select **Link WhatsApp**. On your phone, open WhatsApp, go to **Settings → Linked devices → Link a device** and point the camera at the code. The page then counts your chats as they arrive.
+
+`personal` is a name you choose. Each name is a separate WhatsApp account, so one server can hold several.
 
 <div align="center">
 <img src="docs/linked.png" alt="Pairing page after linking, with the archive size and the MCP endpoint ready to copy" width="820">
 </div>
 
-## Connect your agent
+### 3. Connect your AI assistant
+
+The pairing page shows the command for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp) with a copy button:
 
 ```sh
 claude mcp add --transport http whatsapp \
-  https://whatsapp-mcp.<your-subdomain>.workers.dev/accounts/personal/mcp \
+  https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp \
   --header "Authorization: Bearer <API_KEY>"
 ```
 
-Other clients take the same URL with the key in an `Authorization: Bearer` header.
+Other MCP clients need the same address and an `Authorization: Bearer <API_KEY>` header. See your client's documentation for where to put them.
 
-## Tools
+## What your assistant can do
 
 | Tool                  | What it does                                                    |
 | --------------------- | --------------------------------------------------------------- |
-| `get_status`          | Connection state and what the archive holds                     |
-| `list_chats`          | Chats in phone order, with unread counts                        |
+| `get_status`          | Connection state and how much of your history is saved          |
+| `list_chats`          | Chats in the order your phone shows them, with unread counts    |
 | `find_chats`          | Chats by any name or phone number                               |
 | `find_people`         | People by any name or phone, including group members            |
 | `get_messages`        | A chat's messages, with paging and date or sender filters       |
 | `get_message_context` | A message and the conversation around it                        |
-| `search_messages`     | Full-text search across all chats                               |
+| `search_messages`     | Search all chats by words, ignoring accents and capitals        |
 | `send_message`        | Sends text, as a reply or with mentions, never twice on retries |
 | `react_to_message`    | Adds or removes a reaction                                      |
 | `edit_message`        | Edits a message you sent                                        |
@@ -99,22 +85,53 @@ Other clients take the same URL with the key in an `Authorization: Bearer` heade
 | `get_group_info`      | A group's details and members                                   |
 | `get_profile`         | Someone's name, About text and picture                          |
 
-The pairing page also uses a small REST API under `/accounts/:id`: `status`, `start`, `send` and `logout`.
+Tools that send or change something tell your assistant so, and most assistants ask you before using them.
+
+## How it works
+
+```mermaid
+flowchart LR
+  agent["AI assistant"] -- "MCP + API key" --> worker["Worker"]
+  worker -- "RPC" --> account
+  subgraph account["Durable Object, one per WhatsApp account"]
+    socket["WhatsApp session<br/>whatsapp-rust in WASM"]
+    archive[("SQLite archive<br/>full-text search")]
+    socket --> archive
+  end
+  socket <-- "WebSocket" --> whatsapp["WhatsApp"]
+```
+
+Each WhatsApp account lives in its own [Durable Object](https://developers.cloudflare.com/durable-objects/), a small server that Cloudflare keeps running with its own SQLite database. The WhatsApp session inside it is [baileyrs](https://github.com/oxidezap/baileyrs), whose protocol core is [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) compiled to WebAssembly. An alarm every 30 seconds keeps the object in memory and reconnects it after deploys.
+
+WhatsApp sends your recent history once, when you link, and the archive keeps every message after that. Search finds people by any name they have used, and treats a person's phone number and their anonymous WhatsApp ID (LID) as the same person.
 
 ## Configuration
 
-| Name       | Kind     | Purpose                                                                            |
-| ---------- | -------- | ---------------------------------------------------------------------------------- |
-| `API_KEY`  | Secret   | Bearer token for every endpoint                                                    |
-| `TIMEZONE` | Variable | Time zone for dates, `UTC` by default. Set it in `wrangler.jsonc` or with `--var`. |
+| Name       | Kind     | Purpose                                                       |
+| ---------- | -------- | ------------------------------------------------------------- |
+| `API_KEY`  | Secret   | The password every request needs                              |
+| `TIMEZONE` | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset |
 
-## Costs and risk
+Change `TIMEZONE` in `wrangler.jsonc`, or pass `--var TIMEZONE:<zone>` to `wrangler deploy`. The pairing page also uses a small REST API under `/accounts/:id`: `status`, `start`, `send` and `logout`.
 
-An account keeps its Durable Object in memory all the time. On Workers Paid ($5 per month) that fits in the included usage, and each extra account costs about $4 per month. The Free plan covers one account, but its CPU limit has not been tested against the history sync. Current numbers are in [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [Workers limits](https://developers.cloudflare.com/workers/platform/limits/).
+## Costs
 
-This is an unofficial WhatsApp client with no affiliation to WhatsApp or Meta. WhatsApp can ban accounts that use one, so link a number you can afford to lose.
+Each account keeps its Durable Object in memory all day, which Cloudflare bills as duration. Measured in production, linking an account with about 30,000 messages wrote about 250,000 database rows in its first minutes, and the object then used 50 to 65 MB of its 128 MB.
+
+- **Workers Paid** costs $5 per month, and its included usage covers one account. Each extra account adds about $4 per month.
+- **Workers Free** covers one account's duration, but documents limits of 100,000 written rows per day and 10 ms of CPU per request. Our first sync wrote 250,000 rows and MCP requests used up to 57 ms of CPU. Cloudflare blocked neither in our test, and nothing says it never will.
+
+See [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [limits](https://developers.cloudflare.com/durable-objects/platform/limits/) for current numbers.
+
+## Is it safe?
+
+Your session and your messages stay in your Cloudflare account. The server talks only to WhatsApp, and only someone with your API key can use it.
+
+This is an unofficial WhatsApp client, not affiliated with WhatsApp or Meta, and WhatsApp can ban accounts that use one. Link a number you can afford to lose, and keep your assistant asking before it sends messages.
 
 ## Development
+
+You need [Bun](https://bun.sh). [Wrangler](https://developers.cloudflare.com/workers/wrangler/) comes with the project.
 
 ```sh
 bun install
@@ -122,6 +139,8 @@ printf 'API_KEY=%s\nTIMEZONE=UTC\n' "$(openssl rand -hex 32)" > .dev.vars
 bun run dev     # http://localhost:8787/accounts/dev#<API_KEY>
 bun run check   # types, lint, format and tests
 ```
+
+To deploy from your machine, run `bunx wrangler secret put API_KEY` once and then `bun run deploy`.
 
 Built on [baileyrs](https://github.com/oxidezap/baileyrs) and [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust). Message rendering and identity rules follow [mautrix-whatsapp](https://github.com/mautrix/whatsapp). Licensed under [GPL-3.0](LICENSE).
 
