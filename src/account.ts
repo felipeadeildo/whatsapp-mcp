@@ -30,11 +30,12 @@ import {
   type ChatListQuery,
   type ChatSummary,
   type MessageQuery,
-  type Person,
+  type Match,
   type SearchHit,
   type SearchQuery,
 } from "./store/archive"
 import { durableKvStore } from "./store/durable-kv"
+import type { Identity } from "./store/names"
 import { fetchWaWebVersion } from "./wa-version"
 import { decodeRaw, type KeyedMessage } from "./whatsapp/raw"
 import { makeSocket, type Socket } from "./whatsapp/socket"
@@ -110,6 +111,7 @@ export interface Profile {
   readonly jid: string
   readonly name: string | null
   readonly phone: string | null
+  readonly aliases: readonly string[]
   readonly about: string | null
   readonly pictureUrl: string | null
 }
@@ -178,11 +180,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.archive.listChats(query)
   }
 
-  findChats(text: string, limit: number): ChatSummary[] {
+  findChats(text: string, limit: number): Match<ChatSummary>[] {
     return this.archive.findChats(text, limit)
   }
 
-  findPeople(text: string, limit: number): Person[] {
+  findPeople(text: string, limit: number): Match<Identity>[] {
     return this.archive.findPeople(text, limit)
   }
 
@@ -288,11 +290,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
       announceOnly: group.announce ?? false,
       restricted: group.restrict ?? false,
       participants: group.participants.map((participant) => {
-        const person = this.archive.getPerson(participant.id)
+        const person = this.archive.getPerson(jidNormalizedUser(participant.id))
         return {
-          jid: person?.jid ?? participant.id,
-          name: person?.name ?? participant.notify ?? null,
-          phone: person?.phone ?? null,
+          jid: person.jid,
+          name: person.name ?? participant.notify ?? null,
+          phone: person.phone,
           admin: participant.admin ?? null,
         }
       }),
@@ -310,8 +312,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const person = this.archive.getPerson(target)
     return {
       jid: target,
-      name: person?.name ?? null,
-      phone: person?.phone ?? null,
+      name: person.name,
+      phone: person.phone,
+      aliases: person.aliases,
       about: AboutResult.safeParse(statuses?.[0]).data?.status.status ?? null,
       pictureUrl: picture ?? null,
     }

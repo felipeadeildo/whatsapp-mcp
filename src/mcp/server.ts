@@ -65,7 +65,7 @@ function presentMessage(
 }
 
 function presentChat(
-  chat: ChatSummary,
+  chat: ChatSummary & { readonly matched?: string | null },
   timeZone: string,
 ): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {
@@ -73,6 +73,7 @@ function presentChat(
     name: chat.name ?? chat.jid,
     type: chat.type,
   }
+  if (chat.matched) out.matched = chat.matched
   if (chat.phone && chat.phone !== chat.name) out.phone = chat.phone
   if (chat.lastMessageAt) out.last_message_at = formatLocal(chat.lastMessageAt, timeZone)
   if (chat.unreadCount > 0) out.unread = chat.unreadCount
@@ -169,7 +170,8 @@ export function createServer(account: Account, timeZone: string): McpServer {
     "find_chats",
     {
       title: "Find chats",
-      description: "Chats whose name, contact name, JID or phone number contains the text.",
+      description:
+        "Chats any of whose names (contact, WhatsApp, group subject, past names) or phone matches the text, accents and case ignored, most recently active first. `matched` shows the name that matched when it is not the display name.",
       inputSchema: z.object({
         query: z.string().min(1),
         limit: z.number().int().min(1).max(100).default(20),
@@ -187,7 +189,7 @@ export function createServer(account: Account, timeZone: string): McpServer {
     {
       title: "Find people",
       description:
-        "People whose saved name, WhatsApp name, business name, phone or JID contains the text, including people you have no chat with (e.g. fellow group members).",
+        "People any of whose names (saved contact name, WhatsApp name, business name, username, past names) or phone matches the text, accents and case ignored, including people you have no chat with (e.g. fellow group members). `matched` shows the name that matched when it is not the display name.",
       inputSchema: z.object({
         query: z.string().min(1),
         limit: z.number().int().min(1).max(100).default(20),
@@ -197,7 +199,15 @@ export function createServer(account: Account, timeZone: string): McpServer {
     async ({ query, limit }) => {
       const people = await account.findPeople(query, limit)
       return json({
-        people: people.map((person) => withoutNulls({ ...person })),
+        people: people.map((person) =>
+          withoutNulls({
+            jid: person.jid,
+            name: person.name,
+            phone: person.phone,
+            matched: person.matched,
+            also_known_as: person.aliases.length > 0 ? person.aliases : null,
+          }),
+        ),
       })
     },
   )

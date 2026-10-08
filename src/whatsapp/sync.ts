@@ -9,7 +9,14 @@ import type { Contact } from "@oxidezap/baileyrs/lib/Types/Contact.js"
 import type { WAMessage, WAMessageKey } from "@oxidezap/baileyrs/lib/Types/Message.js"
 import { jidNormalizedUser } from "@oxidezap/baileyrs/lib/WABinary/jid-utils.js"
 
-import { type Archive, type ChatInput, isRedactedPhone, type MessageInput } from "../store/archive"
+import {
+  type Archive,
+  type ChatInput,
+  isRedactedPhone,
+  type MessageInput,
+  type NameInput,
+} from "../store/archive"
+import type { NameSource } from "../store/names"
 import {
   attachedReactions,
   interpret,
@@ -51,33 +58,45 @@ class Ingest {
     if (!a || !b || a === b) return
     const lid = [a, b].find((value) => value.endsWith("@lid"))
     const pn = [a, b].find((value) => value.endsWith("@s.whatsapp.net"))
-    if (lid && pn) this.archive.learnPerson({ jid: lid, lid, pn })
+    if (lid && pn) this.archive.learnPair(pn, lid)
   }
 
-  contact(contact: Partial<Contact>): void {
+  /**
+   * Records a contact event. `origin` decides what its `name` means: live
+   * contact events carry the address book name, while history fills `name`
+   * with whatever the conversation was called (`displayName || name ||
+   * username` in baileyrs), which can be a masked phone or the username.
+   */
+  contact(contact: Partial<Contact>, origin: "live" | "history"): void {
     const jid = normalized(contact.id)
-    if (!jid || !isPerson(jid)) return
-    const name = contact.name ?? null
-    const redacted = name !== null && isRedactedPhone(name)
-    this.archive.learnPerson({
-      jid,
-      lid: normalized(contact.lid),
-      pn: normalized(contact.phoneNumber),
-      name: redacted ? null : name,
-      redactedPhone: redacted ? name : null,
-      pushName: contact.notify ?? null,
-      businessName: contact.verifiedName ?? null,
-      username: contact.username ?? null,
-    })
+    if (!jid) return
+    if (!isPerson(jid)) {
+      if (contact.name) this.archive.learnNames(jid, [{ source: "subject", name: contact.name }])
+      return
+    }
+    this.pair(jid, contact.lid)
+    this.pair(jid, contact.phoneNumber)
+    const names: NameInput[] = []
+    const { name, username } = contact
+    if (name && name !== username) {
+      let source: NameSource = origin === "live" ? "contact" : "history"
+      if (isRedactedPhone(name)) source = "redacted"
+      names.push({ source, name })
+    }
+    if (username) names.push({ source: "username", name: username })
+    if (contact.notify) names.push({ source: "push", name: contact.notify })
+    if (contact.verifiedName) names.push({ source: "business", name: contact.verifiedName })
+    this.archive.learnNames(jid, names)
   }
 
+  /** What a chat event says about the chat; group and channel names are kept as subjects. */
   chat(chat: Partial<Chat>): ChatInput | null {
     const jid = this.canonical(chat.id)
     if (!jid) return null
+    if (chat.name && !isPerson(jid))
+      this.archive.learnNames(jid, [{ source: "subject", name: chat.name }])
     return {
       jid,
-      // A direct chat is named after the person; only groups and channels have names of their own.
-      name: isPerson(jid) ? null : (chat.name ?? null),
       unreadCount: chat.unreadCount ?? null,
       lastMessageAt: toNumber(chat.conversationTimestamp) ?? chat.lastMessageRecvTimestamp ?? null,
       archived: chat.archived ?? null,
@@ -91,11 +110,14 @@ class Ingest {
     key: WAMessageKey,
     pushName: string | null | undefined,
     participant: string | null | undefined = key.participant,
+    seenAt?: number,
   ): void {
     this.pair(key.remoteJid, key.remoteJidAlt)
     this.pair(participant, key.participantAlt)
     const sender = key.fromMe ? null : normalized(participant ?? key.remoteJid)
-    if (sender && pushName && isPerson(sender)) this.archive.learnPerson({ jid: sender, pushName })
+    if (sender && pushName && isPerson(sender)) {
+      this.archive.learnNames(sender, [{ source: "push", name: pushName, seenAt }])
+    }
   }
 
   /** Stores messages (new or redelivered) and the changes some of them carry. */
@@ -104,7 +126,14 @@ class Ingest {
     const changes: MessageEvent[] = []
     for (const raw of messages) {
       // History puts a group message's author on the message, not on its key.
-      this.learnFromKey(raw.key, raw.pushName, raw.key.participant ?? raw.participant)
+      // The message's own time dates the name, so an old history message does
+      // not outrank the name someone uses today.
+      this.learnFromKey(
+        raw.key,
+        raw.pushName,
+        raw.key.participant ?? raw.participant,
+        toNumber(raw.messageTimestamp) ?? undefined,
+      )
       const event = interpret(raw)
       if (event.type === "message") {
         const input = this.toInput(event.message, raw)
@@ -127,7 +156,6 @@ class Ingest {
       id: message.id,
       fromMe: message.fromMe,
       senderJid: message.fromMe ? null : this.canonical(message.participant ?? message.remoteJid),
-      senderName: message.pushName,
       sentAt: message.sentAt,
       kind: message.kind,
       text: message.text,
@@ -168,7 +196,7 @@ export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks =
 
   ev.on("messaging-history.set", ({ chats: historyChats, contacts, messages, lidPnMappings }) => {
     for (const { lid, pn } of lidPnMappings ?? []) ingest.pair(lid, pn)
-    for (const contact of contacts) ingest.contact(contact)
+    for (const contact of contacts) ingest.contact(contact, "history")
     chats(historyChats)
     hooks.onMessages?.(ingest.messages(messages), "history")
   })
@@ -193,15 +221,19 @@ export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks =
   ev.on("chats.delete", (jids) =>
     archive.deleteChats(jids.map((jid) => ingest.canonical(jid)).filter((jid) => jid !== null)),
   )
-  ev.on("contacts.upsert", (contacts) => contacts.forEach((contact) => ingest.contact(contact)))
-  ev.on("contacts.update", (contacts) => contacts.forEach((contact) => ingest.contact(contact)))
+  ev.on("contacts.upsert", (contacts) =>
+    contacts.forEach((contact) => ingest.contact(contact, "live")),
+  )
+  ev.on("contacts.update", (contacts) =>
+    contacts.forEach((contact) => ingest.contact(contact, "live")),
+  )
   ev.on("lid-mapping.update", ({ lid, pn }) => ingest.pair(lid, pn))
 
   const groups = (list: readonly { id?: string | null; subject?: string | null }[]) =>
     chats(list.map((group) => ({ id: group.id ?? undefined, name: group.subject ?? undefined })))
   ev.on("groups.upsert", (list) => {
     for (const group of list)
-      group.participants.forEach((participant) => ingest.contact(participant))
+      group.participants.forEach((participant) => ingest.contact(participant, "live"))
     groups(list)
   })
   ev.on("groups.update", groups)
@@ -209,11 +241,9 @@ export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks =
   ev.on("connection.update", ({ connection }) => {
     const me = socket.user
     if (connection !== "open" || !me) return
-    archive.learnPerson({
-      jid: jidNormalizedUser(me.id),
-      lid: normalized(me.lid),
-      pushName: me.name ?? null,
-    })
+    const jid = jidNormalizedUser(me.id)
+    ingest.pair(jid, me.lid)
+    if (me.name) archive.learnNames(jid, [{ source: "push", name: me.name }])
   })
 }
 
@@ -227,8 +257,10 @@ export async function refreshGroupNames(socket: Socket, archive: Archive): Promi
   const client = socket.waClient
   if (!client) return 0
   const groups = Object.values(await client.groupFetchAllParticipating())
-  archive.saveChats(
-    groups.map((group) => ({ jid: jidNormalizedUser(group.id), name: group.subject })),
-  )
+  for (const group of groups) {
+    const jid = jidNormalizedUser(group.id)
+    archive.saveChats([{ jid }])
+    if (group.subject) archive.learnNames(jid, [{ source: "subject", name: group.subject }])
+  }
   return groups.length
 }

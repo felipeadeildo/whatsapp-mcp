@@ -1,6 +1,7 @@
 /**
- * The account's message archive: people, chats, messages and reactions in the
- * Durable Object's SQLite, with full-text search over message text.
+ * The account's message archive: chats, messages, reactions and every name
+ * seen for a person, group or channel, in the Durable Object's SQLite, with
+ * full-text search over message text and over names.
  *
  * WhatsApp only pushes history once (at pairing) and then live traffic, so this
  * archive is what the tools read; the socket is only asked for things that are
@@ -8,37 +9,56 @@
  *
  * Identity follows WhatsApp's own model (and mautrix-whatsapp's handling of
  * it): one person has a phone-number JID (`@s.whatsapp.net`) and an anonymous
- * LID (`@lid`), and messages can arrive under either. Every person and every
- * direct chat is stored under one canonical JID, the LID when known, else the
- * phone JID. Learning that a phone JID and a LID belong together merges the
- * two, including chats and messages already stored under the phone JID.
+ * LID (`@lid`), and messages can arrive under either. Everything about a person
+ * is stored under one canonical JID, the LID when known, else the phone JID.
+ * Learning that a phone JID and a LID belong together moves what was stored
+ * under the phone JID (chats, messages, reactions, names) to the LID.
  *
- * Each message keeps its raw protobuf next to the derived columns, so a better
- * normalizer can re-derive them later without a new pairing, and media keys
- * stay available for downloads.
+ * Names are kept per source instead of overwriting each other (see `names.ts`):
+ * display picks the best one, search matches all of them.
+ *
+ * Each message keeps its raw protobuf next to the derived columns: its key is
+ * what edits, reactions and receipts must reference, and its media keys are
+ * what downloads need.
  *
  * Times are Unix seconds.
  */
 import type { MediaInfo, MessageKind } from "../whatsapp/message"
 import { migrate } from "./migrations"
+import {
+  type Identity,
+  isNameSource,
+  type NameRecord,
+  type NameSource,
+  resolveIdentity,
+} from "./names"
 import type { SqlDatabase } from "./sql"
 
 const MIGRATIONS = [
-  `CREATE TABLE people (
-    id TEXT PRIMARY KEY,
-    lid TEXT,
-    pn TEXT,
-    name TEXT,
-    push_name TEXT,
-    business_name TEXT,
-    redacted_phone TEXT,
-    username TEXT
+  `CREATE TABLE phone_lids (
+    pn TEXT PRIMARY KEY,
+    lid TEXT NOT NULL
+  ) WITHOUT ROWID`,
+  `CREATE INDEX phone_lids_by_lid ON phone_lids (lid)`,
+  `CREATE TABLE names (
+    jid TEXT NOT NULL,
+    source TEXT NOT NULL,
+    name TEXT NOT NULL,
+    seen_at INTEGER NOT NULL,
+    UNIQUE (jid, source, name)
   )`,
-  `CREATE UNIQUE INDEX people_by_lid ON people (lid) WHERE lid IS NOT NULL`,
-  `CREATE UNIQUE INDEX people_by_pn ON people (pn) WHERE pn IS NOT NULL`,
+  `CREATE VIRTUAL TABLE names_fts USING fts5 (
+    name, content = 'names', content_rowid = 'rowid',
+    tokenize = 'unicode61 remove_diacritics 2'
+  )`,
+  `CREATE TRIGGER names_fts_insert AFTER INSERT ON names BEGIN
+    INSERT INTO names_fts (rowid, name) VALUES (new.rowid, new.name);
+  END`,
+  `CREATE TRIGGER names_fts_delete AFTER DELETE ON names BEGIN
+    INSERT INTO names_fts (names_fts, rowid, name) VALUES ('delete', old.rowid, old.name);
+  END`,
   `CREATE TABLE chats (
     jid TEXT PRIMARY KEY,
-    name TEXT,
     unread_count INTEGER NOT NULL DEFAULT 0,
     last_message_at INTEGER,
     archived INTEGER NOT NULL DEFAULT 0,
@@ -51,7 +71,6 @@ const MIGRATIONS = [
     id TEXT NOT NULL,
     from_me INTEGER NOT NULL,
     sender_jid TEXT,
-    sender_name TEXT,
     sent_at INTEGER NOT NULL,
     kind TEXT NOT NULL,
     text TEXT,
@@ -88,12 +107,12 @@ const MIGRATIONS = [
     reacted_at INTEGER NOT NULL,
     PRIMARY KEY (chat_jid, message_id, sender_jid)
   ) WITHOUT ROWID`,
+  `CREATE INDEX reactions_by_sender ON reactions (sender_jid)`,
   `CREATE TABLE sent (
     request_key TEXT PRIMARY KEY,
     message_id TEXT NOT NULL,
     sent_at INTEGER NOT NULL
   ) WITHOUT ROWID`,
-  `CREATE INDEX reactions_by_sender ON reactions (sender_jid)`,
 ]
 
 /** The reaction sender recorded for this account's own reactions. */
@@ -101,23 +120,19 @@ const ME = "me"
 
 const PN_SUFFIX = "@s.whatsapp.net"
 const LID_SUFFIX = "@lid"
+/** SQLite's limit on bound parameters is 100; leave room for the rest of a query. */
+const IN_CHUNK = 90
 
-/** What one event tells us about a person; absent fields are left as they are. */
-export interface PersonInput {
-  readonly jid: string
-  readonly lid?: string | null
-  readonly pn?: string | null
-  readonly name?: string | null
-  readonly pushName?: string | null
-  readonly businessName?: string | null
-  readonly redactedPhone?: string | null
-  readonly username?: string | null
+export interface NameInput {
+  readonly source: NameSource
+  readonly name: string
+  /** Unix seconds; defaults to now. */
+  readonly seenAt?: number | undefined
 }
 
 /** What an event says about a chat; absent fields are left as they are. */
 export interface ChatInput {
   readonly jid: string
-  readonly name?: string | null
   readonly unreadCount?: number | null
   readonly lastMessageAt?: number | null
   readonly archived?: boolean | null
@@ -131,7 +146,6 @@ export interface MessageInput {
   readonly id: string
   readonly fromMe: boolean
   readonly senderJid: string | null
-  readonly senderName: string | null
   readonly sentAt: number
   readonly kind: MessageKind
   readonly text: string | null
@@ -162,6 +176,9 @@ export interface ChatSummary {
   readonly pinned: boolean
 }
 
+/** A search result and the name that made it match, when that is not its display name. */
+export type Match<T> = T & { readonly matched: string | null }
+
 export interface Mention {
   /** As written in the text, after the `@`. */
   readonly user: string
@@ -191,16 +208,6 @@ export interface ArchivedMessage {
 export interface SearchHit extends ArchivedMessage {
   /** The matching text with hits wrapped in `[` `]`. */
   readonly snippet: string
-}
-
-export interface Person {
-  readonly jid: string
-  readonly name: string | null
-  readonly phone: string | null
-  readonly lid: string | null
-  /** The name they chose on WhatsApp, when different from `name`. */
-  readonly whatsappName: string | null
-  readonly businessName: string | null
 }
 
 export interface ArchiveStats {
@@ -236,35 +243,19 @@ export interface ChatListQuery {
   readonly includeArchived: boolean
 }
 
-type PersonRow = {
-  id: string
-  lid: string | null
-  pn: string | null
-  name: string | null
-  push_name: string | null
-  business_name: string | null
-  redacted_phone: string | null
-  username: string | null
+type ChatRow = {
+  jid: string
+  unread_count: number
+  last_message_at: number | null
+  archived: number
+  pinned: number
 }
-
-const PERSON_FIELDS = [
-  "id",
-  "lid",
-  "pn",
-  "name",
-  "push_name",
-  "business_name",
-  "redacted_phone",
-  "username",
-] as const satisfies readonly (keyof PersonRow)[]
 
 type MessageRow = {
   chat_jid: string
-  chat_name: string | null
   id: string
   from_me: number
   sender_jid: string | null
-  sender_name: string | null
   sent_at: number
   kind: string
   text: string | null
@@ -275,6 +266,11 @@ type MessageRow = {
   edited: number
   deleted: number
 }
+
+const MESSAGE_COLUMNS = `m.chat_jid, m.id, m.from_me, m.sender_jid, m.sent_at, m.kind, m.text, m.quoted_id,
+  m.mentions, m.forwarded, m.media, m.edited, m.deleted`
+
+const CHAT_COLUMNS = "c.jid, c.unread_count, c.last_message_at, c.archived, c.pinned"
 
 const MESSAGE_KINDS: ReadonlySet<string> = new Set<MessageKind>([
   "text",
@@ -322,38 +318,15 @@ export function phoneOf(pn: string | null): string | null {
   return pn?.endsWith(PN_SUFFIX) ? `+${userOf(pn)}` : null
 }
 
-/** SQL for the phone of a phone-JID expression. */
-const sqlPhone = (pn: string) =>
-  `CASE WHEN ${pn} LIKE '%${PN_SUFFIX}' THEN '+' || substr(${pn}, 1, instr(${pn}, '@') - 1) END`
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let index = 0; index < items.length; index += size)
+    out.push(items.slice(index, index + size))
+  return out
+}
 
-/**
- * SQL for a person's display name, best first: the address book name, the name
- * they chose on WhatsApp, their verified business name, their phone number,
- * their masked phone. `jid` covers people never stored (a bare phone JID).
- */
-const sqlPersonName = (p: string, jid: string) =>
-  `COALESCE(${p}.name, ${p}.push_name, ${p}.business_name, ${sqlPhone(`${p}.pn`)}, ${sqlPhone(jid)}, ${p}.redacted_phone)`
-
-const sqlChatName = (c: string, p: string) => `COALESCE(${c}.name, ${sqlPersonName(p, `${c}.jid`)})`
-
-/** Message columns with resolved chat and sender names; `from` must alias messages as `m`. */
-const messageSelect = (from = "messages m", extraColumns = "") => `
-  SELECT m.chat_jid, ${sqlChatName("c", "cp")} AS chat_name,
-    m.id, m.from_me, m.sender_jid, COALESCE(${sqlPersonName("sp", "m.sender_jid")}, m.sender_name) AS sender_name,
-    m.sent_at, m.kind, m.text, m.quoted_id, m.mentions, m.forwarded, m.media, m.edited, m.deleted ${extraColumns}
-  FROM ${from}
-  LEFT JOIN chats c ON c.jid = m.chat_jid
-  LEFT JOIN people cp ON cp.id = m.chat_jid
-  LEFT JOIN people sp ON sp.id = m.sender_jid`
-const MESSAGE_SELECT = messageSelect()
-
-const CHAT_SELECT = `
-  SELECT c.jid, ${sqlChatName("c", "p")} AS name, COALESCE(${sqlPhone("p.pn")}, ${sqlPhone("c.jid")}) AS phone,
-    c.unread_count, c.last_message_at, c.archived, c.pinned
-  FROM chats c LEFT JOIN people p ON p.id = c.jid`
-
-function likePattern(text: string): string {
-  return `%${text.replace(/[%_\\]/g, "\\$&")}%`
+function placeholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(", ")
 }
 
 /**
@@ -383,7 +356,7 @@ export class Archive {
     return this.storage.sql
   }
 
-  // People
+  // Identity
 
   /**
    * The JID a person or chat is stored under: a phone JID becomes the person's
@@ -391,94 +364,54 @@ export class Archive {
    */
   canonical(jid: string): string {
     if (!jid.endsWith(PN_SUFFIX)) return jid
-    const row = this.sql.exec<{ id: string }>("SELECT id FROM people WHERE pn = ?", jid).next()
-    return row.done ? jid : row.value.id
+    const row = this.sql
+      .exec<{ lid: string }>("SELECT lid FROM phone_lids WHERE pn = ?", jid)
+      .next()
+    return row.done ? jid : row.value.lid
   }
 
-  /** Records what an event says about a person, merging their phone and LID identities. */
-  learnPerson(input: PersonInput): void {
-    const inputLid = input.lid ?? (input.jid.endsWith(LID_SUFFIX) ? input.jid : null)
-    const inputPn = input.pn ?? (input.jid.endsWith(PN_SUFFIX) ? input.jid : null)
-
-    // On conflicting names the phone identity wins: the address book is keyed
-    // by phone number, and mautrix-whatsapp settles push-name conflicts the same way.
-    const byPn = inputPn ? this.findPerson("id = ?1 OR pn = ?1", inputPn) : null
-    const byLid = inputLid ? this.findPerson("id = ?1 OR lid = ?1", inputLid) : null
-    const byId = byPn || byLid ? null : this.findPerson("id = ?1", input.jid)
-    const existing = [byPn, byLid, byId].filter(
-      (row, index, rows): row is PersonRow =>
-        row !== null && rows.findIndex((other) => other?.id === row.id) === index,
-    )
-    const pick = (field: Exclude<keyof PersonRow, "id">) =>
-      existing.map((row) => row[field]).find((value) => value !== null) ?? null
-
-    // The canonical id is decided after merging: an update that only names the
-    // phone JID must not pull a person already known by LID back to the phone.
-    const lid = inputLid ?? pick("lid")
-    const pn = inputPn ?? pick("pn")
-    const id = lid ?? pn ?? input.jid
-    const merged: PersonRow = {
-      id,
-      lid,
-      pn,
-      name: input.name ?? pick("name"),
-      push_name: input.pushName ?? pick("push_name"),
-      business_name: input.businessName ?? pick("business_name"),
-      redacted_phone: input.redactedPhone ?? pick("redacted_phone"),
-      username: input.username ?? pick("username"),
-    }
-    const merging = existing.filter((row) => row.id !== id)
-    const [only] = existing
-    const unchanged =
-      existing.length === 1 &&
-      only?.id === id &&
-      PERSON_FIELDS.every((field) => only[field] === merged[field])
-    if (unchanged) return
-
+  /** Records that a phone JID and a LID are one person, moving what was stored under the phone JID. */
+  learnPair(pn: string, lid: string): void {
+    const known = this.sql
+      .exec<{ lid: string }>("SELECT lid FROM phone_lids WHERE pn = ?", pn)
+      .next()
+    if (!known.done && known.value.lid === lid) return
     this.storage.transactionSync(() => {
-      for (const row of merging) this.sql.exec("DELETE FROM people WHERE id = ?", row.id)
-      this.sql.exec(
-        `INSERT OR REPLACE INTO people (id, lid, pn, name, push_name, business_name, redacted_phone, username)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        merged.id,
-        merged.lid,
-        merged.pn,
-        merged.name,
-        merged.push_name,
-        merged.business_name,
-        merged.redacted_phone,
-        merged.username,
-      )
-      // Chats and messages may sit under any JID that now resolves to `id`,
-      // including a phone JID no person row was ever stored under. A name
-      // update for an identity already settled has nothing to move.
-      const settled = existing.some(
-        (row) => row.id === id && row.pn === merged.pn && row.lid === merged.lid,
-      )
-      const aliases = new Set(merging.map((row) => row.id))
-      if (!settled) for (const alias of [merged.pn, merged.lid]) if (alias) aliases.add(alias)
-      aliases.delete(id)
-      for (const alias of aliases) this.rekey(alias, id)
+      this.sql.exec("INSERT OR REPLACE INTO phone_lids (pn, lid) VALUES (?, ?)", pn, lid)
+      this.rekey(pn, lid)
     })
   }
 
-  private findPerson(where: string, jid: string): PersonRow | null {
-    const row = this.sql.exec<PersonRow>(`SELECT * FROM people WHERE ${where}`, jid).next()
-    return row.done ? null : row.value
+  /** Records names seen for a person, group or channel. A name seen again refreshes its date. */
+  learnNames(jid: string, names: readonly NameInput[]): void {
+    const id = this.canonical(jid)
+    const now = Math.floor(Date.now() / 1000)
+    for (const { source, name, seenAt } of names) {
+      const trimmed = name.trim()
+      if (!trimmed) continue
+      this.sql.exec(
+        `INSERT INTO names (jid, source, name, seen_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (jid, source, name) DO UPDATE SET seen_at = MAX(seen_at, excluded.seen_at)`,
+        id,
+        source,
+        trimmed,
+        seenAt ?? now,
+      )
+    }
   }
 
-  /** Moves a chat, its messages and reactions, and authorship from one JID to another. */
+  /** Moves everything stored under one JID to another; what already exists there wins. */
   private rekey(from: string, to: string): void {
     const exec = (query: string) => this.sql.exec(query, to, from)
     exec("UPDATE OR IGNORE messages SET chat_jid = ? WHERE chat_jid = ?")
     exec("UPDATE messages SET sender_jid = ? WHERE sender_jid = ?")
     exec("UPDATE OR IGNORE reactions SET chat_jid = ? WHERE chat_jid = ?")
     exec("UPDATE OR IGNORE reactions SET sender_jid = ? WHERE sender_jid = ?")
+    exec("UPDATE OR IGNORE names SET jid = ? WHERE jid = ?")
     this.sql.exec(
-      `INSERT INTO chats (jid, name, unread_count, last_message_at, archived, pinned, muted_until)
-       SELECT ?, name, unread_count, last_message_at, archived, pinned, muted_until FROM chats WHERE jid = ?
+      `INSERT INTO chats (jid, unread_count, last_message_at, archived, pinned, muted_until)
+       SELECT ?, unread_count, last_message_at, archived, pinned, muted_until FROM chats WHERE jid = ?
        ON CONFLICT (jid) DO UPDATE SET
-         name = COALESCE(chats.name, excluded.name),
          unread_count = MAX(chats.unread_count, excluded.unread_count),
          last_message_at = MAX(COALESCE(chats.last_message_at, 0), COALESCE(excluded.last_message_at, 0)),
          archived = MIN(chats.archived, excluded.archived),
@@ -490,50 +423,85 @@ export class Archive {
     // What could not move already exists under the new JID.
     this.sql.exec("DELETE FROM messages WHERE chat_jid = ?", from)
     this.sql.exec("DELETE FROM reactions WHERE chat_jid = ? OR sender_jid = ?", from, from)
+    this.sql.exec("DELETE FROM names WHERE jid = ?", from)
     this.sql.exec("DELETE FROM chats WHERE jid = ?", from)
   }
 
-  findPeople(text: string, limit: number): Person[] {
-    const rows = this.sql.exec<PersonRow>(
-      `SELECT * FROM people
-       WHERE name LIKE ?1 ESCAPE '\\' OR push_name LIKE ?1 ESCAPE '\\' OR business_name LIKE ?1 ESCAPE '\\'
-         OR pn LIKE ?1 ESCAPE '\\' OR id LIKE ?1 ESCAPE '\\' OR username LIKE ?1 ESCAPE '\\'
-       ORDER BY name IS NULL, name, push_name LIMIT ?2`,
-      likePattern(text),
+  /** Display name, phone and other names of each JID, in one pass over the names table. */
+  private identities(jids: Iterable<string>): Map<string, Identity> {
+    const unique = [...new Set(jids)]
+    const names = new Map<string, NameRecord[]>()
+    const phones = new Map<string, string>()
+    for (const chunk of chunks(unique, IN_CHUNK)) {
+      const marks = placeholders(chunk.length)
+      const nameRows = this.sql.exec<{
+        jid: string
+        source: string
+        name: string
+        seen_at: number
+      }>(`SELECT jid, source, name, seen_at FROM names WHERE jid IN (${marks})`, ...chunk)
+      for (const row of nameRows) {
+        if (!isNameSource(row.source)) continue
+        const list = names.get(row.jid) ?? []
+        list.push({ source: row.source, name: row.name, seenAt: row.seen_at })
+        names.set(row.jid, list)
+      }
+      const phoneRows = this.sql.exec<{ lid: string; pn: string }>(
+        `SELECT lid, pn FROM phone_lids WHERE lid IN (${marks})`,
+        ...chunk,
+      )
+      for (const row of phoneRows) phones.set(row.lid, row.pn)
+    }
+    return new Map(
+      unique.map((jid) => [
+        jid,
+        resolveIdentity(jid, names.get(jid) ?? [], phoneOf(phones.get(jid) ?? jid)),
+      ]),
+    )
+  }
+
+  getPerson(jid: string): Identity {
+    const id = this.canonical(jid)
+    const identity = this.identities([id]).get(id)
+    return identity ?? { jid: id, name: null, phone: phoneOf(id), aliases: [] }
+  }
+
+  /**
+   * JIDs whose names (any of them, accents and case ignored) or phone match the
+   * text, with the name that matched. `scope` narrows the candidates in SQL.
+   */
+  private matchNames(text: string, scope: string, limit: number): Map<string, string | null> {
+    const fts = toFtsQuery(text)
+    const digits = text.replace(/\D/g, "")
+    const phone = digits.length >= 3 ? `%${digits}%` : null
+    const rows = this.sql.exec<{ jid: string; matched: string | null }>(
+      `WITH hits AS (
+         SELECT n.jid, n.name AS matched FROM names_fts JOIN names n ON n.rowid = names_fts.rowid
+         WHERE ?1 IS NOT NULL AND names_fts MATCH ?1
+         UNION ALL SELECT lid, NULL FROM phone_lids WHERE ?2 IS NOT NULL AND pn LIKE ?2
+         UNION ALL SELECT jid, NULL FROM chats WHERE ?2 IS NOT NULL AND jid LIKE ?2
+       )
+       SELECT h.jid, max(h.matched) AS matched FROM hits h ${scope}
+       GROUP BY h.jid LIMIT ?3`,
+      fts,
+      phone,
       limit,
     )
-    return Array.from(rows, (row) => this.toPerson(row))
+    return new Map(Array.from(rows, (row) => [row.jid, row.matched]))
   }
 
-  getPerson(jid: string): Person | null {
-    const row = this.findPerson("id = ?1", this.canonical(jid))
-    return row ? this.toPerson(row) : null
-  }
-
-  private toPerson(row: PersonRow): Person {
-    const phone = phoneOf(row.pn) ?? phoneOf(row.id)
-    const name = row.name ?? row.push_name ?? row.business_name ?? phone ?? row.redacted_phone
-    return {
-      jid: row.id,
-      name,
-      phone,
-      lid: row.lid,
-      whatsappName: row.push_name && row.push_name !== name ? row.push_name : null,
-      businessName: row.business_name,
-    }
-  }
-
-  /** Best display name for any JID: a chat's name, or a person's. */
-  private nameOf(jid: string): string | null {
-    const id = this.canonical(jid)
-    const row = this.sql
-      .exec<{ name: string | null }>(
-        `SELECT COALESCE(c.name, ${sqlPersonName("p", "?1")}) AS name
-         FROM (SELECT ?1 AS jid) j LEFT JOIN chats c ON c.jid = j.jid LEFT JOIN people p ON p.id = j.jid`,
-        id,
-      )
-      .one()
-    return row.name
+  /** People whose names or phone match the text, including people with no chat. */
+  findPeople(text: string, limit: number): Match<Identity>[] {
+    const hits = this.matchNames(
+      text,
+      `WHERE h.jid LIKE '%${LID_SUFFIX}' OR h.jid LIKE '%${PN_SUFFIX}'`,
+      limit,
+    )
+    const identities = this.identities(hits.keys())
+    return [...hits].flatMap(([jid, matched]) => {
+      const identity = identities.get(jid)
+      return identity ? [{ ...identity, matched: matched === identity.name ? null : matched }] : []
+    })
   }
 
   // Writes
@@ -544,12 +512,11 @@ export class Archive {
       const lastByChat = new Map<string, number>()
       for (const message of messages) {
         this.sql.exec(
-          `INSERT INTO messages (chat_jid, id, from_me, sender_jid, sender_name, sent_at, kind, text, quoted_id,
+          `INSERT INTO messages (chat_jid, id, from_me, sender_jid, sent_at, kind, text, quoted_id,
              mentions, forwarded, media, raw)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (chat_jid, id) DO UPDATE SET
              sender_jid = excluded.sender_jid,
-             sender_name = COALESCE(excluded.sender_name, sender_name),
              kind = excluded.kind,
              text = CASE WHEN edited OR deleted THEN text ELSE excluded.text END,
              quoted_id = excluded.quoted_id,
@@ -561,7 +528,6 @@ export class Archive {
           message.id,
           message.fromMe ? 1 : 0,
           message.senderJid,
-          message.senderName,
           message.sentAt,
           message.kind,
           message.text,
@@ -637,17 +603,15 @@ export class Archive {
     this.storage.transactionSync(() => {
       for (const chat of chats) {
         this.sql.exec(
-          `INSERT INTO chats (jid, name, unread_count, last_message_at, archived, pinned, muted_until)
-           VALUES (?1, ?2, COALESCE(?3, 0), ?4, COALESCE(?5, 0), COALESCE(?6, 0), ?7)
+          `INSERT INTO chats (jid, unread_count, last_message_at, archived, pinned, muted_until)
+           VALUES (?1, COALESCE(?2, 0), ?3, COALESCE(?4, 0), COALESCE(?5, 0), ?6)
            ON CONFLICT (jid) DO UPDATE SET
-             name = COALESCE(?2, name),
-             unread_count = COALESCE(?3, unread_count),
-             last_message_at = MAX(COALESCE(last_message_at, 0), COALESCE(?4, 0)),
-             archived = COALESCE(?5, archived),
-             pinned = COALESCE(?6, pinned),
-             muted_until = COALESCE(?7, muted_until)`,
+             unread_count = COALESCE(?2, unread_count),
+             last_message_at = MAX(COALESCE(last_message_at, 0), COALESCE(?3, 0)),
+             archived = COALESCE(?4, archived),
+             pinned = COALESCE(?5, pinned),
+             muted_until = COALESCE(?6, muted_until)`,
           chat.jid,
-          chat.name ?? null,
           chat.unreadCount ?? null,
           chat.lastMessageAt ?? null,
           chat.archived === null || chat.archived === undefined ? null : Number(chat.archived),
@@ -696,52 +660,66 @@ export class Archive {
     const filters = ["1 = 1"]
     if (query.unreadOnly) filters.push("c.unread_count > 0")
     if (query.type === "groups") filters.push("c.jid LIKE '%@g.us'")
-    if (query.type === "direct")
+    if (query.type === "direct") {
       filters.push(`(c.jid LIKE '%${LID_SUFFIX}' OR c.jid LIKE '%${PN_SUFFIX}')`)
+    }
     if (!query.includeArchived) filters.push("c.archived = 0")
-    return this.chatRows(
-      `${CHAT_SELECT} WHERE ${filters.join(" AND ")}
-       ORDER BY c.pinned DESC, c.last_message_at DESC NULLS LAST LIMIT ? OFFSET ?`,
-      query.limit,
-      query.offset,
+    return this.chatSummaries(
+      this.sql
+        .exec<ChatRow>(
+          `SELECT ${CHAT_COLUMNS} FROM chats c WHERE ${filters.join(" AND ")}
+           ORDER BY c.pinned DESC, c.last_message_at DESC NULLS LAST LIMIT ? OFFSET ?`,
+          query.limit,
+          query.offset,
+        )
+        .toArray(),
     )
   }
 
-  /** Chats whose name, JID or phone contains `text` (case-insensitive for ASCII). */
-  findChats(text: string, limit: number): ChatSummary[] {
-    return this.chatRows(
-      `SELECT * FROM (${CHAT_SELECT})
-       WHERE name LIKE ?1 ESCAPE '\\' OR jid LIKE ?1 ESCAPE '\\' OR phone LIKE ?1 ESCAPE '\\'
-       ORDER BY last_message_at DESC NULLS LAST LIMIT ?2`,
-      likePattern(text),
-      limit,
-    )
+  /** Chats whose names (any of them) or phone match the text, most recently active first. */
+  findChats(text: string, limit: number): Match<ChatSummary>[] {
+    const hits = this.matchNames(text, "JOIN chats c ON c.jid = h.jid", 500)
+    if (hits.size === 0) return []
+    const jids = [...hits.keys()]
+    const rows = chunks(jids, IN_CHUNK)
+      .flatMap((chunk) =>
+        this.sql
+          .exec<ChatRow>(
+            `SELECT ${CHAT_COLUMNS} FROM chats c WHERE c.jid IN (${placeholders(chunk.length)})`,
+            ...chunk,
+          )
+          .toArray(),
+      )
+      .toSorted((a, b) => (b.last_message_at ?? 0) - (a.last_message_at ?? 0))
+      .slice(0, limit)
+    return this.chatSummaries(rows).map((chat) => {
+      const matched = hits.get(chat.jid) ?? null
+      return { ...chat, matched: matched === chat.name ? null : matched }
+    })
   }
 
   getChat(jid: string): ChatSummary | null {
-    return this.chatRows(`${CHAT_SELECT} WHERE c.jid = ?`, jid)[0] ?? null
+    const rows = this.sql
+      .exec<ChatRow>(`SELECT ${CHAT_COLUMNS} FROM chats c WHERE c.jid = ?`, jid)
+      .toArray()
+    return this.chatSummaries(rows)[0] ?? null
   }
 
-  private chatRows(query: string, ...params: SqlStorageValue[]): ChatSummary[] {
-    const rows = this.sql.exec<{
-      jid: string
-      name: string | null
-      phone: string | null
-      unread_count: number
-      last_message_at: number | null
-      archived: number
-      pinned: number
-    }>(query, ...params)
-    return Array.from(rows, (row) => ({
-      jid: row.jid,
-      name: row.name,
-      phone: row.phone,
-      type: chatTypeOf(row.jid),
-      unreadCount: row.unread_count,
-      lastMessageAt: row.last_message_at,
-      archived: row.archived === 1,
-      pinned: row.pinned === 1,
-    }))
+  private chatSummaries(rows: readonly ChatRow[]): ChatSummary[] {
+    const identities = this.identities(rows.map((row) => row.jid))
+    return rows.map((row) => {
+      const identity = identities.get(row.jid)
+      return {
+        jid: row.jid,
+        name: identity?.name ?? null,
+        phone: identity?.phone ?? null,
+        type: chatTypeOf(row.jid),
+        unreadCount: row.unread_count,
+        lastMessageAt: row.last_message_at,
+        archived: row.archived === 1,
+        pinned: row.pinned === 1,
+      }
+    })
   }
 
   /** Newest `limit` messages of a chat matching the filters, returned oldest first. */
@@ -760,12 +738,15 @@ export class Archive {
       filters.push("m.sender_jid = ?")
       params.push(query.senderJid)
     }
-    const rows = this.messageRows(
-      `${MESSAGE_SELECT} WHERE ${filters.join(" AND ")} ORDER BY m.sent_at DESC LIMIT ?`,
-      ...params,
-      query.limit,
-    )
-    return this.withReactions(rows).toReversed()
+    const rows = this.sql
+      .exec<MessageRow>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages m WHERE ${filters.join(" AND ")}
+         ORDER BY m.sent_at DESC LIMIT ?`,
+        ...params,
+        query.limit,
+      )
+      .toArray()
+    return this.toMessages(rows.toReversed())
   }
 
   /** The message plus up to `around` messages on each side, oldest first. */
@@ -779,35 +760,38 @@ export class Archive {
       .next()
     if (anchor.done) return []
     const at = anchor.value.sent_at
-    const before = this.messageRows(
-      `${MESSAGE_SELECT} WHERE m.chat_jid = ? AND m.sent_at <= ? AND m.id != ? ORDER BY m.sent_at DESC LIMIT ?`,
-      chatJid,
-      at,
-      id,
-      around,
-    ).toReversed()
-    const self = this.messageRows(
-      `${MESSAGE_SELECT} WHERE m.chat_jid = ? AND m.id = ?`,
-      chatJid,
-      id,
-    )
-    const after = this.messageRows(
-      `${MESSAGE_SELECT} WHERE m.chat_jid = ? AND m.sent_at >= ? AND m.id != ? ORDER BY m.sent_at ASC LIMIT ?`,
-      chatJid,
-      at,
-      id,
-      around,
-    )
-    return this.withReactions([...before, ...self, ...after])
+    const select = (where: string, order: "ASC" | "DESC") =>
+      this.sql
+        .exec<MessageRow>(
+          `SELECT ${MESSAGE_COLUMNS} FROM messages m WHERE m.chat_jid = ? AND ${where}
+           ORDER BY m.sent_at ${order} LIMIT ?`,
+          chatJid,
+          at,
+          id,
+          around,
+        )
+        .toArray()
+    const before = select("m.sent_at <= ? AND m.id != ?", "DESC").toReversed()
+    const after = select("m.sent_at >= ? AND m.id != ?", "ASC")
+    const self = this.sql
+      .exec<MessageRow>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages m WHERE m.chat_jid = ? AND m.id = ?`,
+        chatJid,
+        id,
+      )
+      .toArray()
+    return this.toMessages([...before, ...self, ...after])
   }
 
   getMessage(chatJid: string, id: string): ArchivedMessage | null {
-    const rows = this.messageRows(
-      `${MESSAGE_SELECT} WHERE m.chat_jid = ? AND m.id = ?`,
-      chatJid,
-      id,
-    )
-    return this.withReactions(rows)[0] ?? null
+    const rows = this.sql
+      .exec<MessageRow>(
+        `SELECT ${MESSAGE_COLUMNS} FROM messages m WHERE m.chat_jid = ? AND m.id = ?`,
+        chatJid,
+        id,
+      )
+      .toArray()
+    return this.toMessages(rows)[0] ?? null
   }
 
   /** The protobuf a message was stored from, for building its key or downloading its media. */
@@ -843,32 +827,36 @@ export class Archive {
       filters.push("m.sent_at > ?")
       params.push(query.after)
     }
-    const rows = this.sql.exec<MessageRow & { snippet: string }>(
-      `${messageSelect(
-        "messages_fts JOIN messages m ON m.rowid = messages_fts.rowid",
-        ", snippet(messages_fts, 0, '[', ']', '…', 16) AS snippet",
-      )}
-       WHERE ${filters.join(" AND ")} ORDER BY rank LIMIT ?`,
-      ...params,
-      query.limit,
-    )
-    const hits = Array.from(rows)
-    const messages = this.withReactions(hits.map((row) => this.toMessage(row)))
-    return messages.map((message, index) => ({ ...message, snippet: hits[index]?.snippet ?? "" }))
+    const rows = this.sql
+      .exec<MessageRow & { snippet: string }>(
+        `SELECT ${MESSAGE_COLUMNS}, snippet(messages_fts, 0, '[', ']', '…', 16) AS snippet
+         FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid
+         WHERE ${filters.join(" AND ")} ORDER BY rank LIMIT ?`,
+        ...params,
+        query.limit,
+      )
+      .toArray()
+    return this.toMessages(rows).map((message, index) => ({
+      ...message,
+      snippet: rows[index]?.snippet ?? "",
+    }))
   }
 
   stats(): ArchiveStats {
-    const count = (table: string): number =>
-      this.sql.exec<{ n: number }>(`SELECT count(*) AS n FROM ${table}`).one().n
+    const count = (query: string): number => this.sql.exec<{ n: number }>(query).one().n
     const range = this.sql
       .exec<{ oldest: number | null; newest: number | null }>(
         "SELECT min(sent_at) AS oldest, max(sent_at) AS newest FROM messages",
       )
       .one()
     return {
-      people: count("people"),
-      chats: count("chats"),
-      messages: count("messages"),
+      people: count(
+        `SELECT count(*) AS n FROM (
+           SELECT jid FROM names WHERE jid LIKE '%${LID_SUFFIX}' OR jid LIKE '%${PN_SUFFIX}'
+           UNION SELECT lid FROM phone_lids)`,
+      ),
+      chats: count("SELECT count(*) AS n FROM chats"),
+      messages: count("SELECT count(*) AS n FROM messages"),
       oldestMessageAt: range.oldest,
       newestMessageAt: range.newest,
     }
@@ -887,62 +875,61 @@ export class Archive {
 
   /** Incoming messages of a chat, newest first, for marking them read. */
   latestIncoming(chatJid: string, limit: number): { id: string }[] {
-    return Array.from(
-      this.sql.exec<{ id: string }>(
+    return this.sql
+      .exec<{ id: string }>(
         "SELECT id FROM messages WHERE chat_jid = ? AND from_me = 0 ORDER BY sent_at DESC LIMIT ?",
         chatJid,
         limit,
-      ),
-    )
+      )
+      .toArray()
   }
 
   /** Wipes everything: used when the device is unlinked. */
   clear(): void {
     this.storage.transactionSync(() => {
-      for (const table of ["messages", "reactions", "chats", "people", "sent"]) {
+      for (const table of ["messages", "reactions", "chats", "names", "phone_lids", "sent"]) {
         this.sql.exec(`DELETE FROM ${table}`)
       }
     })
   }
 
-  private messageRows(query: string, ...params: SqlStorageValue[]): ArchivedMessage[] {
-    return Array.from(this.sql.exec<MessageRow>(query, ...params), (row) => this.toMessage(row))
-  }
-
-  private toMessage(row: MessageRow): ArchivedMessage {
-    return {
+  /** Rows to messages, with chat, sender and mention names and reactions resolved in bulk. */
+  private toMessages(rows: readonly MessageRow[]): ArchivedMessage[] {
+    const mentions = rows.map((row) => parseMentions(row.mentions))
+    const identities = this.identities([
+      ...rows.flatMap((row) => [row.chat_jid, ...(row.sender_jid ? [row.sender_jid] : [])]),
+      ...mentions.flat().map((jid) => this.canonical(jid)),
+    ])
+    const nameOf = (jid: string | null) => (jid ? (identities.get(jid)?.name ?? null) : null)
+    return rows.map((row, index) => ({
       chatJid: row.chat_jid,
-      chatName: row.chat_name,
+      chatName: nameOf(row.chat_jid),
       id: row.id,
       fromMe: row.from_me === 1,
       senderJid: row.sender_jid,
-      senderName: row.sender_name,
+      senderName: nameOf(row.sender_jid),
       sentAt: row.sent_at,
       kind: isMessageKind(row.kind) ? row.kind : "other",
       text: row.text,
       quotedId: row.quoted_id,
-      mentions: parseMentions(row.mentions).map((jid) => ({
-        user: userOf(jid),
-        jid: this.canonical(jid),
-        name: this.nameOf(jid),
-      })),
+      mentions: (mentions[index] ?? []).map((jid) => {
+        const canonical = this.canonical(jid)
+        return { user: userOf(jid), jid: canonical, name: nameOf(canonical) }
+      }),
       forwarded: row.forwarded === 1,
       media: parseMedia(row.media),
       edited: row.edited === 1,
       deleted: row.deleted === 1,
-      reactions: [],
-    }
+      reactions: this.reactionsOf(row.chat_jid, row.id),
+    }))
   }
 
-  private withReactions(messages: ArchivedMessage[]): ArchivedMessage[] {
-    return messages.map((message) => {
-      const rows = this.sql.exec<{ emoji: string; sender_jid: string }>(
-        "SELECT emoji, sender_jid FROM reactions WHERE chat_jid = ? AND message_id = ? ORDER BY reacted_at",
-        message.chatJid,
-        message.id,
-      )
-      const reactions = Array.from(rows, (row) => ({ emoji: row.emoji, senderJid: row.sender_jid }))
-      return reactions.length > 0 ? { ...message, reactions } : message
-    })
+  private reactionsOf(chatJid: string, messageId: string): ArchivedMessage["reactions"] {
+    const rows = this.sql.exec<{ emoji: string; sender_jid: string }>(
+      "SELECT emoji, sender_jid FROM reactions WHERE chat_jid = ? AND message_id = ? ORDER BY reacted_at",
+      chatJid,
+      messageId,
+    )
+    return Array.from(rows, (row) => ({ emoji: row.emoji, senderJid: row.sender_jid }))
   }
 }
