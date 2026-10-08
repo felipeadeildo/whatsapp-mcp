@@ -116,10 +116,22 @@ Change `TIMEZONE` in `wrangler.jsonc`, or pass `--var TIMEZONE:<zone>` to `wrang
 
 ## Costs
 
-Each account keeps its Durable Object in memory all day, which Cloudflare bills as duration. Measured in production, linking an account with about 30,000 messages wrote about 250,000 database rows in its first minutes, and the object then used 50 to 65 MB of its 128 MB.
+**One personal account running 24/7 costs $5 per month**, the price of Workers Paid. Its included usage covers everything one account does:
 
-- **Workers Paid** costs $5 per month, and its included usage covers one account. Each extra account adds about $4 per month.
-- **Workers Free** covers one account's duration, but documents limits of 100,000 written rows per day and 10 ms of CPU per request. Our first sync wrote 250,000 rows and MCP requests used up to 57 ms of CPU. Cloudflare blocked neither in our test, and nothing says it never will.
+|                | One account, per month                              | Workers Paid includes |
+| -------------- | --------------------------------------------------- | --------------------- |
+| Time in memory | 324,000 GB-s                                        | 400,000 GB-s          |
+| Requests       | 90,000, plus your assistant's calls                 | 1 million             |
+| Written rows   | 260,000 once to link, then 90,000 plus new messages | 50 million            |
+
+The object stays in memory all day, and Cloudflare bills that time as if it used the full 128 MB, however busy the account is. It also wakes every 30 seconds, which explains the 90,000 requests and rows. Linking saves the whole history at once: an account with about 30,000 messages wrote 258,000 rows in its first hour. Going past the included usage would take about 30,000 assistant calls or 100,000 new messages a day.
+
+More accounts share the same plan. Cloudflare bills extra time in blocks of 1 million GB-s at $12.50, so two to four accounts cost $17.50 per month.
+
+Workers Free is not enough, even for one account.
+
+> [!WARNING]
+> Workers Free allows 100,000 written rows per day, fewer than the first sync writes. When an account crosses that limit, Cloudflare blocks every write until 00:00 UTC, so the server can't save new messages or schedule its heartbeat. Upgrading to Workers Paid lifts the block.
 
 See [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [limits](https://developers.cloudflare.com/durable-objects/platform/limits/) for current numbers.
 
