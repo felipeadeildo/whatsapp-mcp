@@ -16,6 +16,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@modelcontextprotocol/server": "2.0.0",
     "@oxidezap/baileyrs": "^0.3.10",
     "agents": "0.27.0",
@@ -33,8 +34,11 @@
   },
   "cloudflare": {
     "bindings": {
-      "API_KEY": {
-        "description": "Bearer token that protects the API and the MCP endpoint. Generate one with `openssl rand -hex 32` and keep it in your password manager."
+      "SECRET": {
+        "description": "The password of your server. You type it to open the pairing page and to let an AI app connect, and scripts can send it as a Bearer token. At least 16 characters. Generate one with `openssl rand -hex 32` or your password manager."
+      },
+      "AUTH_MODE": {
+        "description": "How MCP clients get in: `oauth` (sign in with the secret in the browser, works in Claude and ChatGPT), `api_key` (send the secret as a Bearer token) or `both`."
       },
       "TIMEZONE": {
         "description": "IANA time zone the tools show and read dates in, e.g. `America/Sao_Paulo`."

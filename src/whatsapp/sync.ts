@@ -4,6 +4,7 @@ import type { Chat } from "@oxidezap/baileyrs/lib/Types/Chat.js"
 import type { Contact } from "@oxidezap/baileyrs/lib/Types/Contact.js"
 import type { WAMessage, WAMessageKey } from "@oxidezap/baileyrs/lib/Types/Message.js"
 import { jidNormalizedUser } from "@oxidezap/baileyrs/lib/WABinary/jid-utils.js"
+import { proto } from "@oxidezap/baileyrs/lib/WAProto/runtime.js"
 
 import {
   type Archive,
@@ -169,6 +170,8 @@ class Ingest {
 
 export interface SyncHooks {
   readonly onMessages?: (messages: readonly MessageInput[], source: "live" | "history") => void
+  /** A batch of the initial history arrived. `progress` runs from 0 to 100, or is null when the phone does not say. */
+  readonly onHistoryBatch?: (progress: number | null) => void
 }
 
 export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks = {}): void {
@@ -177,11 +180,14 @@ export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks =
   const chats = (list: readonly Partial<Chat>[]) =>
     archive.saveChats(list.map((chat) => ingest.chat(chat)).filter((chat) => chat !== null))
 
-  ev.on("messaging-history.set", ({ chats: historyChats, contacts, messages, lidPnMappings }) => {
-    for (const { lid, pn } of lidPnMappings ?? []) ingest.pair(lid, pn)
-    for (const contact of contacts) ingest.contact(contact, "history")
-    chats(historyChats)
-    hooks.onMessages?.(ingest.messages(messages), "history")
+  ev.on("messaging-history.set", (batch) => {
+    for (const { lid, pn } of batch.lidPnMappings ?? []) ingest.pair(lid, pn)
+    for (const contact of batch.contacts) ingest.contact(contact, "history")
+    chats(batch.chats)
+    hooks.onMessages?.(ingest.messages(batch.messages), "history")
+    if (batch.syncType !== proto.HistorySync.HistorySyncType.ON_DEMAND) {
+      hooks.onHistoryBatch?.(batch.progress ?? null)
+    }
   })
 
   ev.on("messages.upsert", ({ messages }) => {

@@ -1,2 +1,18 @@
-# Bearer token required by every API call. Generate with: openssl rand -hex 32
-API_KEY=change-me
+# Copy to .dev.vars for `bun run dev`. Values here override the "vars" in wrangler.jsonc.
+
+# The password of your server, at least 16 characters.
+# You type it to open the pairing page and to allow an AI app to connect.
+# When AUTH_MODE allows it, scripts and MCP clients also send it as a Bearer token.
+# Generate one with: openssl rand -hex 32
+SECRET=change-me-to-something-long
+
+# How MCP clients get into /accounts/{id}/mcp:
+#   oauth    The client opens this server in the browser, you type SECRET and click Allow.
+#            Claude and ChatGPT (web, desktop and phone) connect this way.
+#   api_key  The client sends "Authorization: Bearer <SECRET>" on every request.
+#            For curl, scripts and clients where you can set a header.
+#   both     Either of the two. The default.
+AUTH_MODE=both
+
+# IANA time zone the tools show and read dates in, e.g. America/Sao_Paulo.
+TIMEZONE=UTC

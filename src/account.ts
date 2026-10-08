@@ -39,11 +39,18 @@ const EXPLICIT_DEDUP_SECONDS = 24 * 60 * 60
 const HISTORY_WAIT_MS = 20_000
 const GROUPS_REFRESHED_AT = "groups_refreshed_at"
 const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
+// The phone sends history in batches; a pause this long means it is done or stalled.
+const HISTORY_IDLE_MS = 45_000
 
 // The library types USync results as `unknown`.
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })
 
 export type ConnectionState = "idle" | "connecting" | "pairing" | "open" | "closed" | "logged_out"
+
+export interface HistorySync {
+  readonly active: boolean
+  readonly progress: number | null
+}
 
 export interface AccountStatus {
   readonly state: ConnectionState
@@ -52,6 +59,7 @@ export interface AccountStatus {
   readonly qrSvg: string | null
   readonly lastError: string | null
   readonly startedAt: number
+  readonly history: HistorySync
 }
 
 export interface Overview extends AccountStatus {
@@ -122,6 +130,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private lastError: string | null = null
   private readonly startedAt = Date.now()
   private readonly historyWaiters = new Map<string, () => void>()
+  private historyProgress: number | null = null
+  private historyBatchAt = 0
 
   async start(): Promise<AccountStatus> {
     await this.ctx.storage.put(WANTS_CONNECTION, true)
@@ -148,6 +158,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
       qrSvg: this.state === "pairing" ? this.qrSvg : null,
       lastError: this.lastError,
       startedAt: this.startedAt,
+      history: {
+        active: Date.now() - this.historyBatchAt < HISTORY_IDLE_MS && this.historyProgress !== 100,
+        progress: this.historyProgress,
+      },
     }
   }
 
@@ -359,6 +373,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
         for (const chat of new Set(messages.map((message) => message.chatJid))) {
           this.historyWaiters.get(chat)?.()
         }
+      },
+      onHistoryBatch: (progress) => {
+        this.historyBatchAt = Date.now()
+        if (progress !== null) this.historyProgress = progress
       },
     })
     this.socket = socket

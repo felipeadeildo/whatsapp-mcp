@@ -1,10 +1,12 @@
-// Self-contained, so nothing on the page can leak the API key it reads from the
-// URL fragment. The script avoids backticks and `${` to live inside a template.
+// The script avoids backticks and `${` so it can live inside a template.
+import type { AuthMode } from "./auth/config"
+import { type Lang, LOCALE, TEXT } from "./text"
+
 const REPOSITORY_URL = "https://github.com/felipeadeildo/whatsapp-mcp"
 
 const GITHUB_MARK = `<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`
 
-const STYLE = `
+export const STYLE = `
 :root {
   --paper: #0a1512;
   --surface: #11201b;
@@ -124,6 +126,7 @@ button:disabled { cursor: progress; opacity: 0.7; }
 .viewfinder[data-mode="wait"] { --corner: var(--wait); }
 .viewfinder[data-mode="done"] { --corner: var(--signal); }
 .viewfinder[data-mode="alert"] { --corner: var(--alert); }
+.viewfinder[data-mode="sync"] { --corner: var(--signal); }
 .visual { width: 100%; height: 100%; display: grid; place-items: center; }
 .visual svg { width: 100%; height: auto; display: block; }
 .visual .qr { background: #fff; padding: 0.4rem; border-radius: 0.25rem; }
@@ -140,6 +143,41 @@ button:disabled { cursor: progress; opacity: 0.7; }
   animation: spin 0.9s linear infinite;
 }
 @keyframes spin { to { transform: rotate(1turn); } }
+.ring { position: relative; width: 64%; aspect-ratio: 1; display: grid; place-items: center; text-align: center; }
+.visual .ring svg { position: absolute; inset: 0; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 3.5; }
+.ring .track { stroke: var(--line); }
+.ring .bar {
+  stroke: var(--signal);
+  stroke-linecap: round;
+  stroke-dasharray: 125.66;
+  stroke-dashoffset: calc(125.66 * (1 - var(--progress, 0)));
+  transition: stroke-dashoffset 0.6s ease-out;
+}
+.ring[data-indeterminate] svg { animation: spin 1.4s linear infinite; }
+.ring[data-indeterminate] .bar { stroke-dashoffset: 94; }
+.ring-value { font: 650 1.7rem/1 var(--display); font-variant-numeric: tabular-nums; }
+.ring-label { margin-top: 0.3rem; color: var(--muted); font-size: 0.8rem; }
+.live { display: flex; align-items: center; gap: 0.55rem; margin: 1rem 0 0; color: var(--muted); font-size: 0.95rem; }
+.dot {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--signal);
+  animation: pulse 2s ease-out infinite;
+}
+@keyframes pulse {
+  from { box-shadow: 0 0 0 0 rgb(60 196 136 / 0.6); }
+  to { box-shadow: 0 0 0 0.6rem rgb(60 196 136 / 0); }
+}
+.bump { color: var(--signal); font-weight: 600; font-variant-numeric: tabular-nums; opacity: 0; }
+.bump.pop { animation: pop 2.6s ease-out forwards; }
+@keyframes pop {
+  0% { opacity: 0; transform: translateY(0.35rem); }
+  12%, 80% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
 .check path { stroke-dasharray: 60; stroke-dashoffset: 0; animation: draw 0.5s ease-out; }
 @keyframes draw { from { stroke-dashoffset: 60; } }
 
@@ -161,6 +199,20 @@ button:disabled { cursor: progress; opacity: 0.7; }
 }
 .copyable button { padding: 0.6rem 1rem; background: transparent; color: var(--ink); border-color: var(--line); }
 .copyable button:hover { border-color: var(--ink); }
+.narrow { max-width: 30rem; }
+.card { margin-top: 3.5rem; }
+.form { margin-top: 1.5rem; }
+.form label { display: block; margin-bottom: 0.4rem; font-weight: 600; }
+.form input[type="password"] {
+  width: 100%;
+  padding: 0.75rem 0.85rem;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  font: 1rem/1.4 var(--text);
+}
+.form input:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
 [hidden] { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -168,83 +220,30 @@ button:disabled { cursor: progress; opacity: 0.7; }
 `
 
 const SCRIPT = String.raw`
-const TEXT = {
-  en: {
-    loading: ["Checking the connection", "One moment."],
-    missingKey: ["Add your API key to the address", "Open this page as /accounts/{id}#YOUR_API_KEY. Everything after # stays in your browser and is never sent to the server."],
-    unauthorized: ["This API key was not accepted", "Check the key after # in the address. It must match the API_KEY secret of this deployment."],
-    offline: ["The server is not answering", "Trying again in a few seconds."],
-    notLinked: ["Not linked to WhatsApp yet", "Link this account so your agents can read and send its messages. Have your phone at hand."],
-    unlinked: ["Your phone unlinked this device", "Its archive was cleared. Link it again to continue."],
-    connecting: ["Connecting to WhatsApp", "This takes a few seconds."],
-    pairing: ["Scan the code with your phone", "The code changes every few seconds, so keep this page open until your phone confirms."],
-    steps: ["Open WhatsApp on your phone.", "Go to Settings, then Linked devices.", "Tap Link a device and point the camera at the code."],
-    phoneNote: "On a phone? Open this page on a computer and scan the code with your phone.",
-    linked: "Linked as {name}",
-    archived: "Your agents can read <strong>{messages}</strong> messages from <strong>{chats}</strong> chats, back to {date}.",
-    syncing: "Your phone is sending the history now. Keep WhatsApp open on it; this can take a few minutes.",
-    reconnecting: ["Reconnecting to WhatsApp", "The connection dropped. It comes back on its own within a minute."],
-    lastError: "Last error: ",
-    link: "Link WhatsApp",
-    linking: "Linking…",
-    unlink: "Unlink this device",
-    unlinking: "Unlinking…",
-    confirmUnlink: "Unlink WhatsApp from this server? Its archive is deleted, and linking again means scanning a new code.",
-    copy: "Copy",
-    copied: "Copied",
-    connect: ["Connect your agent", "Any MCP client works: point it at the endpoint and send the API key as a Bearer token in the Authorization header."],
-    endpoint: "MCP endpoint",
-    claude: "Claude Code",
-  },
-  pt: {
-    loading: ["Verificando a conexão", "Um instante."],
-    missingKey: ["Coloque sua chave de API no endereço", "Abra esta página como /accounts/{id}#SUA_CHAVE. O que vem depois do # fica no seu navegador e nunca vai para o servidor."],
-    unauthorized: ["Esta chave de API não foi aceita", "Confira a chave depois do # no endereço. Ela precisa ser igual ao secret API_KEY deste deploy."],
-    offline: ["O servidor não está respondendo", "Tentando de novo em alguns segundos."],
-    notLinked: ["Ainda não conectado ao WhatsApp", "Conecte esta conta para que seus agentes leiam e enviem mensagens por ela. Tenha o celular em mãos."],
-    unlinked: ["Seu celular desconectou este aparelho", "O arquivo dele foi apagado. Conecte de novo para continuar."],
-    connecting: ["Conectando ao WhatsApp", "Isso leva alguns segundos."],
-    pairing: ["Escaneie o código com o celular", "O código muda a cada poucos segundos, então deixe esta página aberta até o celular confirmar."],
-    steps: ["Abra o WhatsApp no celular.", "Vá em Configurações e depois em Aparelhos conectados.", "Toque em Conectar um aparelho e aponte a câmera para o código."],
-    phoneNote: "Está no celular? Abra esta página num computador e escaneie o código com o celular.",
-    linked: "Conectado como {name}",
-    archived: "Seus agentes podem ler <strong>{messages}</strong> mensagens de <strong>{chats}</strong> conversas, desde {date}.",
-    syncing: "Seu celular está enviando o histórico agora. Deixe o WhatsApp aberto nele; pode levar alguns minutos.",
-    reconnecting: ["Reconectando ao WhatsApp", "A conexão caiu. Ela volta sozinha em até um minuto."],
-    lastError: "Último erro: ",
-    link: "Conectar WhatsApp",
-    linking: "Conectando…",
-    unlink: "Desconectar este aparelho",
-    unlinking: "Desconectando…",
-    confirmUnlink: "Desconectar o WhatsApp deste servidor? O arquivo é apagado, e conectar de novo exige escanear um novo código.",
-    copy: "Copiar",
-    copied: "Copiado",
-    connect: ["Conecte seu agente", "Qualquer cliente MCP serve: aponte para o endpoint e envie a chave de API como token Bearer no cabeçalho Authorization."],
-    endpoint: "Endpoint MCP",
-    claude: "Claude Code",
-  },
-}
-
 const GLYPHS = {
   done: '<svg class="glyph check" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M10 25l9 9 19-20" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   alert: '<svg class="glyph" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 12v15" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="24" cy="36" r="3.2" fill="currentColor"/></svg>',
   idle: '<svg class="glyph" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="14" y="6" width="20" height="36" rx="4" stroke="currentColor" stroke-width="3.5"/><path d="M21 35h6" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/></svg>',
   spin: '<div class="spinner" role="presentation"></div>',
+  ring: '<div class="ring"><svg viewBox="0 0 48 48" aria-hidden="true"><circle class="track" cx="24" cy="24" r="20"/><circle class="bar" cx="24" cy="24" r="20"/></svg><div><div class="ring-value"></div><div class="ring-label"></div></div></div>',
 }
 
-const lang = (navigator.language || "en").toLowerCase().startsWith("pt") ? "pt" : "en"
-const t = TEXT[lang]
+const lang = document.documentElement.lang
+const t = JSON.parse(document.getElementById("text").textContent)
 const account = document.body.dataset.account
-const key = decodeURIComponent(location.hash.slice(1))
+const mode = document.body.dataset.mode
 const base = location.pathname.endsWith("/") ? location.pathname.slice(0, -1) : location.pathname
-const number = new Intl.NumberFormat(lang === "pt" ? "pt-BR" : "en")
-const day = new Intl.DateTimeFormat(lang === "pt" ? "pt-BR" : "en", { dateStyle: "long" })
+const number = new Intl.NumberFormat(lang)
+const day = new Intl.DateTimeFormat(lang, { dateStyle: "long" })
+const relative = new Intl.RelativeTimeFormat(lang, { numeric: "auto" })
+const calm = matchMedia("(prefers-reduced-motion: reduce)").matches
+const shownCounts = {}
+let lastTotal = null
 const $ = (id) => document.getElementById(id)
 let timer = null
 let lastQr = null
 let busy = false
 
-document.documentElement.lang = lang === "pt" ? "pt-BR" : "en"
 $("account").textContent = account
 
 function fill(template, values) {
@@ -252,19 +251,75 @@ function fill(template, values) {
 }
 
 async function call(path, method) {
-  const response = await fetch(base + "/" + path, {
-    method: method || "GET",
-    headers: { authorization: "Bearer " + key },
-  })
-  if (response.status === 401) throw new Error("unauthorized")
+  const response = await fetch(base + "/" + path, { method: method || "GET" })
+  // The session ran out: reloading shows the sign-in form.
+  if (response.status === 401) {
+    location.reload()
+    throw new Error("unauthorized")
+  }
   const body = await response.json()
   if (!response.ok) throw new Error(body.error || response.statusText)
   return body
 }
 
+// Numbers climb from the value shown last time, so new batches are visible.
+function countUp(root) {
+  root.querySelectorAll("[data-count]").forEach((element) => {
+    const key = element.dataset.count
+    const to = Number(element.dataset.value)
+    const from = shownCounts[key] ?? to
+    shownCounts[key] = to
+    element.textContent = number.format(from)
+    if (calm || from === to) return
+    const start = performance.now()
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / 900)
+      element.textContent = number.format(Math.round(from + (to - from) * (1 - (1 - k) ** 3)))
+      if (k < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  })
+}
+
+function counter(key, value) {
+  return '<span data-count="' + key + '" data-value="' + value + '"></span>'
+}
+
+function ago(seconds) {
+  const diff = Math.min(0, Math.round(seconds - Date.now() / 1000))
+  for (const [unit, size] of [["day", 86400], ["hour", 3600], ["minute", 60]]) {
+    if (-diff >= size) return relative.format(Math.round(diff / size), unit)
+  }
+  return relative.format(diff, "second")
+}
+
+function bump(total) {
+  if (lastTotal !== null && total > lastTotal) {
+    const element = $("bump")
+    element.textContent = fill(t.fresh, { count: number.format(total - lastTotal) })
+    // Reading the layout in between restarts the animation.
+    element.classList.remove("pop")
+    void element.offsetWidth
+    element.classList.add("pop")
+  }
+  lastTotal = total
+}
+
+function showRing(progress) {
+  const ring = $("visual").querySelector(".ring")
+  const known = typeof progress === "number"
+  ring.toggleAttribute("data-indeterminate", !known)
+  ring.style.setProperty("--progress", known ? progress / 100 : 0)
+  ring.querySelector(".ring-value").textContent = known ? progress + "%" : ""
+  ring.querySelector(".ring-label").textContent = known ? t.history : ""
+}
+
 function show(view) {
   $("title").textContent = view.title
   $("lead").innerHTML = view.lead
+  countUp($("lead"))
+  $("live").hidden = !view.live
+  if (view.live) $("live-text").textContent = t.live + " · " + fill(t.lastMessage, { ago: ago(view.live) })
   $("who").hidden = !view.who
   $("who").textContent = view.who || ""
   $("steps").hidden = !view.steps
@@ -292,6 +347,7 @@ function show(view) {
     }
   }
   if (view.qr) visual.dataset.glyph = ""
+  if (view.glyph === "ring") showRing(view.progress)
 }
 
 function escapeHtml(text) {
@@ -304,20 +360,21 @@ function viewFor(status) {
   switch (status.state) {
     case "open": {
       const archive = status.archive
-      const lead = archive.messages > 0
-        ? fill(t.archived, {
-            messages: number.format(archive.messages),
-            chats: number.format(archive.chats),
-            date: day.format(new Date(archive.oldestMessageAt * 1000)),
-          })
-        : escapeHtml(t.syncing)
+      const syncing = status.history.active || archive.messages === 0
+      const counts = { messages: counter("messages", archive.messages), chats: counter("chats", archive.chats) }
+      let lead
+      if (archive.messages === 0) lead = escapeHtml(t.syncStart)
+      else if (syncing) lead = fill(t.syncing, counts)
+      else lead = fill(t.archived, { ...counts, date: day.format(new Date(archive.oldestMessageAt * 1000)) })
       const phone = status.me ? "+" + status.me.split("@")[0] : null
       return {
         title: fill(t.linked, { name: status.myName || phone || account }),
         who: status.myName ? phone : null,
         lead,
-        mode: "done",
-        glyph: "done",
+        mode: syncing ? "sync" : "done",
+        glyph: syncing ? "ring" : "done",
+        progress: status.history.progress,
+        live: syncing ? null : archive.newestMessageAt,
         connect: true,
       }
     }
@@ -351,13 +408,13 @@ function schedule(ms) {
 async function refresh() {
   try {
     const status = await call("status")
-    if (!busy) show(viewFor(status))
-    schedule(status.state === "open" ? 5000 : 2000)
+    const view = viewFor(status)
+    if (!busy) show(view)
+    if (status.state === "open" && view.live) bump(status.archive.messages)
+    else lastTotal = null
+    schedule(status.state === "open" && view.live ? 5000 : 2000)
   } catch (error) {
-    if (error.message === "unauthorized") {
-      show({ title: t.unauthorized[0], lead: escapeHtml(t.unauthorized[1]), mode: "alert", glyph: "alert" })
-      return
-    }
+    if (error.message === "unauthorized") return
     show({ title: t.offline[0], lead: escapeHtml(t.offline[1]), mode: "alert", glyph: "alert", detail: error.message })
     schedule(5000)
   }
@@ -391,13 +448,14 @@ function copyButton(button, getText) {
 }
 
 const endpoint = location.origin + base + "/mcp"
-const command = "claude mcp add --transport http whatsapp " + endpoint + ' --header "Authorization: Bearer KEY"'
+const command = "claude mcp add --transport http whatsapp " + endpoint +
+  (mode === "api_key" ? ' --header "Authorization: Bearer <SECRET>"' : "")
 $("endpoint").textContent = endpoint
-$("command").textContent = command.replace("KEY", "••••••••")
+$("command").textContent = command
 copyButton($("copy-endpoint"), () => endpoint)
-copyButton($("copy-command"), () => command.replace("KEY", key))
-$("connect-title").textContent = t.connect[0]
-$("connect-lead").textContent = t.connect[1]
+copyButton($("copy-command"), () => command)
+$("connect-title").textContent = t.connect[mode][0]
+$("connect-lead").textContent = t.connect[mode][1]
 $("endpoint-label").textContent = t.endpoint
 $("command-label").textContent = t.claude
 $("note").textContent = t.phoneNote
@@ -417,22 +475,13 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh()
 })
 
-if (key) {
-  show({ title: t.loading[0], lead: escapeHtml(t.loading[1]), mode: "wait", glyph: "spin" })
-  refresh()
-} else {
-  show({
-    title: t.missingKey[0],
-    lead: escapeHtml(fill(t.missingKey[1], { id: account })),
-    mode: "alert",
-    glyph: "alert",
-  })
-}
+show({ title: t.loading[0], lead: escapeHtml(t.loading[1]), mode: "wait", glyph: "spin" })
+refresh()
 `
 
-export function pairingPage(accountId: string): string {
+export function pairingPage(accountId: string, mode: AuthMode, lang: Lang): string {
   return `<!doctype html>
-<html lang="en">
+<html lang="${LOCALE[lang]}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -441,7 +490,7 @@ export function pairingPage(accountId: string): string {
 <title>whatsapp-mcp / ${accountId}</title>
 <style>${STYLE}</style>
 </head>
-<body data-account="${accountId}">
+<body data-account="${accountId}" data-mode="${mode}">
 <main>
   <header class="top">
     <div class="brand"><strong>whatsapp-mcp</strong><span>/</span><span id="account"></span></div>
@@ -452,6 +501,7 @@ export function pairingPage(accountId: string): string {
       <h1 id="title" aria-live="polite"></h1>
       <p id="who" class="who" hidden></p>
       <p id="lead" class="lead"></p>
+      <p id="live" class="live" hidden><span class="dot" aria-hidden="true"></span><span id="live-text"></span><span id="bump" class="bump" aria-live="polite"></span></p>
       <ol id="steps" class="steps" hidden></ol>
       <p id="note" class="note" hidden></p>
       <p id="detail" class="detail" hidden></p>
@@ -477,6 +527,7 @@ export function pairingPage(accountId: string): string {
     </div>
   </section>
 </main>
+<script type="application/json" id="text">${JSON.stringify(TEXT[lang].pairing).replaceAll("<", "\\u003c")}</script>
 <script>${SCRIPT}</script>
 </body>
 </html>`
