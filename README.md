@@ -110,7 +110,7 @@ The pairing page also uses a small REST API under `/accounts/:id`: `status`, `st
 
 ## Costs and risk
 
-An account keeps its Durable Object in memory all the time. On Workers Paid ($5 per month) that fits in the included usage, and each extra account costs about $4 per month. The Free plan covers one account, but its CPU limit has not been tested against the history sync.
+An account keeps its Durable Object in memory all the time. On Workers Paid ($5 per month) that fits in the included usage, and each extra account costs about $4 per month. The Free plan covers one account, but its CPU limit has not been tested against the history sync. Current numbers are in [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [Workers limits](https://developers.cloudflare.com/workers/platform/limits/).
 
 This is an unofficial WhatsApp client with no affiliation to WhatsApp or Meta. WhatsApp can ban accounts that use one, so link a number you can afford to lose.
 
@@ -128,5 +128,7 @@ Built on [baileyrs](https://github.com/oxidezap/baileyrs) and [whatsapp-rust](ht
 <br>
 
 <div align="center">
+<a href="https://adeildo.dev"><img src="docs/cat.svg" width="44" alt="A cat asleep on a laptop, the adeildo.dev logo"></a>
+<br>
 <sub>Brought to you by <a href="https://adeildo.dev">adeildo.dev</a></sub>
 </div>
