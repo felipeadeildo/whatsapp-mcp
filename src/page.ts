@@ -192,19 +192,48 @@ button:disabled { cursor: progress; opacity: 0.7; }
 .connect > p { margin: 0 0 1.4rem; color: var(--muted); max-width: 40rem; }
 .field { margin-top: 1rem; }
 .field-label { margin: 0 0 0.35rem; font-weight: 600; }
-.copyable { display: flex; gap: 0.6rem; align-items: stretch; }
+.copyable { position: relative; }
 .copyable code {
-  flex: 1;
-  min-width: 0;
-  padding: 0.7rem 0.85rem;
+  display: block;
+  padding: 0.7rem 3.2rem 0.7rem 0.85rem;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 0.5rem;
   font: 0.88rem/1.5 var(--code);
-  overflow-wrap: anywhere;
+  white-space: pre;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
-.copyable button { padding: 0.6rem 1rem; background: transparent; color: var(--ink); border-color: var(--line); }
-.copyable button:hover { border-color: var(--ink); }
+.copy {
+  position: absolute;
+  top: 50%;
+  right: 0.45rem;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 0.4rem;
+  background: var(--surface);
+  color: var(--muted);
+}
+.copy svg { width: 1rem; height: 1rem; }
+.tok-bin { color: var(--signal); font-weight: 600; }
+.tok-flag { color: var(--muted); }
+.tok-str { color: var(--wait); }
+.copy:hover { color: var(--ink); background: var(--line); }
+.copy[data-copied] { color: var(--signal); }
+.field-note { margin: 0.4rem 0 0; color: var(--muted); font-size: 0.88rem; }
+.field-note code { font: 0.84rem var(--code); color: var(--ink); }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .form { margin-top: 1.5rem; }
 .form label { display: block; margin-bottom: 0.4rem; font-weight: 600; }
 .form input[type="password"] {
@@ -221,7 +250,7 @@ button:disabled { cursor: progress; opacity: 0.7; }
 @media (max-width: 47.99rem) {
   .viewfinder.aside { display: none; }
 }
-.credit { margin-top: 5rem; }
+.credit { margin-top: 5rem; display: flex; justify-content: center; }
 .credit a {
   display: inline-flex;
   align-items: center;

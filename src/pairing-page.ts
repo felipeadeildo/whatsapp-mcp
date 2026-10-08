@@ -221,26 +221,58 @@ async function act(button, path, pendingLabel) {
   }
 }
 
-function copyButton(button, getText) {
-  button.textContent = t.copy
-  button.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(getText())
-    button.textContent = t.copied
-    setTimeout(() => { button.textContent = t.copy }, 1600)
+const ICONS = {
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+}
+
+// Shell syntax colors, as in docs/use-cases.svg: program, flags, strings, the rest.
+function highlight(command) {
+  return (command.match(/"[^"]*"|\s+|[^\s"]+/g) || []).map((token, index) => {
+    if (/^\s+$/.test(token)) return document.createTextNode(token)
+    const span = document.createElement("span")
+    if (index === 0) span.className = "tok-bin"
+    else if (token.startsWith("--")) span.className = "tok-flag"
+    else if (token.startsWith('"')) span.className = "tok-str"
+    span.textContent = token
+    return span
   })
 }
 
+// Fills one labelled, copyable field: a value, an icon button and an optional note.
+function field(id, label, value, note) {
+  $(id + "-label").textContent = label
+  $(id).replaceChildren(...(id === "endpoint" ? [value] : highlight(value)))
+  const button = $(id + "-copy")
+  const status = $(id + "-status")
+  button.innerHTML = ICONS.copy
+  button.setAttribute("aria-label", t.copy + ": " + label)
+  button.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(value)
+    button.innerHTML = ICONS.check
+    button.dataset.copied = ""
+    status.textContent = t.copied
+    setTimeout(() => {
+      button.innerHTML = ICONS.copy
+      delete button.dataset.copied
+      status.textContent = ""
+    }, 1600)
+  })
+  if (note) {
+    $(id + "-note").innerHTML = note
+    $(id + "-note").hidden = false
+  }
+}
+
 const endpoint = location.origin + base + "/mcp"
-const command = "claude mcp add --transport http whatsapp " + endpoint +
-  (mode === "api_key" ? ' --header "Authorization: Bearer <SECRET>"' : "")
-$("endpoint").textContent = endpoint
-$("command").textContent = command
-copyButton($("copy-endpoint"), () => endpoint)
-copyButton($("copy-command"), () => command)
+const bearer = mode === "api_key"
+field("endpoint", t.endpoint, endpoint)
+field("claude", t.claude, "claude mcp add --transport http whatsapp " + endpoint +
+  (bearer ? ' --header "Authorization: Bearer <SECRET>"' : ""))
+field("pi", t.pi, "pi mcp add whatsapp --url " + endpoint +
+  (bearer ? " --bearer-token-env-var WHATSAPP_MCP_SECRET" : ""), t.piNote[mode])
 $("connect-title").textContent = t.connect[mode][0]
 $("connect-lead").textContent = t.connect[mode][1]
-$("endpoint-label").textContent = t.endpoint
-$("command-label").textContent = t.claude
 $("note").textContent = t.phoneNote
 t.steps.forEach((step) => {
   const item = document.createElement("li")
@@ -261,6 +293,19 @@ document.addEventListener("visibilitychange", () => {
 show({ title: t.loading[0], lead: escapeHtml(t.loading[1]), mode: "wait", glyph: "spin" })
 refresh()
 `
+
+function copyableField(id: string): string {
+  return `
+    <div class="field">
+      <p id="${id}-label" class="field-label"></p>
+      <div class="copyable">
+        <code id="${id}" translate="no"></code>
+        <button id="${id}-copy" class="copy" type="button"></button>
+        <span id="${id}-status" class="sr-only" role="status"></span>
+      </div>
+      <p id="${id}-note" class="field-note" hidden></p>
+    </div>`
+}
 
 export function pairingPage(accountId: string, mode: AuthMode, lang: Lang): string {
   const text = JSON.stringify(TEXT[lang].pairing).replaceAll("<", "\\u003c")
@@ -291,14 +336,7 @@ export function pairingPage(accountId: string, mode: AuthMode, lang: Lang): stri
   <section id="connect" class="connect" hidden>
     <h2 id="connect-title"></h2>
     <p id="connect-lead"></p>
-    <div class="field">
-      <p id="endpoint-label" class="field-label"></p>
-      <div class="copyable"><code id="endpoint" translate="no"></code><button id="copy-endpoint" type="button" aria-live="polite"></button></div>
-    </div>
-    <div class="field">
-      <p id="command-label" class="field-label"></p>
-      <div class="copyable"><code id="command" translate="no"></code><button id="copy-command" type="button" aria-live="polite"></button></div>
-    </div>
+    ${["endpoint", "claude", "pi"].map(copyableField).join("")}
   </section>`,
     scripts: `<script type="application/json" id="text">${text}</script>
 <script>${SCRIPT}</script>`,

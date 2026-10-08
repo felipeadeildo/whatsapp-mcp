@@ -88,6 +88,12 @@ const en = {
     },
     endpoint: "MCP endpoint",
     claude: "Claude Code",
+    pi: "pi",
+    piNote: {
+      oauth: "Then sign in with <code>pi mcp login whatsapp</code>.",
+      api_key: "Put the SECRET in the <code>WHATSAPP_MCP_SECRET</code> environment variable first.",
+      both: "Then sign in with <code>pi mcp login whatsapp</code>.",
+    },
   },
 }
 
@@ -174,6 +180,12 @@ const pt: typeof en = {
     },
     endpoint: "Endpoint MCP",
     claude: "Claude Code",
+    pi: "pi",
+    piNote: {
+      oauth: "Depois entre com <code>pi mcp login whatsapp</code>.",
+      api_key: "Antes, coloque o SECRET na variável de ambiente <code>WHATSAPP_MCP_SECRET</code>.",
+      both: "Depois entre com <code>pi mcp login whatsapp</code>.",
+    },
   },
 }
 
