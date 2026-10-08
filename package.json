@@ -1,5 +1,6 @@
 {
   "name": "whatsapp-mcp",
+  "version": "1.0.0",
   "private": true,
   "description": "WhatsApp for your AI agents: an MCP server on Cloudflare Workers, one Durable Object per account.",
   "type": "module",
