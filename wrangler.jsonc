@@ -3,6 +3,10 @@
   "name": "whatsapp-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-08",
+  // The pairing page and the MCP endpoint live on the workers.dev address;
+  // per-version preview URLs would only add more ways in.
+  "workers_dev": true,
+  "preview_urls": false,
   "observability": { "enabled": true },
   "secrets": { "required": ["API_KEY"] },
   // IANA zone the tools show and read times in.
