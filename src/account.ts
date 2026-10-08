@@ -1,20 +1,27 @@
 /**
  * One Durable Object per WhatsApp account. It owns the linked-device session:
- * the zapo client, its Signal keys and message archive (in the object's SQLite),
- * and the outbound WebSocket to WhatsApp.
+ * the baileyrs socket (whatsapp-rust compiled to WASM), the engine's state in
+ * the object's SQLite, and the outbound WebSocket to WhatsApp.
  *
  * Keeping the object resident: an open outbound WebSocket pins a Durable Object
  * for at most 15 minutes, and an idle object is evicted 70-140s after its last
  * event. A short repeating alarm is an event, so it keeps the object in memory
- * and doubles as the reconnect loop after evictions, deploys and drops.
+ * and rebuilds the socket after evictions, deploys and terminal closes.
+ * Transient drops are retried by the Rust engine itself and never reach us.
  */
+import makeWASocket, {
+  createAuthenticationState,
+  DisconnectReason,
+  type HostConnectionUpdate,
+  type HostWASocket,
+} from "@oxidezap/baileyrs/host"
+import { isBoom } from "@oxidezap/baileyrs/lib/Utils/boom.js"
 import { DurableObject } from "cloudflare:workers"
-import { createSqliteStore } from "@zapo-js/store-sqlite"
 import { renderSVG } from "uqr"
-import { ConsoleLogger, createStore, parsePhoneJid, WaClient } from "zapo-js"
-import { toError } from "zapo-js/util"
 
-import { durableSqliteConnection } from "./store/durable-sqlite"
+import { durableKvStore } from "./store/durable-kv"
+import { fetchWaWebVersion } from "./wa-version"
+import "./wasm"
 
 const HEARTBEAT_MS = 30_000
 const WANTS_CONNECTION = "wants_connection"
@@ -31,7 +38,9 @@ export interface AccountStatus {
 }
 
 export class WhatsAppAccount extends DurableObject<Env> {
-  private client: WaClient | null = null
+  private readonly store = durableKvStore(this.ctx.storage)
+  private socket: HostWASocket | null = null
+  private opening: Promise<void> | null = null
   private state: ConnectionState = "idle"
   private qrSvg: string | null = null
   private lastError: string | null = null
@@ -47,25 +56,23 @@ export class WhatsAppAccount extends DurableObject<Env> {
   async logout(): Promise<AccountStatus> {
     await this.ctx.storage.put(WANTS_CONNECTION, false)
     await this.ctx.storage.deleteAlarm()
-    // zapo's `logout()` needs a paired session; while still pairing, only the
-    // socket has to go.
-    if (this.client?.getCredentials()?.meJid) await this.client.logout()
-    else await this.client?.disconnect()
-    this.client = null
-    this.state = "logged_out"
+    // Unlinking needs a paired session; while still pairing only the socket goes.
+    if (this.socket?.user) await this.socket.logout()
+    else await this.socket?.end()
+    this.forgetDevice()
     return this.status()
   }
 
-  async send(to: string, text: string): Promise<{ id: string }> {
-    if (!this.client || this.state !== "open") throw new Error(`not connected (${this.state})`)
-    const result = await this.client.message.send(toJid(to), text)
-    return { id: result.id }
+  async send(to: string, text: string): Promise<{ id: string | null }> {
+    if (!this.socket || this.state !== "open") throw new Error(`not connected (${this.state})`)
+    const message = await this.socket.sendMessage(toJid(to), { text })
+    return { id: message.key.id ?? null }
   }
 
   status(): AccountStatus {
     return {
       state: this.state,
-      me: this.client?.getCredentials()?.meJid ?? null,
+      me: this.socket?.user?.id ?? null,
       qrSvg: this.state === "pairing" ? this.qrSvg : null,
       lastError: this.lastError,
       startedAt: this.startedAt,
@@ -78,79 +85,69 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   private async keepAlive(): Promise<void> {
-    this.ensureConnected()
+    await this.ensureConnected()
     await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS)
   }
 
-  private ensureConnected(): void {
-    if (this.state === "connecting" || this.state === "pairing" || this.state === "open") return
-    const client = (this.client ??= this.createClient())
-    this.state = "connecting"
-    // `connect()` resolves only after pairing completes, so it is not awaited;
-    // progress arrives through the `auth_*` and `connection` events.
-    client.connect().catch((error) => {
-      this.lastError = toError(error).message
-      this.state = "closed"
+  /** Opens the socket unless one is open or opening; concurrent callers share the attempt. */
+  private ensureConnected(): Promise<void> {
+    if (this.socket) return Promise.resolve()
+    this.opening ??= this.openSocket().finally(() => {
+      this.opening = null
     })
+    return this.opening
   }
 
-  private createClient(): WaClient {
-    const sqlite = createSqliteStore({ connection: durableSqliteConnection(this.ctx.storage) })
-    const store = createStore({
-      backends: { sqlite },
-      providers: {
-        auth: "sqlite",
-        signal: "sqlite",
-        preKey: "sqlite",
-        session: "sqlite",
-        identity: "sqlite",
-        senderKey: "sqlite",
-        appState: "sqlite",
-        privacyToken: "sqlite",
-        messages: "sqlite",
-        threads: "sqlite",
-        contacts: "sqlite",
-      },
+  private async openSocket(): Promise<void> {
+    this.state = "connecting"
+    const [auth, version] = await Promise.all([
+      createAuthenticationState(this.store),
+      fetchWaWebVersion(),
+    ])
+    // The socket connects on creation; progress arrives as `connection.update`.
+    const socket = makeWASocket({ auth, version })
+    socket.ev.on("connection.update", (update) => this.onConnectionUpdate(update))
+    socket.ev.on("messages.upsert", ({ messages }) => {
+      this.messagesReceived += messages.length
     })
-    const client = new WaClient({ store, sessionId: "default" }, new ConsoleLogger("info"))
+    this.socket = socket
+  }
 
-    client.on("auth_qr", ({ qr }) => {
+  private onConnectionUpdate(update: HostConnectionUpdate): void {
+    if (update.qr) {
       this.state = "pairing"
-      this.qrSvg = renderSVG(qr)
-    })
-    client.on("auth_paired", () => {
+      this.qrSvg = renderSVG(update.qr)
+    }
+    if (update.connection === "open") {
+      this.state = "open"
       this.qrSvg = null
-    })
-    client.on("connection", (event) => {
-      if (event.status === "open") {
-        this.state = "open"
-        this.lastError = null
-        return
+      this.lastError = null
+    } else if (update.connection === "close") {
+      // `close` is terminal for this socket; the next heartbeat builds a new one,
+      // unless the device was unlinked.
+      const error = update.lastDisconnect?.error
+      this.lastError = error?.message ?? "connection closed"
+      if (isBoom(error, DisconnectReason.loggedOut)) {
+        this.forgetDevice()
+        void this.ctx.storage.put(WANTS_CONNECTION, false)
+      } else {
+        this.socket = null
+        this.state = "closed"
       }
-      if (event.status === "close") {
-        this.lastError = `${event.reason}${event.code === null ? "" : ` (${event.code})`}`
-        if (event.isLogout) {
-          // A logged-out client is single-shot: the next start pairs a fresh one.
-          this.client = null
-          this.state = "logged_out"
-          void this.ctx.storage.put(WANTS_CONNECTION, false)
-        } else {
-          this.state = "closed"
-        }
-      }
-    })
-    client.on("message", () => {
-      this.messagesReceived += 1
-    })
-    return client
+    }
+  }
+
+  private forgetDevice(): void {
+    this.socket = null
+    this.store.clear()
+    this.state = "logged_out"
   }
 }
 
-/**
- * Accepts a full JID or a phone number with country code. Phones are parsed
- * here because zapo's own recipient normalization reads a `-` as a group id,
- * which would turn "+55 11 99999-9999" into a group JID.
- */
+/** Accepts a full JID or a phone number with country code. */
 function toJid(to: string): string {
-  return to.includes("@") ? to : parsePhoneJid(to)
+  if (to.includes("@")) return to
+  const digits = to.replace(/\D/g, "")
+  if (!digits) throw new Error(`invalid recipient: ${to}`)
+  return `${digits}@s.whatsapp.net`
 }

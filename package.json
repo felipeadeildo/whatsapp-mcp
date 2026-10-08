@@ -14,9 +14,8 @@
     "postinstall": "prek install"
   },
   "dependencies": {
-    "@zapo-js/store-sqlite": "^1.3.0",
+    "@oxidezap/baileyrs": "^0.3.10",
     "uqr": "^0.1.3",
-    "zapo-js": "^1.10.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -26,5 +25,8 @@
     "oxlint-tsgolint": "^7.0.2003",
     "typescript": "^7.0.2",
     "wrangler": "^4.148.0"
+  },
+  "patchedDependencies": {
+    "@oxidezap/baileyrs@0.3.10": "patches/@oxidezap%2Fbaileyrs@0.3.10.patch"
   }
 }
