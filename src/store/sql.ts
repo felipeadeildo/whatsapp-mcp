@@ -1,7 +1,4 @@
-/**
- * The slice of Durable Object storage the archive uses. `DurableObjectStorage`
- * satisfies it as is; tests provide the same surface over an in-memory SQLite.
- */
+// What the archive needs from Durable Object storage, so tests can use bun:sqlite.
 export interface SqlCursor<T> extends Iterable<T> {
   next(): { done?: false; value: T } | { done: true; value?: never }
   toArray(): T[]

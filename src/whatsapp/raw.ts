@@ -1,8 +1,3 @@
-/**
- * The archive keeps each message as the protobuf WhatsApp delivered, so its key
- * (with the JIDs it was addressed with) and media keys stay available and the
- * derived columns can be rebuilt. The codec is the bridge's, already in the bundle.
- */
 import type { WAMessage, WAMessageKey } from "@oxidezap/baileyrs/lib/Types/Message.js"
 import { proto } from "@oxidezap/baileyrs/lib/WAProto/runtime.js"
 

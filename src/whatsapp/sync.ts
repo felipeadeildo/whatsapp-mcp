@@ -1,9 +1,5 @@
-/**
- * Keeps the archive in step with the socket. History sync (at pairing and on
- * demand) and live traffic go through the same path: learn who people are
- * first (contacts, phone/LID pairs, the alternate JIDs every message key
- * carries), then store chats and messages under their canonical JIDs.
- */
+// Identities are learned before anything is stored, so chats and messages land
+// under their canonical JIDs.
 import type { Chat } from "@oxidezap/baileyrs/lib/Types/Chat.js"
 import type { Contact } from "@oxidezap/baileyrs/lib/Types/Contact.js"
 import type { WAMessage, WAMessageKey } from "@oxidezap/baileyrs/lib/Types/Message.js"
@@ -35,23 +31,20 @@ function isPerson(jid: string): boolean {
   return PERSON_SERVERS.some((server) => jid.endsWith(server))
 }
 
-/** A JID without device suffix; `null` for empty values and the status feed. */
+// `null` for the status feed, which is not archived.
 function normalized(jid: string | null | undefined): string | null {
   if (!jid || jid === "status@broadcast") return null
   return jidNormalizedUser(jid)
 }
 
-/** Translates socket events into archive writes. */
 class Ingest {
   constructor(private readonly archive: Archive) {}
 
-  /** The canonical JID for a chat or person, or `null` for what is not archived. */
   canonical(jid: string | null | undefined): string | null {
     const id = normalized(jid)
     return id ? this.archive.canonical(id) : null
   }
 
-  /** A JID and its alternate (one phone, one LID) name the same person. */
   pair(jid: string | null | undefined, alt: string | null | undefined): void {
     const a = normalized(jid)
     const b = normalized(alt)
@@ -61,12 +54,8 @@ class Ingest {
     if (lid && pn) this.archive.learnPair(pn, lid)
   }
 
-  /**
-   * Records a contact event. `origin` decides what its `name` means: live
-   * contact events carry the address book name, while history fills `name`
-   * with whatever the conversation was called (`displayName || name ||
-   * username` in baileyrs), which can be a masked phone or the username.
-   */
+  // Live events carry the address book name in `name`. History fills it with
+  // `displayName || name || username`, which can be a masked phone or the username.
   contact(contact: Partial<Contact>, origin: "live" | "history"): void {
     const jid = normalized(contact.id)
     if (!jid) return
@@ -89,7 +78,6 @@ class Ingest {
     this.archive.learnNames(jid, names)
   }
 
-  /** What a chat event says about the chat; group and channel names are kept as subjects. */
   chat(chat: Partial<Chat>): ChatInput | null {
     const jid = this.canonical(chat.id)
     if (!jid) return null
@@ -105,7 +93,6 @@ class Ingest {
     }
   }
 
-  /** Learns the identities a message key reveals before anything is stored under them. */
   learnFromKey(
     key: WAMessageKey,
     pushName: string | null | undefined,
@@ -120,14 +107,12 @@ class Ingest {
     }
   }
 
-  /** Stores messages (new or redelivered) and the changes some of them carry. */
   messages(messages: readonly WAMessage[]): MessageInput[] {
     const inputs: MessageInput[] = []
     const changes: MessageEvent[] = []
     for (const raw of messages) {
-      // History puts a group message's author on the message, not on its key.
-      // The message's own time dates the name, so an old history message does
-      // not outrank the name someone uses today.
+      // History puts a group message's author on the message, not on its key. The
+      // message's time dates the name, so an old message cannot outrank today's name.
       this.learnFromKey(
         raw.key,
         raw.pushName,
@@ -167,7 +152,6 @@ class Ingest {
     }
   }
 
-  /** Applies edits, revokes and reactions to messages already stored. */
   applyChanges(events: readonly MessageEvent[]): void {
     for (const event of events) {
       if (event.type === "message" || event.type === "ignored") continue
@@ -177,14 +161,13 @@ class Ingest {
       if (event.type === "revoke") this.archive.applyRevoke(chatJid, event.id)
       if (event.type === "reaction") {
         const sender = event.senderJid === null ? null : this.canonical(event.senderJid)
-        this.archive.saveReaction(chatJid, event.id, sender, event.emoji, event.at)
+        this.archive.saveReaction(chatJid, event.id, sender, event.emoji, event.atMs)
       }
     }
   }
 }
 
 export interface SyncHooks {
-  /** Called after messages are stored, with how they arrived. */
   readonly onMessages?: (messages: readonly MessageInput[], source: "live" | "history") => void
 }
 
@@ -247,12 +230,8 @@ export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks =
   })
 }
 
-/**
- * History carries no group subjects. The bridge lists every group with its
- * subject in a single request; Baileys' `groupFetchAllParticipating` instead
- * fetches full metadata group by group, which WhatsApp rate-limits (429) for
- * accounts in many groups, so the light listing is used here.
- */
+// History carries no group subjects. The bridge lists all groups in one request,
+// while Baileys' `groupFetchAllParticipating` asks per group and hits rate limits.
 export async function refreshGroupNames(socket: Socket, archive: Archive): Promise<number> {
   const client = socket.waClient
   if (!client) return 0

@@ -1,28 +1,6 @@
-/**
- * The account's message archive: chats, messages, reactions and every name
- * seen for a person, group or channel, in the Durable Object's SQLite, with
- * full-text search over message text and over names.
- *
- * WhatsApp only pushes history once (at pairing) and then live traffic, so this
- * archive is what the tools read; the socket is only asked for things that are
- * not here (group metadata, profile, on-demand older history).
- *
- * Identity follows WhatsApp's own model (and mautrix-whatsapp's handling of
- * it): one person has a phone-number JID (`@s.whatsapp.net`) and an anonymous
- * LID (`@lid`), and messages can arrive under either. Everything about a person
- * is stored under one canonical JID, the LID when known, else the phone JID.
- * Learning that a phone JID and a LID belong together moves what was stored
- * under the phone JID (chats, messages, reactions, names) to the LID.
- *
- * Names are kept per source instead of overwriting each other (see `names.ts`):
- * display picks the best one, search matches all of them.
- *
- * Each message keeps its raw protobuf next to the derived columns: its key is
- * what edits, reactions and receipts must reference, and its media keys are
- * what downloads need.
- *
- * Times are Unix seconds.
- */
+// WhatsApp addresses one person by phone JID or by LID, so people, chats and
+// names live under one canonical JID: the LID when the pair is known. Times are
+// Unix seconds.
 import type { MediaInfo, MessageKind } from "../whatsapp/message"
 import { migrate } from "./migrations"
 import {
@@ -80,7 +58,7 @@ const MIGRATIONS = [
     media TEXT,
     edited INTEGER NOT NULL DEFAULT 0,
     deleted INTEGER NOT NULL DEFAULT 0,
-    raw BLOB,
+    raw BLOB, -- the original protobuf: its key and media keys
     UNIQUE (chat_jid, id)
   )`,
   `CREATE INDEX messages_by_chat ON messages (chat_jid, sent_at DESC)`,
@@ -115,22 +93,20 @@ const MIGRATIONS = [
   ) WITHOUT ROWID`,
 ]
 
-/** The reaction sender recorded for this account's own reactions. */
-const ME = "me"
+const OWN_REACTION_SENDER = "me"
 
 const PN_SUFFIX = "@s.whatsapp.net"
 const LID_SUFFIX = "@lid"
-/** SQLite's limit on bound parameters is 100; leave room for the rest of a query. */
+// SQLite binds at most 100 parameters per query.
 const IN_CHUNK = 90
 
 export interface NameInput {
   readonly source: NameSource
   readonly name: string
-  /** Unix seconds; defaults to now. */
   readonly seenAt?: number | undefined
 }
 
-/** What an event says about a chat; absent fields are left as they are. */
+// Absent fields keep their stored value.
 export interface ChatInput {
   readonly jid: string
   readonly unreadCount?: number | null
@@ -140,7 +116,7 @@ export interface ChatInput {
   readonly mutedUntil?: number | null
 }
 
-/** A message ready to store: chat and sender already canonical. */
+// Chat and sender must already be canonical.
 export interface MessageInput {
   readonly chatJid: string
   readonly id: string
@@ -176,11 +152,11 @@ export interface ChatSummary {
   readonly pinned: boolean
 }
 
-/** A search result and the name that made it match, when that is not its display name. */
+// `matched` is the name that matched, when it is not the display name.
 export type Match<T> = T & { readonly matched: string | null }
 
 export interface Mention {
-  /** As written in the text, after the `@`. */
+  // As written in the text after `@`.
   readonly user: string
   readonly jid: string
   readonly name: string | null
@@ -206,7 +182,7 @@ export interface ArchivedMessage {
 }
 
 export interface SearchHit extends ArchivedMessage {
-  /** The matching text with hits wrapped in `[` `]`. */
+  // Hits are wrapped in `[` and `]`.
   readonly snippet: string
 }
 
@@ -313,7 +289,7 @@ function userOf(jid: string): string {
   return jid.slice(0, jid.indexOf("@")).split(":")[0] ?? jid
 }
 
-/** `+<digits>` for a phone JID. */
+// `+<digits>` for a phone JID.
 export function phoneOf(pn: string | null): string | null {
   return pn?.endsWith(PN_SUFFIX) ? `+${userOf(pn)}` : null
 }
@@ -329,10 +305,7 @@ function placeholders(count: number): string {
   return Array.from({ length: count }, () => "?").join(", ")
 }
 
-/**
- * Turns free text into an FTS5 query that cannot be a syntax error: every word
- * becomes a quoted prefix term, and all terms must match.
- */
+// Quoting every word as a prefix term keeps user input from being FTS5 syntax.
 export function toFtsQuery(query: string): string | null {
   const terms = query
     .split(/\s+/)
@@ -342,7 +315,7 @@ export function toFtsQuery(query: string): string | null {
   return terms.map((term) => `"${term}"*`).join(" ")
 }
 
-/** History marks contacts it cannot name with a masked phone ("+55∙∙∙∙∙∙∙∙08"); that is not a name. */
+// History names unknown people with a masked phone such as "+55∙∙∙∙∙∙∙∙08".
 export function isRedactedPhone(name: string): boolean {
   return name.includes("∙")
 }
@@ -356,12 +329,7 @@ export class Archive {
     return this.storage.sql
   }
 
-  // Identity
-
-  /**
-   * The JID a person or chat is stored under: a phone JID becomes the person's
-   * LID once that pairing is known; anything else is returned unchanged.
-   */
+  // A phone JID becomes the person's LID once the pair is known.
   canonical(jid: string): string {
     if (!jid.endsWith(PN_SUFFIX)) return jid
     const row = this.sql
@@ -370,7 +338,7 @@ export class Archive {
     return row.done ? jid : row.value.lid
   }
 
-  /** `null` while only the LID is known, and for anything that is not a person. */
+  // `null` while only the LID is known.
   phoneJidOf(jid: string): string | null {
     if (jid.endsWith(PN_SUFFIX)) return jid
     if (!jid.endsWith(LID_SUFFIX)) return null
@@ -380,7 +348,7 @@ export class Archive {
     return row.done ? null : row.value.pn
   }
 
-  /** Records that a phone JID and a LID are one person, moving what was stored under the phone JID. */
+  // Moves what was stored under the phone JID to the LID.
   learnPair(pn: string, lid: string): void {
     const known = this.sql
       .exec<{ lid: string }>("SELECT lid FROM phone_lids WHERE pn = ?", pn)
@@ -392,7 +360,7 @@ export class Archive {
     })
   }
 
-  /** Records names seen for a person, group or channel. A name seen again refreshes its date. */
+  // A name seen again refreshes its date.
   learnNames(jid: string, names: readonly NameInput[]): void {
     const id = this.canonical(jid)
     const now = Math.floor(Date.now() / 1000)
@@ -414,7 +382,7 @@ export class Archive {
     this.sql.exec("DELETE FROM names WHERE jid = ? AND source = ?", this.canonical(jid), source)
   }
 
-  /** Moves everything stored under one JID to another; what already exists there wins. */
+  // What already exists under `to` wins.
   private rekey(from: string, to: string): void {
     const exec = (query: string) => this.sql.exec(query, to, from)
     exec("UPDATE OR IGNORE messages SET chat_jid = ? WHERE chat_jid = ?")
@@ -441,7 +409,6 @@ export class Archive {
     this.sql.exec("DELETE FROM chats WHERE jid = ?", from)
   }
 
-  /** Display name, phone and other names of each JID, in one pass over the names table. */
   private identities(jids: Iterable<string>): Map<string, Identity> {
     const unique = [...new Set(jids)]
     const names = new Map<string, NameRecord[]>()
@@ -480,10 +447,7 @@ export class Archive {
     return identity ?? { jid: id, name: null, phone: phoneOf(id), aliases: [] }
   }
 
-  /**
-   * JIDs whose names (any of them, accents and case ignored) or phone match the
-   * text, with the name that matched. `scope` narrows the candidates in SQL.
-   */
+  // `scope` is SQL that narrows the candidates.
   private matchNames(text: string, scope: string, limit: number): Map<string, string | null> {
     const fts = toFtsQuery(text)
     const digits = text.replace(/\D/g, "")
@@ -504,7 +468,6 @@ export class Archive {
     return new Map(Array.from(rows, (row) => [row.jid, row.matched]))
   }
 
-  /** People whose names or phone match the text, including people with no chat. */
   findPeople(text: string, limit: number): Match<Identity>[] {
     const hits = this.matchNames(
       text,
@@ -517,8 +480,6 @@ export class Archive {
       return identity ? [{ ...identity, matched: matched === identity.name ? null : matched }] : []
     })
   }
-
-  // Writes
 
   saveMessages(messages: readonly MessageInput[]): void {
     if (messages.length === 0) return
@@ -590,7 +551,7 @@ export class Archive {
     emoji: string,
     atMs: number,
   ): void {
-    const sender = senderJid ?? ME
+    const sender = senderJid ?? OWN_REACTION_SENDER
     if (emoji === "") {
       this.sql.exec(
         "DELETE FROM reactions WHERE chat_jid = ? AND message_id = ? AND sender_jid = ?",
@@ -646,7 +607,7 @@ export class Archive {
     })
   }
 
-  /** Records a send so a retried request with the same key returns the same message. */
+  // Lets a retried send return the first message instead of sending again.
   rememberSend(requestKey: string, messageId: string): void {
     this.sql.exec(
       "INSERT OR REPLACE INTO sent (request_key, message_id, sent_at) VALUES (?, ?, ?)",
@@ -656,7 +617,6 @@ export class Archive {
     )
   }
 
-  /** The message sent under `requestKey` within the last `withinSeconds`, if any. */
   findSend(requestKey: string, withinSeconds: number): string | null {
     const first = this.sql
       .exec<{ message_id: string }>(
@@ -667,8 +627,6 @@ export class Archive {
       .next()
     return first.done ? null : first.value.message_id
   }
-
-  // Reads
 
   listChats(query: ChatListQuery): ChatSummary[] {
     const filters = ["1 = 1"]
@@ -690,7 +648,6 @@ export class Archive {
     )
   }
 
-  /** Chats whose names (any of them) or phone match the text, most recently active first. */
   findChats(text: string, limit: number): Match<ChatSummary>[] {
     const hits = this.matchNames(text, "JOIN chats c ON c.jid = h.jid", 500)
     if (hits.size === 0) return []
@@ -736,7 +693,7 @@ export class Archive {
     })
   }
 
-  /** Newest `limit` messages of a chat matching the filters, returned oldest first. */
+  // The newest `limit` messages, oldest first.
   getMessages(query: MessageQuery): ArchivedMessage[] {
     const filters = ["m.chat_jid = ?"]
     const params: SqlStorageValue[] = [query.chatJid]
@@ -763,7 +720,6 @@ export class Archive {
     return this.toMessages(rows.toReversed())
   }
 
-  /** The message plus up to `around` messages on each side, oldest first. */
   getMessageContext(chatJid: string, id: string, around: number): ArchivedMessage[] {
     const anchor = this.sql
       .exec<{ sent_at: number }>(
@@ -808,7 +764,6 @@ export class Archive {
     return this.toMessages(rows)[0] ?? null
   }
 
-  /** The protobuf a message was stored from, for building its key or downloading its media. */
   getRaw(chatJid: string, id: string): Uint8Array | null {
     const row = this.sql
       .exec<{ raw: ArrayBuffer | null }>(
@@ -876,7 +831,6 @@ export class Archive {
     }
   }
 
-  /** The oldest archived message of a chat, the anchor for fetching older history. */
   oldestMessage(chatJid: string): { id: string; sentAt: number } | null {
     const first = this.sql
       .exec<{ id: string; sent_at: number }>(
@@ -887,7 +841,6 @@ export class Archive {
     return first.done ? null : { id: first.value.id, sentAt: first.value.sent_at }
   }
 
-  /** Incoming messages of a chat, newest first, for marking them read. */
   latestIncoming(chatJid: string, limit: number): { id: string }[] {
     return this.sql
       .exec<{ id: string }>(
@@ -898,7 +851,6 @@ export class Archive {
       .toArray()
   }
 
-  /** Wipes everything: used when the device is unlinked. */
   clear(): void {
     this.storage.transactionSync(() => {
       for (const table of ["messages", "reactions", "chats", "names", "phone_lids", "sent"]) {
@@ -907,7 +859,6 @@ export class Archive {
     })
   }
 
-  /** Rows to messages, with chat, sender and mention names and reactions resolved in bulk. */
   private toMessages(rows: readonly MessageRow[]): ArchivedMessage[] {
     const mentions = rows.map((row) => parseMentions(row.mentions))
     const identities = this.identities([

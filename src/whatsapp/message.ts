@@ -1,16 +1,5 @@
-/**
- * Turns WhatsApp's protobuf messages into the flat records the archive keeps.
- *
- * A raw message can be wrapped (ephemeral, view-once, document-with-caption)
- * and can also be an instruction about another message (edit, revoke,
- * reaction) rather than content of its own. This module resolves both so the
- * archive only deals with "a message with this text" or "change that message".
- *
- * The set of content types and how each becomes text follows mautrix-whatsapp's
- * converter (pkg/msgconv), the most complete WhatsApp-to-text mapping around:
- * business messages (templates, buttons, lists, interactive) keep their body,
- * header, footer and button labels so a reader sees what the person saw.
- */
+// Text rendering follows mautrix-whatsapp's pkg/msgconv, so business messages keep
+// their header, body, footer and buttons.
 import { normalizeMessageContent } from "@oxidezap/baileyrs/lib/Media/content.js"
 import type {
   WAMessage,
@@ -49,25 +38,21 @@ export interface MediaInfo {
 }
 
 export interface StoredMessage {
-  /** The chat and sender exactly as the message key carried them. */
+  // As the message key carried them, before canonicalization.
   readonly remoteJid: string
   readonly participant: string | null
   readonly id: string
   readonly fromMe: boolean
   readonly pushName: string | null
-  /** Unix seconds. */
   readonly sentAt: number
   readonly kind: MessageKind
-  /** Body, caption, or a readable rendering for non-text kinds. */
   readonly text: string | null
   readonly quotedId: string | null
-  /** JIDs @mentioned in the text, as the text spells them (`@<user part>`). */
   readonly mentions: readonly string[]
   readonly forwarded: boolean
   readonly media: MediaInfo | null
 }
 
-/** What a raw message means for the archive. */
 export type MessageEvent =
   | { readonly type: "message"; readonly message: StoredMessage }
   | {
@@ -81,17 +66,15 @@ export type MessageEvent =
       readonly type: "reaction"
       readonly remoteJid: string
       readonly id: string
-      /** `null` when the reaction is ours. */
+      // `null` when the reaction is ours.
       readonly senderJid: string | null
-      /** Empty string removes the reaction. */
+      // An empty emoji removes the reaction.
       readonly emoji: string
-      /** Unix milliseconds. */
-      readonly at: number
+      readonly atMs: number
     }
   | { readonly type: "ignored" }
 
-// Enum objects live in the protobuf runtime, which this module does not load,
-// so the wire values are spelled out against the enums' types.
+// The enum objects live in the protobuf runtime, which this module does not load.
 type ProtocolType = proto.Message.ProtocolMessage.Type
 const PROTOCOL_REVOKE: ProtocolType = 0
 const PROTOCOL_MESSAGE_EDIT: ProtocolType = 14
@@ -104,7 +87,7 @@ export function toNumber(value: ProtoNumber): number | null {
   return typeof value === "number" ? value : value.toNumber()
 }
 
-/** Joins the non-empty parts with a blank line, like a message bubble stacks them. */
+// Blank lines between parts, as a message bubble stacks them.
 function stack(...parts: readonly (string | null | undefined)[]): string | null {
   const present = parts.map((part) => part?.trim()).filter((part) => part)
   return present.length > 0 ? present.join("\n\n") : null
@@ -223,7 +206,6 @@ function pollBody(poll: proto.Message.IPollCreationMessage): Body {
   return body("poll", text, poll.contextInfo)
 }
 
-/** Text and kind of a message's own content, or `null` for content that is not a message. */
 function bodyOf(content: proto.IMessage): Body | null {
   if (content.conversation) return body("text", content.conversation, null)
   const extended = content.extendedTextMessage
@@ -339,7 +321,6 @@ function bodyOf(content: proto.IMessage): Body | null {
   return null
 }
 
-/** The type name of content this module does not render, for the `other` kind. */
 function contentType(content: proto.IMessage): string | null {
   for (const [key, value] of Object.entries(content)) {
     if (
@@ -354,11 +335,7 @@ function contentType(content: proto.IMessage): string | null {
   return null
 }
 
-/**
- * Classifies an in-place update to a known message: an edit carries the new
- * content, a revoke turns the message into a stub. Anything else (status,
- * receipts, poll tallies) is not archived.
- */
+// Only edits and revokes change an archived message.
 export function interpretUpdate(update: WAMessageUpdate): MessageEvent {
   const { id, remoteJid } = update.key
   if (!id || !remoteJid) return { type: "ignored" }
@@ -369,14 +346,10 @@ export function interpretUpdate(update: WAMessageUpdate): MessageEvent {
   return text ? { type: "edit", remoteJid, id, text } : { type: "ignored" }
 }
 
-/**
- * A reaction to the message `target` points at. `fallbackAt` stands in for the
- * reaction's own timestamp when it has none (Unix milliseconds).
- */
 export function reactionEvent(
   target: WAMessageKey,
   reaction: proto.IReaction,
-  fallbackAt: number,
+  fallbackAtMs: number,
 ): MessageEvent {
   const { id, remoteJid } = target
   if (!id || !remoteJid) return { type: "ignored" }
@@ -387,16 +360,15 @@ export function reactionEvent(
     id,
     senderJid: sender?.fromMe ? null : (sender?.participant ?? sender?.remoteJid ?? null),
     emoji: reaction.text ?? "",
-    at: toNumber(reaction.senderTimestampMs) ?? fallbackAt,
+    atMs: toNumber(reaction.senderTimestampMs) ?? fallbackAtMs,
   }
 }
 
-/** Reactions a history message carries along (history does not replay them as messages). */
+// History attaches reactions to the message instead of replaying them.
 export function attachedReactions(raw: WAMessage): MessageEvent[] {
   return (raw.reactions ?? []).map((reaction) => reactionEvent(raw.key, reaction, 0))
 }
 
-/** Classifies one raw message. */
 export function interpret(raw: WAMessage): MessageEvent {
   const key: WAMessageKey = raw.key
   const { id, remoteJid } = key
@@ -428,20 +400,18 @@ export function interpret(raw: WAMessage): MessageEvent {
       id: targetId,
       senderJid: key.fromMe ? null : (participant ?? remoteJid),
       emoji: reaction.text ?? "",
-      at: toNumber(reaction.senderTimestampMs) ?? sentAt * 1000,
+      atMs: toNumber(reaction.senderTimestampMs) ?? sentAt * 1000,
     }
   }
 
-  // Poll votes are encrypted to the poll and arrive as their own messages;
-  // tallying them is not the archive's job.
+  // Poll votes arrive encrypted as their own messages; the archive does not tally them.
   if (content.pollUpdateMessage || content.encCommentMessage || content.secretEncryptedMessage) {
     return { type: "ignored" }
   }
 
   const rendered = bodyOf(content)
   const unknownType = rendered ? null : contentType(content)
-  // Content with no recognizable message in it (bare key distribution, context
-  // info only) is protocol plumbing, not something anyone wrote.
+  // Key distribution and context-only content is protocol traffic, not a message.
   if (!rendered && !unknownType) return { type: "ignored" }
   const context = rendered?.context
   return {

@@ -34,7 +34,7 @@ export class PhoneUnknownError extends Error {
   }
 }
 
-/** Takes a JID or a phone number with country code; returns the JID the archive stores it under. */
+// Takes a JID or a phone number with country code.
 export function resolveAddress(archive: Pick<Archive, "canonical">, to: string): string {
   if (to.includes("@")) return archive.canonical(jidNormalizedUser(to))
   const digits = to.replace(/\D/g, "")

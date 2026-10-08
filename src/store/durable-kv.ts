@@ -1,11 +1,4 @@
-/**
- * The byte store baileyrs persists its Rust engine into (device record, Signal
- * sessions and keys, app-state), kept in one table of the Durable Object's
- * SQLite. Values are opaque bytes; only the engine reads them.
- *
- * The DO SQL API is synchronous, so the async contract is satisfied by plain
- * `async` methods, and batch writes run inside one `transactionSync`.
- */
+// The session engine's state, as opaque bytes in one table.
 import type { HostStoreCallbacks } from "@oxidezap/baileyrs/host"
 
 type Entry = [key: string, value: Uint8Array]
@@ -19,10 +12,10 @@ const SCHEMA = `
   ) WITHOUT ROWID
 `
 
-/** Rows of one store whose key starts with a prefix; binds (store, prefix, prefix). */
+// Binds (store, prefix, prefix).
 const IN_STORE_WITH_PREFIX = "store = ? AND substr(key, 1, length(?)) = ?"
 
-/** Copies a view into a standalone buffer, which is what the SQL API binds as BLOB. */
+// The SQL API binds whole ArrayBuffers, not views.
 function toBlob(value: Uint8Array): ArrayBuffer {
   return value.slice().buffer
 }
@@ -110,7 +103,6 @@ export function durableKvStore(storage: DurableObjectStorage): HostStoreCallback
         .rowsWritten
     },
 
-    /** Forgets the linked device, so the next start pairs from scratch. */
     clear() {
       sql.exec("DELETE FROM wa_store")
     },

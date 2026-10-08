@@ -1,8 +1,4 @@
-/**
- * Forward-only schema migrations for a Durable Object's SQLite. Each module
- * owns a named list; applied steps are recorded by position, so steps are only
- * ever appended, never edited or reordered, once a version has been deployed.
- */
+// Steps are recorded by position: append only, never edit or reorder a deployed one.
 import type { SqlDatabase } from "./sql"
 
 export function migrate(storage: SqlDatabase, name: string, steps: readonly string[]): void {

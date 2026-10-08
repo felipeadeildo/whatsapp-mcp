@@ -1,10 +1,5 @@
-/**
- * Loads the whatsapp-rust bridge WASM once per isolate, before any socket exists.
- *
- * The package exports the binary as `@oxidezap/whatsapp-rust-bridge/wasm`, a
- * specifier without the `.wasm` suffix, so Wrangler's compiled-WASM rule never
- * matches it. Importing the file by path lets the rule apply.
- */
+// The package exports the binary under a specifier without `.wasm`, which
+// Wrangler's compiled-WASM rule never matches, so it is imported by path.
 import { initSync } from "@oxidezap/whatsapp-rust-bridge/host"
 
 import bridge from "../node_modules/@oxidezap/whatsapp-rust-bridge/dist/whatsapp_rust_bridge_bg.wasm"

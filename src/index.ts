@@ -1,12 +1,5 @@
-/**
- * HTTP entry point. Routes `/accounts/:id/...` to the account's Durable Object:
- * `/mcp` is the MCP endpoint, the rest is a small REST API used by the pairing
- * page and by scripts.
- *
- * Every API route requires `Authorization: Bearer <API_KEY>`. The pairing page
- * itself is public but holds no data: it reads the key from the URL fragment,
- * which browsers never send to the server, and calls the API with it.
- */
+// The pairing page is public and holds no data; it reads the API key from the URL
+// fragment, which browsers never send.
 import { createMcpHandler } from "agents/mcp/server"
 import { z } from "zod"
 

@@ -1,8 +1,3 @@
-/**
- * The MCP surface of one WhatsApp account. Each request builds a fresh server
- * (the handler is stateless); every tool is a thin call into the account's
- * Durable Object plus a compact, model-friendly rendering of the result.
- */
 import { McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 
@@ -23,14 +18,14 @@ Times are shown in the account's time zone as "YYYY-MM-DD HH:mm". Date filters a
 
 Sending is visible to other people and cannot be taken back silently: confirm intent before send_message, edit_message, delete_message or remove_contact unless the user was explicit.`
 
-/** Drops absent fields, which only cost the model tokens. */
+// Absent fields only cost the model tokens.
 function withoutNulls<V>(record: Record<string, V | null>): Record<string, V> {
   const out: Record<string, V> = {}
   for (const [key, value] of Object.entries(record)) if (value !== null) out[key] = value
   return out
 }
 
-/** Writes `@<number>` mentions as `@<name>`, as the WhatsApp app shows them. */
+// The WhatsApp app shows `@<number>` mentions as `@<name>`.
 function withMentionNames(text: string, mentions: ArchivedMessage["mentions"]): string {
   let out = text
   for (const mention of mentions) {
@@ -39,7 +34,6 @@ function withMentionNames(text: string, mentions: ArchivedMessage["mentions"]): 
   return out
 }
 
-/** A message as the model sees it: no nulls, local time, sender resolved. */
 function presentMessage(
   message: ArchivedMessage,
   timeZone: string,

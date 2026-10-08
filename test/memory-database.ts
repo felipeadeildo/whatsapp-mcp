@@ -1,8 +1,4 @@
-/**
- * The Durable Object SQL surface over an in-memory `bun:sqlite` database, so the
- * archive's real SQL (FTS5 included) runs in unit tests. Blobs come back as
- * `ArrayBuffer`, as they do from the Durable Object.
- */
+// Blobs come back as ArrayBuffer, as they do from the Durable Object.
 import { Database, type SQLQueryBindings } from "bun:sqlite"
 
 import type { SqlCursor, SqlDatabase } from "../src/store/sql"

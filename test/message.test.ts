@@ -172,7 +172,7 @@ describe("interpret", () => {
       id: "TARGET",
       senderJid: CHAT,
       emoji: "❤️",
-      at: 5_000,
+      atMs: 5_000,
     })
   })
 
@@ -210,7 +210,7 @@ describe("attachedReactions", () => {
       ],
     }
     expect(attachedReactions(message)).toEqual([
-      { type: "reaction", remoteJid: CHAT, id: "ID1", senderJid: CHAT, emoji: "😍", at: 9_000 },
+      { type: "reaction", remoteJid: CHAT, id: "ID1", senderJid: CHAT, emoji: "😍", atMs: 9_000 },
     ])
   })
 })

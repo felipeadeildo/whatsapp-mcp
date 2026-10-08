@@ -1,17 +1,6 @@
-/**
- * One Durable Object per WhatsApp account. It owns the linked-device session:
- * the baileyrs socket (whatsapp-rust compiled to WASM), the engine's state and
- * the message archive in the object's SQLite, and the outbound WebSocket.
- *
- * Its public methods are the RPC surface the HTTP API and the MCP tools call.
- * Reads come from the archive; actions go through the socket.
- *
- * Keeping the object resident: an open outbound WebSocket pins a Durable Object
- * for at most 15 minutes, and an idle object is evicted 70-140s after its last
- * event. A short repeating alarm is an event, so it keeps the object in memory
- * and rebuilds the socket after evictions, deploys and terminal closes.
- * Transient drops are retried by the Rust engine itself and never reach us.
- */
+// One Durable Object per WhatsApp account. An open outbound WebSocket pins it for
+// at most 15 minutes and an idle object is evicted after 70-140s, so a 30s alarm
+// keeps it in memory and rebuilds the socket after evictions and deploys.
 import {
   createAuthenticationState,
   DisconnectReason,
@@ -45,14 +34,13 @@ import "./wasm"
 
 const HEARTBEAT_MS = 30_000
 const WANTS_CONNECTION = "wants_connection"
-/** How long a send without an explicit idempotency key is deduplicated. */
 const IMPLICIT_DEDUP_SECONDS = 120
 const EXPLICIT_DEDUP_SECONDS = 24 * 60 * 60
 const HISTORY_WAIT_MS = 20_000
 const GROUPS_REFRESHED_AT = "groups_refreshed_at"
 const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
 
-/** The status protocol's entry in a USync result, typed `unknown` by the library. */
+// The library types USync results as `unknown`.
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })
 
 export type ConnectionState = "idle" | "connecting" | "pairing" | "open" | "closed" | "logged_out"
@@ -81,7 +69,6 @@ export interface SendRequest {
 export interface SendResult {
   readonly chatJid: string
   readonly id: string
-  /** `true` when an identical earlier request was answered instead of sending again. */
   readonly deduplicated: boolean
 }
 
@@ -134,10 +121,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private qrSvg: string | null = null
   private lastError: string | null = null
   private readonly startedAt = Date.now()
-  /** Chats waiting for an on-demand history batch, resolved when one arrives. */
   private readonly historyWaiters = new Map<string, () => void>()
-
-  // Lifecycle
 
   async start(): Promise<AccountStatus> {
     await this.ctx.storage.put(WANTS_CONNECTION, true)
@@ -167,11 +151,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  /**
-   * Status plus what the archive holds. Asking also wakes a connection that
-   * should be up (after an eviction or a deploy) instead of waiting for the
-   * next heartbeat.
-   */
+  // Also wakes a connection that should be up, instead of waiting for the next alarm.
   async overview(): Promise<Overview> {
     if (this.state === "idle" && (await this.ctx.storage.get<boolean>(WANTS_CONNECTION))) {
       void this.keepAlive()
@@ -182,8 +162,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
   async alarm(): Promise<void> {
     if (await this.ctx.storage.get<boolean>(WANTS_CONNECTION)) await this.keepAlive()
   }
-
-  // Reads (archive)
 
   listChats(query: ChatListQuery): ChatSummary[] {
     return this.archive.listChats(query)
@@ -215,8 +193,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const senderJid = query.senderJid === undefined ? undefined : this.resolveChat(query.senderJid)
     return this.archive.searchMessages({ ...query, chatJid, senderJid })
   }
-
-  // Actions (socket)
 
   async send(request: SendRequest): Promise<SendResult> {
     const socket = this.connectedSocket()
@@ -262,7 +238,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.archive.applyRevoke(jid, messageId)
   }
 
-  /** Marks the chat read up to its latest message, as opening it on the phone does. */
   async markRead(chatJid: string): Promise<number> {
     const socket = this.connectedSocket()
     const jid = this.resolveChat(chatJid)
@@ -337,10 +312,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  /**
-   * Asks the phone for messages older than the oldest one archived for a chat
-   * and waits briefly for them to arrive. Returns how many new messages were stored.
-   */
+  // Returns how many messages the phone sent back within HISTORY_WAIT_MS.
   async loadOlderMessages(chatJid: string, count: number): Promise<number> {
     const socket = this.connectedSocket()
     const jid = this.resolveChat(chatJid)
@@ -358,14 +330,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.archive.stats().messages - before
   }
 
-  // Connection
-
   private async keepAlive(): Promise<void> {
     await this.ensureConnected()
     await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS)
   }
 
-  /** Opens the socket unless one is open or opening; concurrent callers share the attempt. */
+  // Concurrent callers share one attempt.
   private ensureConnected(): Promise<void> {
     if (this.socket) return Promise.resolve()
     this.opening ??= this.openSocket().finally(() => {
@@ -420,7 +390,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  /** Refreshes group subjects at most every few hours; reconnects alone do not trigger it. */
+  // Reconnects are frequent and subjects rarely change, so this is throttled.
   private async refreshGroups(): Promise<void> {
     const last = (await this.ctx.storage.get<number>(GROUPS_REFRESHED_AT)) ?? 0
     if (!this.socket || Date.now() - last < GROUP_REFRESH_MS) return
@@ -439,8 +409,6 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.state = "logged_out"
   }
 
-  // Helpers
-
   private connectedSocket(): Socket {
     if (!this.socket || this.state !== "open") {
       throw new Error(`WhatsApp is not connected (${this.state})`)
@@ -448,16 +416,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.socket
   }
 
-  /** Accepts a JID or a phone number with country code; returns the JID it is archived under. */
   private resolveChat(to: string): string {
     return resolveAddress(this.archive, to)
   }
 
-  /**
-   * The archived message as WhatsApp sent it. Its key keeps the chat and sender
-   * JIDs the message was addressed with, which is what edits, reactions,
-   * receipts and history requests must reference.
-   */
+  // Edits, reactions, receipts and history requests must reference the key with
+  // the JIDs WhatsApp addressed the message with, not the canonical ones.
   private rawMessage(chatJid: string, messageId: string): KeyedMessage {
     const raw = this.archive.getRaw(chatJid, messageId)
     if (!raw) throw new Error(`message ${messageId} not found in ${chatJid}`)

@@ -1,10 +1,3 @@
-/**
- * Converts between the archive's Unix seconds and wall-clock time in the
- * account's configured time zone, which is how people (and the models acting
- * for them) read and write dates.
- */
-
-/** Offset of `timeZone` from UTC at `instantMs`, in milliseconds. */
 function offsetAt(instantMs: number, timeZone: string): number {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -29,7 +22,7 @@ function offsetAt(instantMs: number, timeZone: string): number {
   return wallAsUtc - Math.floor(instantMs / 1000) * 1000
 }
 
-/** `YYYY-MM-DD HH:mm` in `timeZone`. */
+// `YYYY-MM-DD HH:mm`.
 export function formatLocal(unixSeconds: number, timeZone: string): string {
   const ms = unixSeconds * 1000
   return new Date(ms + offsetAt(ms, timeZone)).toISOString().slice(0, 16).replace("T", " ")
@@ -38,11 +31,7 @@ export function formatLocal(unixSeconds: number, timeZone: string): string {
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 const HAS_OFFSET = /(Z|[+-]\d{2}:?\d{2})$/i
 
-/**
- * Parses an ISO date or date-time to Unix seconds. Without an explicit offset
- * the value is read as wall-clock time in `timeZone`; a bare date means its
- * midnight there.
- */
+// Without an offset the input is wall-clock time in `timeZone`; a bare date is its midnight.
 export function parseLocal(input: string, timeZone: string): number {
   const text = input.trim()
   if (HAS_OFFSET.test(text)) return Math.floor(Date.parse(text) / 1000)

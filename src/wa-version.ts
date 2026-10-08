@@ -1,16 +1,11 @@
-/**
- * WhatsApp rejects a client that announces a stale WA Web build ("Client
- * outdated"), and the version baked into the library ages between releases.
- * The current build number is published in WA Web's service worker, which is
- * what Baileys' own `fetchLatestWaWebVersion` reads; that helper is not part of
- * the host entrypoint, so this is the same lookup on `fetch`.
- */
+// WhatsApp rejects stale WA Web builds ("Client outdated"). Baileys reads the
+// current build from WA Web's service worker, but that helper is not in /host.
 type WaVersion = [number, number, number]
 
 const SERVICE_WORKER_URL = "https://web.whatsapp.com/sw.js"
 const CLIENT_REVISION = /\\?"client_revision\\?":\s*(\d+)/
 
-/** Returns the current WA Web version, or `undefined` to keep the library default. */
+// `undefined` keeps the library default.
 export async function fetchWaWebVersion(): Promise<WaVersion | undefined> {
   const response = await fetch(SERVICE_WORKER_URL, {
     headers: {

@@ -5,7 +5,7 @@ import { formatLocal, parseLocal } from "../src/time"
 
 const SAO_PAULO = "America/Sao_Paulo"
 const NEW_YORK = "America/New_York"
-/** 2026-10-08 15:32:00 UTC */
+// 2026-10-08 15:32:00 UTC
 const INSTANT = 1_791_473_520
 
 describe("formatLocal", () => {
