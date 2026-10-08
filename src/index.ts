@@ -63,7 +63,7 @@ export default {
     try {
       switch (action) {
         case "status":
-          return Response.json(await account.status())
+          return Response.json(await account.overview())
         case "start":
           return Response.json(await account.start())
         case "logout":

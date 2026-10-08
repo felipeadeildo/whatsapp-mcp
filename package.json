@@ -11,7 +11,7 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "check": "wrangler types --check && oxlint && oxfmt --check && bun test",
-    "postinstall": "prek install",
+    "postinstall": "[ -n \"$CI\" ] || prek install",
     "test": "bun test"
   },
   "dependencies": {

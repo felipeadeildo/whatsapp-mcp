@@ -166,7 +166,15 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  overview(): Overview {
+  /**
+   * Status plus what the archive holds. Asking also wakes a connection that
+   * should be up (after an eviction or a deploy) instead of waiting for the
+   * next heartbeat.
+   */
+  async overview(): Promise<Overview> {
+    if (this.state === "idle" && (await this.ctx.storage.get<boolean>(WANTS_CONNECTION))) {
+      void this.keepAlive()
+    }
     return { ...this.status(), archive: this.archive.stats() }
   }
 
