@@ -1,16 +1,14 @@
 // OAuth clients choose their own name and redirect address, so escape everything.
 import type { ConsentDescription } from "@cloudflare/workers-oauth-provider"
 
-import { STYLE } from "../pairing-page"
-import { type Lang, LOCALE, TEXT } from "../text"
+import { escapeHtml, page } from "../page"
+import { type Lang, TEXT } from "../text"
 
 type Message = keyof (typeof TEXT)["en"]["auth"]
-
-function escapeHtml(text: string): string {
-  return text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`)
-}
-
 type Values = Record<string, string>
+
+const LOCK = `<svg class="glyph" viewBox="0 0 48 48" fill="none" aria-hidden="true"><rect x="11" y="21" width="26" height="20" rx="4" stroke="currentColor" stroke-width="3.5"/><path d="M17 21v-5a7 7 0 0 1 14 0v5" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><circle cx="24" cy="31" r="2.6" fill="currentColor"/></svg>`
+const ALERT = `<svg class="glyph" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 12v15" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="24" cy="36" r="3.2" fill="currentColor"/></svg>`
 
 /** The message as plain text, for the page title. */
 function plain(lang: Lang, message: Message, values: Values = {}): string {
@@ -24,6 +22,11 @@ function say(lang: Lang, message: Message, values: Values = {}): string {
   })
 }
 
+// The pairing page's viewfinder, as decoration beside the text; it hides on phones.
+function viewfinder(mode: "idle" | "qr" | "alert", content: string): string {
+  return `<div class="viewfinder aside" data-mode="${mode}"><div class="visual">${content}</div></div>`
+}
+
 export function signInPage(options: {
   lang: Lang
   accountId: string
@@ -31,20 +34,26 @@ export function signInPage(options: {
   error?: "wrong" | "tooMany"
 }): string {
   const { lang, accountId, next, error } = options
-  return shell(
+  return page({
     lang,
-    plain(lang, "signIn"),
-    `
-    <h1>${say(lang, "signIn")}</h1>
-    <p class="lead">${say(lang, "signInLead", { account: accountId })}</p>
-    ${error ? `<p class="detail" role="alert">${say(lang, error)}</p>` : ""}
-    <form method="post" action="/accounts/${accountId}/login" class="form">
-      <input type="hidden" name="next" value="${escapeHtml(next)}">
-      <label for="secret">${say(lang, "password")}</label>
-      <input id="secret" name="secret" type="password" autocomplete="current-password" required autofocus>
-      <div class="actions"><button class="primary" type="submit">${say(lang, "submit")}</button></div>
-    </form>`,
-  )
+    title: plain(lang, "signIn"),
+    accountId,
+    main: `
+  <section class="hero">
+    <div>
+      <h1>${say(lang, "signIn")}</h1>
+      <p class="lead">${say(lang, "signInLead", { account: accountId })}</p>
+      <form method="post" action="/accounts/${accountId}/login" class="form">
+        <input type="hidden" name="next" value="${escapeHtml(next)}">
+        <label for="secret">${say(lang, "password")}</label>
+        <input id="secret" name="secret" type="password" autocomplete="current-password" required autofocus>
+        ${error ? `<p class="detail" role="alert">${say(lang, error)}</p>` : ""}
+        <div class="actions"><button class="primary" type="submit">${say(lang, "submit")}</button></div>
+      </form>
+    </div>
+    ${viewfinder("idle", LOCK)}
+  </section>`,
+  })
 }
 
 export function consentPage(options: {
@@ -57,50 +66,42 @@ export function consentPage(options: {
   const origin = details.clientDomain
     ? say(lang, "publishedBy", { domain: details.clientDomain })
     : say(lang, "selfRegistered")
-  return shell(
+  const initial = Array.from(details.clientName.trim())[0]?.toUpperCase() ?? "?"
+  return page({
     lang,
-    plain(lang, "allowTitle", { client: details.clientName }),
-    `
-    <h1>${say(lang, "allowTitle", { client: details.clientName })}</h1>
-    <p class="lead">${say(lang, "allowLead", { account: accountId })}</p>
-    <p class="note">${origin} ${say(lang, "sendsTo", { host: details.redirectHost })}</p>
-    ${details.redirectIsLoopback ? `<p class="detail">${say(lang, "loopback")}</p>` : ""}
-    <form method="post" class="form">
-      <input type="hidden" name="handle" value="${escapeHtml(handle)}">
-      <div class="actions">
-        <button class="primary" name="decision" value="approve" type="submit">${say(lang, "allow")}</button>
-        <button class="quiet" name="decision" value="deny" type="submit">${say(lang, "deny")}</button>
-      </div>
-    </form>`,
-  )
+    title: plain(lang, "allowTitle", { client: details.clientName }),
+    accountId,
+    main: `
+  <section class="hero">
+    <div>
+      <h1>${say(lang, "allowTitle", { client: details.clientName })}</h1>
+      <p class="lead">${say(lang, "allowLead", { account: accountId })}</p>
+      <p class="note">${origin} ${say(lang, "sendsTo", { host: details.redirectHost })}</p>
+      ${details.redirectIsLoopback ? `<p class="detail">${say(lang, "loopback")}</p>` : ""}
+      <form method="post" class="form">
+        <input type="hidden" name="handle" value="${escapeHtml(handle)}">
+        <div class="actions">
+          <button class="primary" name="decision" value="approve" type="submit">${say(lang, "allow")}</button>
+          <button class="secondary" name="decision" value="deny" type="submit">${say(lang, "deny")}</button>
+        </div>
+      </form>
+    </div>
+    ${viewfinder("qr", `<span class="monogram" aria-hidden="true">${escapeHtml(initial)}</span>`)}
+  </section>`,
+  })
 }
 
 export function failurePage(lang: Lang, description: string): string {
-  return shell(
+  return page({
     lang,
-    plain(lang, "failed"),
-    `
-    <h1>${say(lang, "failed")}</h1>
-    <p class="detail">${escapeHtml(description)}</p>`,
-  )
-}
-
-function shell(lang: Lang, title: string, body: string): string {
-  return `<!doctype html>
-<html lang="${LOCALE[lang]}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<meta name="theme-color" content="#0a1512">
-<title>whatsapp-mcp / ${escapeHtml(title)}</title>
-<style>${STYLE}</style>
-</head>
-<body>
-<main class="narrow">
-  <header class="top"><div class="brand"><strong>whatsapp-mcp</strong></div></header>
-  <section class="card">${body}</section>
-</main>
-</body>
-</html>`
+    title: plain(lang, "failed"),
+    main: `
+  <section class="hero">
+    <div>
+      <h1>${say(lang, "failed")}</h1>
+      <p class="detail">${escapeHtml(description)}</p>
+    </div>
+    ${viewfinder("alert", ALERT)}
+  </section>`,
+  })
 }

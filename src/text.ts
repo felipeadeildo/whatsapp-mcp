@@ -7,12 +7,13 @@ export function requestLang(request: Request): Lang {
 }
 
 const en = {
+  credit: "Brought to you by",
   auth: {
     signIn: "Sign in",
     signInLead: "Type the password of this server to manage the WhatsApp account {account}.",
     password: "Password",
     submit: "Sign in",
-    wrong: "That password was not accepted.",
+    wrong: "That password was not accepted. Use the SECRET you set when deploying this server.",
     tooMany: "Too many attempts. Wait a minute and try again.",
     allowTitle: "Let {client} use your WhatsApp?",
     allowLead: "It will be able to read, search and send messages as the account {account}.",
@@ -91,12 +92,13 @@ const en = {
 }
 
 const pt: typeof en = {
+  credit: "Feito por",
   auth: {
     signIn: "Entrar",
     signInLead: "Digite a senha deste servidor para gerenciar a conta de WhatsApp {account}.",
     password: "Senha",
     submit: "Entrar",
-    wrong: "Senha incorreta.",
+    wrong: "Senha incorreta. Use o SECRET que você definiu no deploy deste servidor.",
     tooMany: "Tentativas demais. Espere um minuto e tente de novo.",
     allowTitle: "Permitir que {client} use seu WhatsApp?",
     allowLead: "Ele poderá ler, buscar e enviar mensagens pela conta {account}.",
