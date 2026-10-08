@@ -11,7 +11,7 @@ function raw(message: WAMessage["message"], key: Partial<WAMessage["key"]> = {})
     key: { remoteJid: CHAT, id: "ID1", fromMe: false, ...key },
     message,
     messageTimestamp: 1_791_000_000,
-    pushName: "Maria",
+    pushName: "Ada",
   }
 }
 
@@ -28,7 +28,7 @@ describe("interpret", () => {
       participant: null,
       id: "ID1",
       fromMe: false,
-      pushName: "Maria",
+      pushName: "Ada",
       sentAt: 1_791_000_000,
       kind: "text",
       text: "oi",

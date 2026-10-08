@@ -7,17 +7,17 @@ describe("resolveIdentity", () => {
     const identity = resolveIdentity(
       "1@lid",
       [
-        { source: "push", name: "Maria", seenAt: 100 },
-        { source: "push", name: "Mah", seenAt: 200 },
-        { source: "business", name: "Padaria", seenAt: 300 },
+        { source: "push", name: "Ada", seenAt: 100 },
+        { source: "push", name: "Ada L.", seenAt: 200 },
+        { source: "business", name: "Analytical Engines", seenAt: 300 },
       ],
       null,
     )
     expect(identity).toEqual({
       jid: "1@lid",
-      name: "Mah",
+      name: "Ada L.",
       phone: null,
-      aliases: ["Maria", "Padaria"],
+      aliases: ["Ada", "Analytical Engines"],
     })
   })
 
@@ -25,9 +25,9 @@ describe("resolveIdentity", () => {
     const identity = resolveIdentity(
       "1@lid",
       [
-        { source: "contact", name: "João", seenAt: 1 },
-        { source: "push", name: "joao", seenAt: 1 },
-        { source: "history", name: "JOÃO ", seenAt: 1 },
+        { source: "contact", name: "Zoë", seenAt: 1 },
+        { source: "push", name: "zoe", seenAt: 1 },
+        { source: "history", name: "ZOË ", seenAt: 1 },
       ],
       null,
     )
@@ -46,6 +46,6 @@ describe("resolveIdentity", () => {
 
 describe("foldName", () => {
   test("ignores case, accents and spacing", () => {
-    expect(foldName("  Antônio   JOSÉ ")).toBe("antonio jose")
+    expect(foldName("  Zoë   ÅNGSTRÖM ")).toBe("zoe angstrom")
   })
 })

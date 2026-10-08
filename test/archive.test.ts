@@ -37,16 +37,16 @@ describe("identity", () => {
     const archive = new Archive(memoryDatabase())
     archive.saveMessages([message({ chatJid: PN, id: "A" })])
     archive.saveReaction(PN, "A", PN, "👍", 1_000)
-    archive.learnNames(PN, [{ source: "contact", name: "Mãe" }])
+    archive.learnNames(PN, [{ source: "contact", name: "Ada Lovelace" }])
     archive.learnPair(PN, LID)
 
     expect(archive.getChat(PN)).toBeNull()
-    expect(archive.getChat(LID)).toMatchObject({ name: "Mãe", phone: "+5511999999999" })
+    expect(archive.getChat(LID)).toMatchObject({ name: "Ada Lovelace", phone: "+5511999999999" })
     const [moved] = archive.getMessages({ chatJid: LID, limit: 10 })
     expect(moved).toMatchObject({
       chatJid: LID,
       senderJid: LID,
-      senderName: "Mãe",
+      senderName: "Ada Lovelace",
       reactions: [{ emoji: "👍", senderJid: LID }],
     })
   })
@@ -62,19 +62,22 @@ describe("identity", () => {
   test("names learned under the phone JID after the pair land on the LID", () => {
     const archive = new Archive(memoryDatabase())
     archive.learnPair(PN, LID)
-    archive.learnNames(PN, [{ source: "contact", name: "Maria (agenda)" }])
-    expect(archive.getPerson(PN)).toMatchObject({ jid: LID, name: "Maria (agenda)" })
+    archive.learnNames(PN, [{ source: "contact", name: "Ada Lovelace" }])
+    expect(archive.getPerson(PN)).toMatchObject({ jid: LID, name: "Ada Lovelace" })
   })
 
   test("both sides' names survive a merge", () => {
     const archive = new Archive(memoryDatabase())
-    archive.learnNames(LID, [{ source: "push", name: "maria_lid", seenAt: 1 }])
+    archive.learnNames(LID, [{ source: "push", name: "ada_l", seenAt: 1 }])
     archive.learnNames(PN, [
-      { source: "push", name: "Maria", seenAt: 2 },
-      { source: "contact", name: "Mãe" },
+      { source: "push", name: "Ada", seenAt: 2 },
+      { source: "contact", name: "Ada Lovelace" },
     ])
     archive.learnPair(PN, LID)
-    expect(archive.getPerson(LID)).toMatchObject({ name: "Mãe", aliases: ["Maria", "maria_lid"] })
+    expect(archive.getPerson(LID)).toMatchObject({
+      name: "Ada Lovelace",
+      aliases: ["Ada", "ada_l"],
+    })
   })
 })
 
@@ -85,34 +88,34 @@ describe("names", () => {
     expect(archive.getPerson(LID).name).toBe("+55∙∙∙∙∙∙∙∙99")
     archive.learnPair(PN, LID)
     expect(archive.getPerson(LID)).toMatchObject({ name: "+5511999999999", aliases: [] })
-    archive.learnNames(LID, [{ source: "username", name: "@maria" }])
-    expect(archive.getPerson(LID).name).toBe("@maria")
-    archive.learnNames(LID, [{ source: "push", name: "Maria" }])
-    expect(archive.getPerson(LID).name).toBe("Maria")
-    archive.learnNames(LID, [{ source: "contact", name: "Mãe" }])
-    expect(archive.getPerson(LID)).toMatchObject({ name: "Mãe", aliases: ["Maria", "@maria"] })
+    archive.learnNames(LID, [{ source: "username", name: "@ada" }])
+    expect(archive.getPerson(LID).name).toBe("@ada")
+    archive.learnNames(LID, [{ source: "push", name: "Ada" }])
+    expect(archive.getPerson(LID).name).toBe("Ada")
+    archive.learnNames(LID, [{ source: "contact", name: "Ada Lovelace" }])
+    expect(archive.getPerson(LID)).toMatchObject({ name: "Ada Lovelace", aliases: ["Ada", "@ada"] })
   })
 
   test("a newer name of the same source wins, and the old one stays searchable", () => {
     const archive = new Archive(memoryDatabase())
     archive.saveMessages([message({ chatJid: LID, id: "A" })])
-    archive.learnNames(LID, [{ source: "push", name: "Maria", seenAt: 100 }])
-    archive.learnNames(LID, [{ source: "push", name: "Mah 🌻", seenAt: 200 }])
-    expect(archive.getPerson(LID).name).toBe("Mah 🌻")
-    expect(archive.findPeople("maria", 10)).toEqual([
-      { jid: LID, name: "Mah 🌻", phone: null, aliases: ["Maria"], matched: "Maria" },
+    archive.learnNames(LID, [{ source: "push", name: "Augusta", seenAt: 100 }])
+    archive.learnNames(LID, [{ source: "push", name: "Ada 🌻", seenAt: 200 }])
+    expect(archive.getPerson(LID).name).toBe("Ada 🌻")
+    expect(archive.findPeople("augusta", 10)).toEqual([
+      { jid: LID, name: "Ada 🌻", phone: null, aliases: ["Augusta"], matched: "Augusta" },
     ])
   })
 
   test("search ignores accents and case, and finds a chat by its phone", () => {
     const archive = new Archive(memoryDatabase())
     archive.learnPair(PN, LID)
-    archive.learnNames(LID, [{ source: "contact", name: "João Antônio" }])
+    archive.learnNames(LID, [{ source: "contact", name: "Zoë Ångström" }])
     archive.saveMessages([message({ chatJid: LID, id: "A" })])
-    expect(archive.findChats("joao", 10)).toMatchObject([
-      { jid: LID, name: "João Antônio", matched: null },
+    expect(archive.findChats("zoe", 10)).toMatchObject([
+      { jid: LID, name: "Zoë Ångström", matched: null },
     ])
-    expect(archive.findChats("antonio", 10).map((chat) => chat.jid)).toEqual([LID])
+    expect(archive.findChats("angstrom", 10).map((chat) => chat.jid)).toEqual([LID])
     expect(archive.findChats("99999", 10).map((chat) => chat.jid)).toEqual([LID])
     expect(archive.findChats("pedro", 10)).toEqual([])
   })
@@ -120,15 +123,19 @@ describe("names", () => {
   test("groups are named by their subject", () => {
     const archive = new Archive(memoryDatabase())
     archive.saveChats([{ jid: "1@g.us" }])
-    archive.learnNames("1@g.us", [{ source: "subject", name: "Família" }])
-    expect(archive.getChat("1@g.us")).toMatchObject({ name: "Família", type: "group", phone: null })
+    archive.learnNames("1@g.us", [{ source: "subject", name: "Book club" }])
+    expect(archive.getChat("1@g.us")).toMatchObject({
+      name: "Book club",
+      type: "group",
+      phone: null,
+    })
   })
 })
 
 describe("messages", () => {
   test("search ignores accents and case and reports the sender by name", () => {
     const archive = new Archive(memoryDatabase())
-    archive.learnNames(LID, [{ source: "push", name: "Maria" }])
+    archive.learnNames(LID, [{ source: "push", name: "Ada" }])
     archive.saveMessages([
       message({ chatJid: LID, id: "A", text: "Vamos tomar AÇAÍ amanhã?" }),
       message({ chatJid: LID, id: "B", text: "outra coisa" }),
@@ -137,8 +144,8 @@ describe("messages", () => {
     expect(hits).toHaveLength(1)
     expect(hits[0]).toMatchObject({
       id: "A",
-      senderName: "Maria",
-      chatName: "Maria",
+      senderName: "Ada",
+      chatName: "Ada",
       snippet: "Vamos tomar [AÇAÍ] amanhã?",
     })
   })
@@ -156,12 +163,12 @@ describe("messages", () => {
   test("mentions resolve to names", () => {
     const archive = new Archive(memoryDatabase())
     archive.learnPair(PN, LID)
-    archive.learnNames(LID, [{ source: "push", name: "Maria" }])
+    archive.learnNames(LID, [{ source: "push", name: "Ada" }])
     archive.saveMessages([
       message({ chatJid: "1@g.us", id: "A", text: "oi @5511999999999", mentions: [PN] }),
     ])
     expect(archive.getMessage("1@g.us", "A")?.mentions).toEqual([
-      { user: "5511999999999", jid: LID, name: "Maria" },
+      { user: "5511999999999", jid: LID, name: "Ada" },
     ])
   })
 })
