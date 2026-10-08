@@ -114,7 +114,7 @@ func NewClient(store *storage.MessageStore, mediaStore *storage.MediaStore, webh
 
 	ctx := context.Background()
 
-	container, err := sqlstore.New(ctx, "sqlite", "file:"+paths.WhatsAppAuthDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", logger)
+	container, err := sqlstore.New(ctx, "sqlite", "file:"+paths.WhatsAppAuthDBPath+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)&_txlock=immediate", logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sqlstore: %w", err)
 	}
