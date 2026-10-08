@@ -132,24 +132,26 @@ Clients that connect only through OAuth, such as custom connectors on claude.ai,
 
 The reading tools answer from the archive, so they work while your phone is offline. They show times in the configured time zone.
 
-| Tool                  | What it does                                                                               |
-| --------------------- | ------------------------------------------------------------------------------------------ |
-| `get_status`          | Connection state, the linked number, and what the archive holds                            |
-| `list_chats`          | Chats in the order your phone shows them, with unread counts and filters                   |
-| `find_chats`          | Chats whose names or phone number match, past names included                               |
-| `find_people`         | People by any of their names or phone, including group members you never chatted with      |
-| `get_messages`        | A chat's messages, oldest first, with paging and filters by date or sender                 |
-| `get_message_context` | A message and the conversation around it                                                   |
-| `search_messages`     | Full-text search across all chats, ranked, with filters by chat, sender and date           |
-| `send_message`        | Sends text, as a reply or with mentions. A retried request does not send the message twice |
-| `react_to_message`    | Adds, changes or removes a reaction                                                        |
-| `edit_message`        | Edits a message you sent                                                                   |
-| `delete_message`      | Deletes a message for everyone                                                             |
-| `mark_as_read`        | Marks a chat as read                                                                       |
-| `load_older_messages` | Asks your phone for history older than the archive holds                                   |
-| `check_numbers`       | Which phone numbers have WhatsApp, without messaging them                                  |
-| `get_group_info`      | A group's subject, description, settings and members with their roles                      |
-| `get_profile`         | Someone's name, phone, About text and profile picture, as their privacy settings allow     |
+| Tool                  | What it does                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------------- |
+| `get_status`          | Connection state, the linked number, and what the archive holds                                     |
+| `list_chats`          | Chats in the order your phone shows them, with unread counts and filters                            |
+| `find_chats`          | Chats whose names or phone number match, past names included                                        |
+| `find_people`         | People by any of their names or phone, including group members you never chatted with               |
+| `get_messages`        | A chat's messages, oldest first, with paging and filters by date or sender                          |
+| `get_message_context` | A message and the conversation around it                                                            |
+| `search_messages`     | Full-text search across all chats, ranked, with filters by chat, sender and date                    |
+| `send_message`        | Sends text, as a reply or with mentions. A retried request does not send the message twice          |
+| `react_to_message`    | Adds, changes or removes a reaction                                                                 |
+| `edit_message`        | Edits a message you sent                                                                            |
+| `delete_message`      | Deletes a message for everyone                                                                      |
+| `mark_as_read`        | Marks a chat as read                                                                                |
+| `save_contact`        | Saves a person to your address book, or renames them, and syncs it to your phone and linked devices |
+| `remove_contact`      | Removes a person from your address book on your phone and linked devices                            |
+| `load_older_messages` | Asks your phone for history older than the archive holds                                            |
+| `check_numbers`       | Which phone numbers have WhatsApp, without messaging them                                           |
+| `get_group_info`      | A group's subject, description, settings and members with their roles                               |
+| `get_profile`         | Someone's name, phone, About text and profile picture, as their privacy settings allow              |
 
 Each tool tells the client whether it only reads or changes something other people see, so the client can ask you before it acts. The tools render every kind of message as text, including captions, locations, contacts, polls, events, and business messages with their buttons and lists.
 

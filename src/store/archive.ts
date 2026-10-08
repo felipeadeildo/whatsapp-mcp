@@ -370,6 +370,16 @@ export class Archive {
     return row.done ? jid : row.value.lid
   }
 
+  /** `null` while only the LID is known, and for anything that is not a person. */
+  phoneJidOf(jid: string): string | null {
+    if (jid.endsWith(PN_SUFFIX)) return jid
+    if (!jid.endsWith(LID_SUFFIX)) return null
+    const row = this.sql
+      .exec<{ pn: string }>("SELECT pn FROM phone_lids WHERE lid = ? LIMIT 1", jid)
+      .next()
+    return row.done ? null : row.value.pn
+  }
+
   /** Records that a phone JID and a LID are one person, moving what was stored under the phone JID. */
   learnPair(pn: string, lid: string): void {
     const known = this.sql
@@ -398,6 +408,10 @@ export class Archive {
         seenAt ?? now,
       )
     }
+  }
+
+  forgetNames(jid: string, source: NameSource): void {
+    this.sql.exec("DELETE FROM names WHERE jid = ? AND source = ?", this.canonical(jid), source)
   }
 
   /** Moves everything stored under one JID to another; what already exists there wins. */

@@ -37,6 +37,7 @@ import {
 import { durableKvStore } from "./store/durable-kv"
 import type { Identity } from "./store/names"
 import { fetchWaWebVersion } from "./wa-version"
+import { type ContactName, removeContact, resolveAddress, saveContact } from "./whatsapp/contacts"
 import { decodeRaw, type KeyedMessage } from "./whatsapp/raw"
 import { makeSocket, type Socket } from "./whatsapp/socket"
 import { refreshGroupNames, syncArchive } from "./whatsapp/sync"
@@ -275,6 +276,14 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return keys.length
   }
 
+  async saveContact(target: string, name: ContactName): Promise<Identity> {
+    return saveContact(this.connectedSocket(), this.archive, target, name)
+  }
+
+  async removeContact(target: string): Promise<Identity> {
+    return removeContact(this.connectedSocket(), this.archive, target)
+  }
+
   async checkNumbers(phones: readonly string[]): Promise<NumberCheck[]> {
     const socket = this.connectedSocket()
     const results =
@@ -441,10 +450,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   /** Accepts a JID or a phone number with country code; returns the JID it is archived under. */
   private resolveChat(to: string): string {
-    if (to.includes("@")) return this.archive.canonical(jidNormalizedUser(to))
-    const digits = to.replace(/\D/g, "")
-    if (!digits) throw new Error(`not a JID or phone number: ${to}`)
-    return this.archive.canonical(`${digits}@s.whatsapp.net`)
+    return resolveAddress(this.archive, to)
   }
 
   /**

@@ -8,6 +8,7 @@ import { z } from "zod"
 
 import type { WhatsAppAccount } from "../account"
 import type { ArchivedMessage, ChatSummary, SearchHit } from "../store/archive"
+import type { Identity } from "../store/names"
 import { formatLocal, parseLocal } from "../time"
 
 type Account = DurableObjectStub<WhatsAppAccount>
@@ -20,7 +21,7 @@ Reading comes from the account's archive, which holds what WhatsApp synced at pa
 
 Times are shown in the account's time zone as "YYYY-MM-DD HH:mm". Date filters accept the same format, a bare date, or ISO 8601 with an offset.
 
-Sending is visible to other people and cannot be taken back silently: confirm intent before send_message, edit_message or delete_message unless the user was explicit.`
+Sending is visible to other people and cannot be taken back silently: confirm intent before send_message, edit_message, delete_message or remove_contact unless the user was explicit.`
 
 /** Drops absent fields, which only cost the model tokens. */
 function withoutNulls<V>(record: Record<string, V | null>): Record<string, V> {
@@ -101,6 +102,42 @@ function json(value: object): { content: { type: "text"; text: string }[] } {
 const chat = z.string().min(1).describe("Chat JID, or a phone number with country code")
 const messageId = z.string().min(1).describe("Message id, as returned by the reading tools")
 const when = z.string().min(1)
+const PHONE = /^\+?\d{8,15}$/
+const phoneNumber = z.string().regex(PHONE, "digits with country code, e.g. +5511999999999")
+
+const personFields = {
+  jid: z.string().min(1).optional().describe("The person's JID, @lid or @s.whatsapp.net"),
+  phone: phoneNumber.optional().describe("The person's phone number with country code"),
+}
+const ONE_PERSON = { message: "pass either jid or phone, not both" }
+
+function onePerson(input: {
+  readonly jid?: string | undefined
+  readonly phone?: string | undefined
+}): boolean {
+  return (input.jid === undefined) !== (input.phone === undefined)
+}
+
+function targetOf(input: {
+  readonly jid?: string | undefined
+  readonly phone?: string | undefined
+}): string {
+  const target = input.jid ?? input.phone
+  if (target === undefined) throw new Error(ONE_PERSON.message)
+  return target
+}
+
+function presentPerson(
+  person: Identity & { readonly matched?: string | null },
+): Record<string, string | readonly string[]> {
+  return withoutNulls({
+    jid: person.jid,
+    name: person.name,
+    phone: person.phone,
+    matched: person.matched ?? null,
+    also_known_as: person.aliases.length > 0 ? person.aliases : null,
+  })
+}
 
 const READ = { readOnlyHint: true, openWorldHint: false } as const
 const LIVE_READ = { readOnlyHint: true, openWorldHint: true } as const
@@ -199,15 +236,7 @@ export function createServer(account: Account, timeZone: string): McpServer {
     async ({ query, limit }) => {
       const people = await account.findPeople(query, limit)
       return json({
-        people: people.map((person) =>
-          withoutNulls({
-            jid: person.jid,
-            name: person.name,
-            phone: person.phone,
-            matched: person.matched,
-            also_known_as: person.aliases.length > 0 ? person.aliases : null,
-          }),
-        ),
+        people: people.map(presentPerson),
       })
     },
   )
@@ -401,15 +430,58 @@ export function createServer(account: Account, timeZone: string): McpServer {
   )
 
   server.registerTool(
+    "save_contact",
+    {
+      title: "Save a contact",
+      description:
+        "Saves a person to this account's address book, or renames them if they are already saved. WhatsApp syncs it to the phone and the other linked devices. Pass the person's JID or phone number; first_name defaults to the first word of full_name.",
+      inputSchema: z
+        .object({
+          ...personFields,
+          full_name: z.string().trim().min(1).max(100),
+          first_name: z.string().trim().min(1).max(100).optional(),
+        })
+        .refine(onePerson, ONE_PERSON),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (input) => {
+      const saved = await account.saveContact(targetOf(input), {
+        fullName: input.full_name,
+        firstName: input.first_name,
+      })
+      return json(presentPerson(saved))
+    },
+  )
+
+  server.registerTool(
+    "remove_contact",
+    {
+      title: "Remove a contact",
+      description:
+        "Removes a person from this account's address book, on the phone and the other linked devices. Their chat and messages stay, shown under the name they chose on WhatsApp or their number.",
+      inputSchema: z.object(personFields).refine(onePerson, ONE_PERSON),
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (input) => json(presentPerson(await account.removeContact(targetOf(input)))),
+  )
+
+  server.registerTool(
     "check_numbers",
     {
       title: "Check numbers on WhatsApp",
       description: "Which phone numbers have a WhatsApp account. Nothing is sent to them.",
       inputSchema: z.object({
-        phones: z
-          .array(z.string().regex(/^\+?\d{8,15}$/, "digits with country code"))
-          .min(1)
-          .max(50),
+        phones: z.array(phoneNumber).min(1).max(50),
       }),
       annotations: LIVE_READ,
     },
