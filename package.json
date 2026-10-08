@@ -1,6 +1,7 @@
 {
   "name": "whatsapp-mcp",
   "private": true,
+  "description": "WhatsApp for your AI agents: an MCP server on Cloudflare Workers, one Durable Object per account.",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
@@ -29,6 +30,16 @@
     "oxlint-tsgolint": "^7.0.2003",
     "typescript": "^7.0.2",
     "wrangler": "^4.148.0"
+  },
+  "cloudflare": {
+    "bindings": {
+      "API_KEY": {
+        "description": "Bearer token that protects the API and the MCP endpoint. Generate one with `openssl rand -hex 32` and keep it in your password manager."
+      },
+      "TIMEZONE": {
+        "description": "IANA time zone the tools show and read dates in, e.g. `America/Sao_Paulo`."
+      }
+    }
   },
   "patchedDependencies": {
     "@oxidezap/baileyrs@0.3.10": "patches/@oxidezap%2Fbaileyrs@0.3.10.patch"
