@@ -17,15 +17,19 @@
   "ratelimits": [
     { "name": "SIGN_IN_LIMIT", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } },
   ],
-  // Speech to text for voice messages, billed per audio minute.
+  // Speech to text for voice messages (billed per audio minute) and image descriptions
+  // (billed per token).
   "ai": { "binding": "AI" },
   "vars": {
     // IANA zone the tools show and read times in.
     "TIMEZONE": "UTC",
     // "@cf/openai/whisper-large-v3-turbo", "@cf/deepgram/nova-3" or "off".
     "TRANSCRIBE_MODEL": "@cf/openai/whisper-large-v3-turbo",
-    // Language spoken in most voice messages, e.g. "pt". Empty detects it per message.
-    "TRANSCRIBE_LANGUAGE": "",
+    // "@cf/mistralai/mistral-small-3.1-24b-instruct", "@cf/meta/llama-4-scout-17b-16e-instruct" or "off".
+    "DESCRIBE_MODEL": "@cf/mistralai/mistral-small-3.1-24b-instruct",
+    // ISO 639-1 language of most voice messages and of image descriptions, e.g. "pt".
+    // Empty detects it per voice message and describes images in the language of their text.
+    "MEDIA_LANGUAGE": "",
     // "oauth", "api_key" (SECRET as a Bearer token) or "both".
     "AUTH_MODE": "both",
   },

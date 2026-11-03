@@ -180,6 +180,21 @@ describe("messages", () => {
     expect(archive.getMessage(LID, "V")?.transcript).toBeNull()
   })
 
+  test("an image description is searchable and goes with a revoke", () => {
+    const archive = new Archive(memoryDatabase())
+    archive.saveMessages([message({ chatJid: LID, id: "I", kind: "image", text: null })])
+
+    archive.saveDescription(LID, "I", "Comprovante de Pix. Valor: R$ 350,00")
+    expect(archive.getMessage(LID, "I")?.description).toBe("Comprovante de Pix. Valor: R$ 350,00")
+    expect(archive.searchMessages({ query: "comprovante pix", limit: 10 })).toMatchObject([
+      { id: "I" },
+    ])
+
+    archive.applyRevoke(LID, "I")
+    expect(archive.getMessage(LID, "I")?.description).toBeNull()
+    expect(archive.searchMessages({ query: "comprovante", limit: 10 })).toHaveLength(0)
+  })
+
   test("mentions resolve to names", () => {
     const archive = new Archive(memoryDatabase())
     archive.learnPair(PN, LID)

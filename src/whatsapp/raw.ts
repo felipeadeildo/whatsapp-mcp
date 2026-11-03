@@ -19,25 +19,57 @@ export function encodeRaw(message: WAMessage): Uint8Array | null {
   }
 }
 
-export interface AudioContent {
+export interface MediaContent {
+  readonly type: "audio" | "image" | "sticker" | "video" | "document"
   readonly mimetype: string
   readonly viewOnce: boolean
+  // The small JPEG preview WhatsApp sends inside the message, when it has one.
+  readonly thumbnail: Uint8Array | null
 }
 
-// WhatsApp sends voice messages as Opus in Ogg.
-const DEFAULT_AUDIO_MIMETYPE = "audio/ogg; codecs=opus"
+// What each media type is when the message leaves out its mimetype.
+const DEFAULT_MIMETYPES: Record<MediaContent["type"], string> = {
+  audio: "audio/ogg; codecs=opus",
+  image: "image/jpeg",
+  sticker: "image/webp",
+  video: "video/mp4",
+  document: "application/octet-stream",
+}
 
-export function audioOf(message: WAMessage): AudioContent | null {
+interface MediaFields {
+  readonly mimetype?: string | null
+  readonly viewOnce?: boolean | null
+  readonly jpegThumbnail?: Uint8Array | null
+}
+
+function mediaFieldsOf(content: proto.IMessage): [MediaContent["type"], MediaFields] | null {
+  if (content.audioMessage) return ["audio", content.audioMessage]
+  if (content.imageMessage) return ["image", content.imageMessage]
+  const sticker = content.stickerMessage ?? content.lottieStickerMessage?.message?.stickerMessage
+  if (sticker) return ["sticker", sticker]
+  const video = content.videoMessage ?? content.ptvMessage
+  if (video) return ["video", video]
+  if (content.documentMessage) return ["document", content.documentMessage]
+  return null
+}
+
+/** The downloadable media in a message, or null when it has none. */
+export function mediaOf(message: WAMessage): MediaContent | null {
   const outer = message.message
-  const audio = normalizeMessageContent(outer)?.audioMessage
-  if (!audio) return null
+  const content = normalizeMessageContent(outer)
+  const found = content ? mediaFieldsOf(content) : null
+  if (!found) return null
+  const [type, fields] = found
   const wrapper = outer?.ephemeralMessage?.message ?? outer
   const wrappedViewOnce = Boolean(
     wrapper?.viewOnceMessage ?? wrapper?.viewOnceMessageV2 ?? wrapper?.viewOnceMessageV2Extension,
   )
+  const thumbnail = fields.jpegThumbnail
   return {
-    mimetype: audio.mimetype || DEFAULT_AUDIO_MIMETYPE,
-    viewOnce: wrappedViewOnce || audio.viewOnce === true,
+    type,
+    mimetype: fields.mimetype || DEFAULT_MIMETYPES[type],
+    viewOnce: wrappedViewOnce || fields.viewOnce === true,
+    thumbnail: thumbnail && thumbnail.length > 0 ? thumbnail : null,
   }
 }
 

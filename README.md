@@ -83,6 +83,7 @@ Scripts and clients that can set a header can skip the browser and send `Authori
 | `find_people`         | People by any name or phone, including group members            |
 | `get_messages`        | A chat's messages, with voice messages transcribed              |
 | `get_message_context` | A message and the conversation around it                        |
+| `view_media`          | Shows an image, a video's preview or a voice message's text     |
 | `search_messages`     | Search all chats by words, including transcribed voice messages |
 | `send_message`        | Sends text, as a reply or with mentions, never twice on retries |
 | `react_to_message`    | Adds or removes a reaction                                      |
@@ -110,7 +111,7 @@ flowchart LR
     socket --> archive
   end
   socket <-- "WebSocket" --> whatsapp["WhatsApp"]
-  account -- "voice messages" --> ai["Workers AI<br/>speech to text"]
+  account -- "voice messages, images" --> ai["Workers AI<br/>speech to text, vision"]
 ```
 
 Each WhatsApp account lives in its own [Durable Object](https://developers.cloudflare.com/durable-objects/), a small server that Cloudflare keeps running with its own SQLite database. The WhatsApp session inside it is [baileyrs](https://github.com/oxidezap/baileyrs), whose protocol core is [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) compiled to WebAssembly. An alarm every 30 seconds keeps the object in memory and reconnects it after deploys.
@@ -119,15 +120,18 @@ WhatsApp sends your recent history once, when you link, and the archive keeps ev
 
 The server transcribes a voice message when your assistant reads it, not when it arrives. WhatsApp's own transcripts never leave the phone, so the server downloads the audio and sends it to [Workers AI](https://developers.cloudflare.com/workers-ai/). Each read transcribes up to 10 voice messages, newest first, and waits up to 8 seconds for them. The archive keeps the text, so later reads and search find it without another call. A voice message nobody reads costs nothing. The server skips view-once audio, and deleting a message for everyone deletes its transcript.
 
+Images work the same way. `view_media` downloads an image when your assistant asks for it and passes the file on as WhatsApp sent it. The first view also has a Workers AI vision model describe the image and copy the text in it, like the amount on a Pix receipt, and the archive keeps that description for later reads and search. Videos show the preview inside the message, without a download. An image over 3.75 MB, the most Claude accepts, shows that preview instead. View-once media is never opened.
+
 ## Configuration
 
-| Name                  | Kind     | Purpose                                                                       |
-| --------------------- | -------- | ----------------------------------------------------------------------------- |
-| `SECRET`              | Secret   | The password of your server, at least 16 characters                           |
-| `AUTH_MODE`           | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset         |
-| `TIMEZONE`            | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset                 |
-| `TRANSCRIBE_MODEL`    | Variable | `@cf/openai/whisper-large-v3-turbo` (default), `@cf/deepgram/nova-3` or `off` |
-| `TRANSCRIBE_LANGUAGE` | Variable | Language of most voice messages, like `pt`. Detected per message if empty     |
+| Name               | Kind     | Purpose                                                                                                      |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `SECRET`           | Secret   | The password of your server, at least 16 characters                                                          |
+| `AUTH_MODE`        | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset                                        |
+| `TIMEZONE`         | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset                                                |
+| `TRANSCRIBE_MODEL` | Variable | `@cf/openai/whisper-large-v3-turbo` (default), `@cf/deepgram/nova-3` or `off`                                |
+| `DESCRIBE_MODEL`   | Variable | `@cf/mistralai/mistral-small-3.1-24b-instruct` (default), `@cf/meta/llama-4-scout-17b-16e-instruct` or `off` |
+| `MEDIA_LANGUAGE`   | Variable | Language of voice messages and image descriptions, like `pt`. Detected if empty                              |
 
 With `oauth`, an app connects after you sign in with `SECRET` in the browser and allow it. With `api_key`, clients send `Authorization: Bearer <SECRET>` on every request. The pairing page asks for `SECRET` in every mode, and allows five attempts per minute.
 
@@ -147,7 +151,7 @@ The object stays in memory all day, and Cloudflare bills that time as if it used
 
 More accounts share the same plan. Cloudflare bills extra time in blocks of 1 million GB-s at $12.50, so two to four accounts cost $17.50 per month.
 
-Workers AI bills transcription per audio minute, $0.0005 with Whisper and $0.0052 with Nova-3. A thousand 30-second voice messages cost about $0.26 with Whisper. The 10,000 free neurons a day cover about 200 minutes of Whisper.
+Workers AI bills transcription per audio minute, $0.0005 with Whisper and $0.0052 with Nova-3. A thousand 30-second voice messages cost about $0.26 with Whisper. The 10,000 free neurons a day cover about 200 minutes of Whisper. An image description costs about $0.0004 with Mistral Small 3.1, so a thousand viewed images cost about $0.40.
 
 Workers Free is not enough, even for one account.
 
@@ -158,7 +162,7 @@ See [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing
 
 ## Is it safe?
 
-Your session and your messages stay in your Cloudflare account. The server talks to WhatsApp, and sends the voice messages your assistant reads to Workers AI in the same Cloudflare account. Only someone who knows your `SECRET` can use it or allow an app in.
+Your session and your messages stay in your Cloudflare account. The server talks to WhatsApp, and sends the voice messages your assistant reads and the images it views to Workers AI in the same Cloudflare account. Only someone who knows your `SECRET` can use it or allow an app in.
 
 This is an unofficial WhatsApp client, not affiliated with WhatsApp or Meta, and WhatsApp can ban accounts that use one. Link a number you can afford to lose, and keep your assistant asking before it sends messages.
 

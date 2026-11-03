@@ -2,10 +2,12 @@ import { McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 
 import type { WhatsAppAccount } from "../account"
+import { toBase64 } from "../bytes"
 import type { ArchivedMessage, ChatSummary, SearchHit } from "../store/archive"
 import type { Identity } from "../store/names"
 import { formatLocal, parseLocal } from "../time"
 import type { ReadMessage } from "../transcribe"
+import type { MediaView } from "../view-media"
 
 type Account = DurableObjectStub<WhatsAppAccount>
 
@@ -16,6 +18,8 @@ Chats and people are identified by JID: "<id>@lid" or "<number>@s.whatsapp.net" 
 Reading comes from the account's archive, which holds what WhatsApp synced at pairing plus everything since. If a chat's history stops too early, load_older_messages asks the phone for more.
 
 Voice and audio messages carry a transcript once transcribed. get_messages and get_message_context transcribe the ones they return (up to 10 per call, newest first) and save the text, so later reads and search_messages have it. transcript_status explains a missing one: "pending" is still running (read again in a few seconds), "not_requested" was left out (narrow the read or use get_message_context), "unavailable" failed with transcript_error, "no_speech" means nothing was said. Pass transcribe: false to read without transcribing.
+
+Reads show images, stickers, videos and documents by their caption and size. To see one, call view_media: it returns the image as WhatsApp sent it, or the preview inside the message for videos. The first view of an image also saves a description of what it shows and the text in it, which later reads carry as description and search_messages finds.
 
 Times are shown in the account's time zone as "YYYY-MM-DD HH:mm". Date filters accept the same format, a bare date, or ISO 8601 with an offset.
 
@@ -57,6 +61,7 @@ function presentMessage(
   if (message.transcript) out.transcript = message.transcript
   if (message.transcriptStatus) out.transcript_status = message.transcriptStatus
   if (message.transcriptError) out.transcript_error = message.transcriptError
+  if (message.description) out.description = message.description
   if (message.quotedId) out.reply_to = message.quotedId
   if (message.reactions.length > 0)
     out.reactions = message.reactions.map((reaction) => reaction.emoji).join("")
@@ -97,6 +102,28 @@ function presentHit(
 
 function json(value: object): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(value) }] }
+}
+
+type ToolContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string }
+
+function presentView(view: MediaView, timeZone: string): { content: ToolContent[] } {
+  const details = withoutNulls({
+    message: presentMessage(view.message, timeZone),
+    image: view.image?.source ?? null,
+    notice: view.notice ?? null,
+    description_status: view.descriptionStatus ?? null,
+    description_error: view.descriptionError ?? null,
+  })
+  const text: ToolContent = { type: "text", text: JSON.stringify(details) }
+  if (!view.image) return { content: [text] }
+  const image: ToolContent = {
+    type: "image",
+    data: toBase64(view.image.bytes),
+    mimeType: view.image.mimetype,
+  }
+  return { content: [image, text] }
 }
 
 const chat = z.string().min(1).describe("Chat JID, or a phone number with country code")
@@ -304,11 +331,26 @@ export function createServer(account: Account, timeZone: string): McpServer {
   )
 
   server.registerTool(
+    "view_media",
+    {
+      title: "View media",
+      description:
+        "The media in one message: an image or sticker as WhatsApp sent it, the preview inside a video, or the transcript of a voice or audio message. The first view of an image saves a description (a vision-model call) that later reads and search show.",
+      inputSchema: z.object({ chat, message_id: messageId }),
+      annotations: LIVE_READ,
+    },
+    async (input) => {
+      const view = await account.viewMedia(input.chat, input.message_id)
+      return presentView(view, timeZone)
+    },
+  )
+
+  server.registerTool(
     "search_messages",
     {
       title: "Search messages",
       description:
-        "Full-text search across all chats, best matches first, including what was said in voice and audio messages already transcribed. Every word must appear (prefix match, accents and case ignored). Narrow with `chat`, `from`, `after`, `before`.",
+        "Full-text search across all chats, best matches first, including what was said in voice and audio messages already transcribed and the descriptions of images already viewed. Every word must appear (prefix match, accents and case ignored). Narrow with `chat`, `from`, `after`, `before`.",
       inputSchema: z.object({
         query: z.string().min(1),
         chat: chat.optional(),

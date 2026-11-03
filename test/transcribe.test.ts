@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { WAMessage } from "@oxidezap/baileyrs/lib/Types/Message.js"
 
 import { readTranscribeConfig, withoutCaptionCredits } from "../src/transcribe"
-import { audioOf } from "../src/whatsapp/raw"
+import { mediaOf } from "../src/whatsapp/raw"
 
 describe("transcription config", () => {
   test("off or empty turns it off, and the language is optional", () => {
@@ -11,11 +11,11 @@ describe("transcription config", () => {
     expect(
       readTranscribeConfig({
         TRANSCRIBE_MODEL: "@cf/openai/whisper-large-v3-turbo",
-        TRANSCRIBE_LANGUAGE: "",
+        MEDIA_LANGUAGE: "",
       }),
     ).toEqual({ model: "@cf/openai/whisper-large-v3-turbo", language: null })
     expect(
-      readTranscribeConfig({ TRANSCRIBE_MODEL: "@cf/deepgram/nova-3", TRANSCRIBE_LANGUAGE: "pt" }),
+      readTranscribeConfig({ TRANSCRIBE_MODEL: "@cf/deepgram/nova-3", MEDIA_LANGUAGE: "pt" }),
     ).toEqual({ model: "@cf/deepgram/nova-3", language: "pt" })
   })
 
@@ -43,23 +43,40 @@ function withContent(content: WAMessage["message"]): WAMessage {
   return { key: { remoteJid: "1@lid", id: "A", fromMe: false }, message: content }
 }
 
-describe("audio in a message", () => {
+describe("media in a message", () => {
   const voice = { mimetype: "audio/ogg; codecs=opus", ptt: true }
 
-  test("a voice message has its mimetype", () => {
+  test("a voice message has its type and mimetype", () => {
     const message = withContent({ audioMessage: voice })
-    expect(audioOf(message)).toEqual({ mimetype: "audio/ogg; codecs=opus", viewOnce: false })
+    expect(mediaOf(message)).toEqual({
+      type: "audio",
+      mimetype: "audio/ogg; codecs=opus",
+      viewOnce: false,
+      thumbnail: null,
+    })
   })
 
-  test("view-once audio is flagged, wrapped or not", () => {
-    const wrapped = withContent({ viewOnceMessageV2: { message: { audioMessage: voice } } })
+  test("view-once media is flagged, wrapped or not", () => {
+    const wrapped = withContent({ viewOnceMessageV2: { message: { imageMessage: {} } } })
     const flagged = withContent({ audioMessage: { ...voice, viewOnce: true } })
-    expect(audioOf(wrapped)?.viewOnce).toBe(true)
-    expect(audioOf(flagged)?.viewOnce).toBe(true)
+    expect(mediaOf(wrapped)?.viewOnce).toBe(true)
+    expect(mediaOf(flagged)?.viewOnce).toBe(true)
   })
 
-  test("a message without audio has none", () => {
+  test("a video carries its preview, and a missing mimetype gets the usual one", () => {
+    const preview = new Uint8Array([0xff, 0xd8, 0xff])
+    const video = withContent({ ptvMessage: { jpegThumbnail: preview } })
+    expect(mediaOf(video)).toEqual({
+      type: "video",
+      mimetype: "video/mp4",
+      viewOnce: false,
+      thumbnail: preview,
+    })
+    expect(mediaOf(withContent({ stickerMessage: {} }))?.mimetype).toBe("image/webp")
+  })
+
+  test("a message without media has none", () => {
     const text = withContent({ conversation: "oi" })
-    expect(audioOf(text)).toBeNull()
+    expect(mediaOf(text)).toBeNull()
   })
 })

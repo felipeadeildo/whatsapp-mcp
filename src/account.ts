@@ -26,10 +26,12 @@ import {
 import { errorText } from "./errors"
 import { durableKvStore } from "./store/durable-kv"
 import type { Identity } from "./store/names"
-import { type AudioFile, type ReadMessage, speechFromEnv, voiceTranscripts } from "./transcribe"
+import type { MediaFile } from "./bytes"
+import { type ReadMessage, speechFromEnv, voiceTranscripts } from "./transcribe"
+import { type MediaView, mediaViewer, visionFromEnv } from "./view-media"
 import { fetchWaWebVersion } from "./wa-version"
 import { type ContactName, removeContact, resolveAddress, saveContact } from "./whatsapp/contacts"
-import { audioOf, decodeRaw, type KeyedMessage } from "./whatsapp/raw"
+import { decodeRaw, type KeyedMessage, mediaOf } from "./whatsapp/raw"
 import { makeSocket, type Socket } from "./whatsapp/socket"
 import { refreshGroupNames, syncArchive } from "./whatsapp/sync"
 import "./wasm"
@@ -136,9 +138,18 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private readonly historyWaiters = new Map<string, () => void>()
   private readonly transcripts = voiceTranscripts({
     speech: speechFromEnv(this.env),
-    fetchAudio: (message) => this.fetchAudio(message),
+    fetchAudio: (message) => this.fetchMedia(message),
     save: (message, transcript) =>
       this.archive.saveTranscript(message.chatJid, message.id, transcript),
+    waitUntil: (work) => this.ctx.waitUntil(work),
+  })
+  private readonly media = mediaViewer({
+    vision: visionFromEnv(this.env),
+    transcripts: this.transcripts,
+    fetchMedia: (message) => this.fetchMedia(message),
+    thumbnail: (message) => this.thumbnail(message),
+    saveDescription: (message, description) =>
+      this.archive.saveDescription(message.chatJid, message.id, description),
     waitUntil: (work) => this.ctx.waitUntil(work),
   })
   private historyProgress: number | null = null
@@ -218,6 +229,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
   ): Promise<ReadMessage[]> {
     const messages = this.archive.getMessageContext(this.resolveChat(chatJid), id, around)
     return this.transcripts.read(messages, transcribeVoice)
+  }
+
+  async viewMedia(chatJid: string, id: string): Promise<MediaView> {
+    const chat = this.resolveChat(chatJid)
+    const message = this.archive.getMessage(chat, id)
+    if (!message) throw new Error(`message ${id} not found in ${chat}`)
+    return this.media.view(message)
   }
 
   searchMessages(query: SearchQuery): SearchHit[] {
@@ -362,12 +380,18 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.archive.stats().messages - before
   }
 
-  private async fetchAudio(message: ArchivedMessage): Promise<AudioFile> {
+  private async fetchMedia(message: ArchivedMessage): Promise<MediaFile> {
     const raw = this.rawMessage(message.chatJid, message.id)
-    const audio = audioOf(raw)
-    if (!audio) throw new Error("the archived message has no audio to download")
-    if (audio.viewOnce) throw new Error("view-once media is not transcribed")
-    return { bytes: await this.downloadMedia(raw), mimetype: audio.mimetype }
+    const media = mediaOf(raw)
+    if (!media) throw new Error("the archived message has no media to download")
+    if (media.viewOnce) throw new Error("view-once media is not opened")
+    return { bytes: await this.downloadMedia(raw), mimetype: media.mimetype }
+  }
+
+  private thumbnail(message: ArchivedMessage): Uint8Array | null {
+    const raw = this.archive.getRaw(message.chatJid, message.id)
+    const media = raw ? mediaOf(decodeRaw(raw)) : null
+    return media && !media.viewOnce ? media.thumbnail : null
   }
 
   // WhatsApp's CDN drops media after a few weeks. The phone, when online, can upload

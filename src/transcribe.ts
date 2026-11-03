@@ -1,6 +1,7 @@
 // Voice and audio transcripts, made when a read returns a message that has none and
 // saved so later reads and search have them. Workers AI does the speech to text;
 // TRANSCRIBE_MODEL picks Whisper or Deepgram, which take different inputs.
+import { type MediaFile, toBase64 } from "./bytes"
 import { errorText } from "./errors"
 import type { ArchivedMessage } from "./store/archive"
 import type { MessageKind } from "./whatsapp/message"
@@ -15,18 +16,13 @@ export type ReadMessage = ArchivedMessage & {
   readonly transcriptError?: string
 }
 
-export interface AudioFile {
-  readonly bytes: Uint8Array
-  readonly mimetype: string
-}
-
 // Speech to text for one file. "" when nothing was said.
-export type Speech = (audio: AudioFile) => Promise<string>
+export type Speech = (audio: MediaFile) => Promise<string>
 
 export interface TranscriptsDeps {
   // Null when transcription is off, or a message that says how to fix the configuration.
   readonly speech: Speech | null | string
-  fetchAudio(message: ArchivedMessage): Promise<AudioFile>
+  fetchAudio(message: ArchivedMessage): Promise<MediaFile>
   save(message: ArchivedMessage, transcript: string): void
   // Keeps a transcription the read stopped waiting for alive until it saves.
   waitUntil(work: Promise<unknown>): void
@@ -144,7 +140,7 @@ export interface TranscribeConfig {
   readonly language: string | null
 }
 
-type Transcriber = (ai: Ai, audio: AudioFile, language: string | null) => Promise<string>
+type Transcriber = (ai: Ai, audio: MediaFile, language: string | null) => Promise<string>
 
 const WHISPER = "@cf/openai/whisper-large-v3-turbo"
 const NOVA = "@cf/deepgram/nova-3"
@@ -179,7 +175,7 @@ function isSpeechModel(model: string): model is SpeechModel {
 
 interface TranscribeEnv {
   readonly TRANSCRIBE_MODEL?: string
-  readonly TRANSCRIBE_LANGUAGE?: string
+  readonly MEDIA_LANGUAGE?: string
 }
 
 /** The configuration, null when transcription is off, or a message that says what to fix. */
@@ -189,7 +185,7 @@ export function readTranscribeConfig(env: TranscribeEnv): TranscribeConfig | nul
   if (!isSpeechModel(model)) {
     return `TRANSCRIBE_MODEL must be one of ${Object.keys(TRANSCRIBERS).join(", ")} or "off", not "${model}".`
   }
-  return { model, language: env.TRANSCRIBE_LANGUAGE?.trim() || null }
+  return { model, language: env.MEDIA_LANGUAGE?.trim() || null }
 }
 
 /** Workers AI speech to text as configured, or what readTranscribeConfig said instead. */
@@ -221,13 +217,4 @@ export function withoutCaptionCredits(text: string): string {
     return ""
   }
   return trimmed
-}
-
-// Chunked so large files do not overflow the argument list.
-function toBase64(bytes: Uint8Array): string {
-  let binary = ""
-  for (let start = 0; start < bytes.length; start += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000))
-  }
-  return btoa(binary)
 }

@@ -1,35 +1,8 @@
 import { describe, expect, test } from "bun:test"
 
-import type { ArchivedMessage } from "../src/store/archive"
-import {
-  type AudioFile,
-  type Speech,
-  type TranscriptsDeps,
-  voiceTranscripts,
-} from "../src/transcribe"
-
-function message(id: string, overrides: Partial<ArchivedMessage> = {}): ArchivedMessage {
-  return {
-    chatJid: "1@lid",
-    chatName: null,
-    id,
-    fromMe: false,
-    senderJid: "1@lid",
-    senderName: null,
-    sentAt: 1_791_000_000,
-    kind: "voice",
-    text: null,
-    quotedId: null,
-    mentions: [],
-    forwarded: false,
-    media: null,
-    transcript: null,
-    edited: false,
-    deleted: false,
-    reactions: [],
-    ...overrides,
-  }
-}
+import type { MediaFile } from "../src/bytes"
+import { type Speech, type TranscriptsDeps, voiceTranscripts } from "../src/transcribe"
+import { archivedMessage as message } from "./archived-message"
 
 // Each voice message's audio says "said <id>". Records what was fetched, saved and
 // left running in the background.
@@ -50,7 +23,7 @@ function fakeAccount(speech: Speech | null | string = async (audio) => decode(au
   return { deps, saved, fetched, background }
 }
 
-function decode(audio: AudioFile): string {
+function decode(audio: MediaFile): string {
   return new TextDecoder().decode(audio.bytes)
 }
 

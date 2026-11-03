@@ -114,6 +114,31 @@ const MIGRATIONS = [
     INSERT INTO messages_fts (rowid, text, transcript) VALUES (new.rowid, new.text, new.transcript);
   END`,
   `INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')`,
+  // What an image shows and the text in it, once view_media opened it.
+  `ALTER TABLE messages ADD COLUMN description TEXT`,
+  `DROP TRIGGER messages_fts_insert`,
+  `DROP TRIGGER messages_fts_delete`,
+  `DROP TRIGGER messages_fts_update`,
+  `DROP TABLE messages_fts`,
+  `CREATE VIRTUAL TABLE messages_fts USING fts5 (
+    text, transcript, description, content = 'messages', content_rowid = 'rowid',
+    tokenize = 'unicode61 remove_diacritics 2'
+  )`,
+  `CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts (rowid, text, transcript, description)
+    VALUES (new.rowid, new.text, new.transcript, new.description);
+  END`,
+  `CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text, transcript, description)
+    VALUES ('delete', old.rowid, old.text, old.transcript, old.description);
+  END`,
+  `CREATE TRIGGER messages_fts_update AFTER UPDATE OF text, transcript, description ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text, transcript, description)
+    VALUES ('delete', old.rowid, old.text, old.transcript, old.description);
+    INSERT INTO messages_fts (rowid, text, transcript, description)
+    VALUES (new.rowid, new.text, new.transcript, new.description);
+  END`,
+  `INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')`,
 ]
 
 const OWN_REACTION_SENDER = "me"
@@ -201,6 +226,8 @@ export interface ArchivedMessage {
   readonly media: MediaInfo | null
   // Null until transcribed; "" when nothing was said.
   readonly transcript: string | null
+  // Null until view_media described the image.
+  readonly description: string | null
   readonly edited: boolean
   readonly deleted: boolean
   readonly reactions: readonly { readonly emoji: string; readonly senderJid: string }[]
@@ -265,12 +292,13 @@ type MessageRow = {
   forwarded: number
   media: string | null
   transcript: string | null
+  description: string | null
   edited: number
   deleted: number
 }
 
 const MESSAGE_COLUMNS = `m.chat_jid, m.id, m.from_me, m.sender_jid, m.sent_at, m.kind, m.text, m.quoted_id,
-  m.mentions, m.forwarded, m.media, m.transcript, m.edited, m.deleted`
+  m.mentions, m.forwarded, m.media, m.transcript, m.description, m.edited, m.deleted`
 
 const CHAT_COLUMNS = "c.jid, c.unread_count, c.last_message_at, c.archived, c.pinned"
 
@@ -571,9 +599,18 @@ export class Archive {
     )
   }
 
+  saveDescription(chatJid: string, id: string, description: string): void {
+    this.sql.exec(
+      "UPDATE messages SET description = ? WHERE chat_jid = ? AND id = ? AND deleted = 0",
+      description,
+      chatJid,
+      id,
+    )
+  }
+
   applyRevoke(chatJid: string, id: string): void {
     this.sql.exec(
-      `UPDATE messages SET text = NULL, media = NULL, transcript = NULL, deleted = 1
+      `UPDATE messages SET text = NULL, media = NULL, transcript = NULL, description = NULL, deleted = 1
        WHERE chat_jid = ? AND id = ?`,
       chatJid,
       id,
@@ -920,6 +957,7 @@ export class Archive {
       forwarded: row.forwarded === 1,
       media: parseMedia(row.media),
       transcript: row.transcript,
+      description: row.description,
       edited: row.edited === 1,
       deleted: row.deleted === 1,
       reactions: this.reactionsOf(row.chat_jid, row.id),
