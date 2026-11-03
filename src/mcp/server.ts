@@ -1,10 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 
-import type { ReadMessage, WhatsAppAccount } from "../account"
+import type { WhatsAppAccount } from "../account"
 import type { ArchivedMessage, ChatSummary, SearchHit } from "../store/archive"
 import type { Identity } from "../store/names"
 import { formatLocal, parseLocal } from "../time"
+import type { ReadMessage } from "../transcribe"
 
 type Account = DurableObjectStub<WhatsAppAccount>
 
@@ -53,9 +54,8 @@ function presentMessage(
     const { mimetype, fileName, bytes, seconds } = message.media
     out.media = withoutNulls({ mimetype, fileName, bytes, seconds })
   }
-  if (message.transcript === "") out.transcript_status = "no_speech"
-  else if (message.transcript) out.transcript = message.transcript
-  else if (message.transcriptStatus) out.transcript_status = message.transcriptStatus
+  if (message.transcript) out.transcript = message.transcript
+  if (message.transcriptStatus) out.transcript_status = message.transcriptStatus
   if (message.transcriptError) out.transcript_error = message.transcriptError
   if (message.quotedId) out.reply_to = message.quotedId
   if (message.reactions.length > 0)
