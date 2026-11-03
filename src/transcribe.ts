@@ -2,6 +2,7 @@
 // saved so later reads and search have them. Workers AI does the speech to text;
 // TRANSCRIBE_MODEL picks Whisper or Deepgram, which take different inputs.
 import { type MediaFile, toBase64 } from "./bytes"
+import { withDeadline } from "./deadline"
 import { errorText } from "./errors"
 import type { ArchivedMessage } from "./store/archive"
 import type { MessageKind } from "./whatsapp/message"
@@ -89,17 +90,12 @@ export function voiceTranscripts(deps: TranscriptsDeps): VoiceTranscripts {
   ): Promise<Map<ArchivedMessage, Outcome>> {
     const outcomes = new Map<ArchivedMessage, Outcome>()
     const newest = missing.toSorted((a, b) => b.sentAt - a.sentAt).slice(0, perRead)
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const deadline = new Promise<Outcome>((resolve) => {
-      timer = setTimeout(resolve, waitMs, PENDING)
-    })
     await Promise.all(
       newest.map(async (message) => {
         const job = transcribeOnce(message, toText).then(spoken, unavailable)
-        outcomes.set(message, await Promise.race([job, deadline]))
+        outcomes.set(message, await withDeadline(job, waitMs, PENDING))
       }),
     )
-    if (timer !== undefined) clearTimeout(timer)
     return outcomes
   }
 

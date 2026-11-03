@@ -27,7 +27,6 @@ export interface MediaContent {
   readonly thumbnail: Uint8Array | null
 }
 
-// What each media type is when the message leaves out its mimetype.
 const DEFAULT_MIMETYPES: Record<MediaContent["type"], string> = {
   audio: "audio/ogg; codecs=opus",
   image: "image/jpeg",
@@ -53,7 +52,6 @@ function mediaFieldsOf(content: proto.IMessage): [MediaContent["type"], MediaFie
   return null
 }
 
-/** The downloadable media in a message, or null when it has none. */
 export function mediaOf(message: WAMessage): MediaContent | null {
   const outer = message.message
   const content = normalizeMessageContent(outer)

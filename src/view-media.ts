@@ -1,8 +1,6 @@
-// The media in a message, for view_media. Images go to the assistant as WhatsApp sent
-// them. The first view also describes the image with a Workers AI vision model and
-// saves the description, which later reads and search_messages show. Videos show the
-// preview inside the message; voice and audio show their transcript.
+// Why images are shown as sent and described only on the first view: docs/adr/0002.
 import { type MediaFile, toBase64 } from "./bytes"
+import { withDeadline } from "./deadline"
 import { errorText } from "./errors"
 import type { ArchivedMessage } from "./store/archive"
 import type { ReadMessage, VoiceTranscripts } from "./transcribe"
@@ -51,16 +49,7 @@ const MAX_SHOWN_BYTES = 3_750_000
 // Durable Object RPC carries at most 32 MiB.
 const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
 
-type DescriptionOutcome =
-  | { readonly description: string }
-  | { readonly descriptionStatus: "pending" }
-  | { readonly descriptionStatus: "unavailable"; readonly descriptionError: string }
-
-const PENDING: DescriptionOutcome = { descriptionStatus: "pending" }
-
-function unavailable(error: unknown): DescriptionOutcome {
-  return { descriptionStatus: "unavailable", descriptionError: errorText(error) }
-}
+type Described = Pick<MediaView, "message" | "descriptionStatus" | "descriptionError">
 
 function megabytes(bytes: number): string {
   return `${(bytes / 1_000_000).toFixed(1)} MB`
@@ -82,7 +71,10 @@ export function mediaViewer(deps: MediaViewerDeps): MediaViewer {
     message: ArchivedMessage,
     file: MediaFile,
     toText: Vision | string,
-  ): Promise<DescriptionOutcome> {
+  ): Promise<Described> {
+    function unavailable(error: unknown): Described {
+      return { message, descriptionStatus: "unavailable", descriptionError: errorText(error) }
+    }
     if (typeof toText === "string") return unavailable(toText)
     const job = toText(file).then((text) => {
       const description = tidyDescription(text)
@@ -90,24 +82,23 @@ export function mediaViewer(deps: MediaViewerDeps): MediaViewer {
       return description
     })
     deps.waitUntil(job.catch(() => undefined))
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const deadline = new Promise<DescriptionOutcome>((resolve) => {
-      timer = setTimeout(resolve, waitMs, PENDING)
-    })
-    const outcome = await Promise.race([
-      job.then((description) => ({ description }), unavailable),
-      deadline,
-    ])
-    if (timer !== undefined) clearTimeout(timer)
-    return outcome
+    const described = job.then(
+      (description): Described => ({ message: { ...message, description } }),
+      unavailable,
+    )
+    return withDeadline(described, waitMs, { message, descriptionStatus: "pending" })
+  }
+
+  async function download(message: ArchivedMessage): Promise<MediaFile> {
+    const size = message.media?.bytes ?? 0
+    if (size > MAX_DOWNLOAD_BYTES) throw new Error(`the file is too large (${megabytes(size)})`)
+    return deps.fetchMedia(message)
   }
 
   async function viewImage(message: ArchivedMessage, describable: boolean): Promise<MediaView> {
-    const size = message.media?.bytes ?? 0
     let file: MediaFile
     try {
-      if (size > MAX_DOWNLOAD_BYTES) throw new Error(`the file is too large (${megabytes(size)})`)
-      file = await deps.fetchMedia(message)
+      file = await download(message)
     } catch (error) {
       return {
         message,
@@ -115,14 +106,10 @@ export function mediaViewer(deps: MediaViewerDeps): MediaViewer {
         notice: `the original image is unavailable: ${errorText(error)}`,
       }
     }
-    const outcome =
+    const described =
       describable && message.description === null && vision !== null
         ? await describe(message, file, vision)
-        : null
-    const described =
-      outcome && "description" in outcome
-        ? { message: { ...message, description: outcome.description } }
-        : { message, ...outcome }
+        : { message }
     if (file.bytes.length <= MAX_SHOWN_BYTES) {
       return { ...described, image: { ...file, source: "original" } }
     }
@@ -145,7 +132,8 @@ export function mediaViewer(deps: MediaViewerDeps): MediaViewer {
         case "video":
         case "video_note": {
           const image = preview(message)
-          return image ? { message, image } : { message, image, notice: "the video has no preview" }
+          if (image) return { message, image }
+          return { message, image: null, notice: "the video has no preview" }
         }
         case "image":
           return viewImage(message, true)

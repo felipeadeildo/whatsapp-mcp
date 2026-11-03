@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/server"
+import { type CallToolResult, McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 
 import type { WhatsAppAccount } from "../account"
@@ -19,7 +19,7 @@ Reading comes from the account's archive, which holds what WhatsApp synced at pa
 
 Voice and audio messages carry a transcript once transcribed. get_messages and get_message_context transcribe the ones they return (up to 10 per call, newest first) and save the text, so later reads and search_messages have it. transcript_status explains a missing one: "pending" is still running (read again in a few seconds), "not_requested" was left out (narrow the read or use get_message_context), "unavailable" failed with transcript_error, "no_speech" means nothing was said. Pass transcribe: false to read without transcribing.
 
-Reads show images, stickers, videos and documents by their caption and size. To see one, call view_media: it returns the image as WhatsApp sent it, or the preview inside the message for videos. The first view of an image also saves a description of what it shows and the text in it, which later reads carry as description and search_messages finds.
+Reads show images, stickers, videos and documents only by their caption and size. Call view_media to see one. It returns the image as WhatsApp sent it, or the preview inside the message for a video. The first view of an image also saves a description of what it shows and the text in it. Later reads carry it as description, and search_messages finds it.
 
 Times are shown in the account's time zone as "YYYY-MM-DD HH:mm". Date filters accept the same format, a bare date, or ISO 8601 with an offset.
 
@@ -104,11 +104,7 @@ function json(value: object): { content: { type: "text"; text: string }[] } {
   return { content: [{ type: "text", text: JSON.stringify(value) }] }
 }
 
-type ToolContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string }
-
-function presentView(view: MediaView, timeZone: string): { content: ToolContent[] } {
+function presentView(view: MediaView, timeZone: string): CallToolResult {
   const details = withoutNulls({
     message: presentMessage(view.message, timeZone),
     image: view.image?.source ?? null,
@@ -116,14 +112,10 @@ function presentView(view: MediaView, timeZone: string): { content: ToolContent[
     description_status: view.descriptionStatus ?? null,
     description_error: view.descriptionError ?? null,
   })
-  const text: ToolContent = { type: "text", text: JSON.stringify(details) }
+  const text = { type: "text", text: JSON.stringify(details) } as const
   if (!view.image) return { content: [text] }
-  const image: ToolContent = {
-    type: "image",
-    data: toBase64(view.image.bytes),
-    mimeType: view.image.mimetype,
-  }
-  return { content: [image, text] }
+  const { bytes, mimetype } = view.image
+  return { content: [{ type: "image", data: toBase64(bytes), mimeType: mimetype }, text] }
 }
 
 const chat = z.string().min(1).describe("Chat JID, or a phone number with country code")
