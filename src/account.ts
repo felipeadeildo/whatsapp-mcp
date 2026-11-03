@@ -14,7 +14,6 @@ import { z } from "zod"
 
 import {
   Archive,
-  type ArchivedMessage,
   type ArchiveStats,
   type ChatListQuery,
   type ChatSummary,
@@ -23,15 +22,14 @@ import {
   type SearchHit,
   type SearchQuery,
 } from "./store/archive"
-import { errorText } from "./errors"
 import { durableKvStore } from "./store/durable-kv"
 import type { Identity } from "./store/names"
-import type { MediaFile } from "./bytes"
 import { type ReadMessage, speechFromEnv, voiceTranscripts } from "./transcribe"
 import { type MediaView, mediaViewer, visionFromEnv } from "./view-media"
 import { fetchWaWebVersion } from "./wa-version"
 import { type ContactName, removeContact, resolveAddress, saveContact } from "./whatsapp/contacts"
-import { decodeRaw, type KeyedMessage, mediaOf } from "./whatsapp/raw"
+import { whatsappMedia } from "./whatsapp/media"
+import { decodeRaw, type KeyedMessage } from "./whatsapp/raw"
 import { makeSocket, type Socket } from "./whatsapp/socket"
 import { refreshGroupNames, syncArchive } from "./whatsapp/sync"
 import "./wasm"
@@ -45,8 +43,6 @@ const GROUPS_REFRESHED_AT = "groups_refreshed_at"
 const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
 // The phone sends history in batches; a pause this long means it is done or stalled.
 const HISTORY_IDLE_MS = 45_000
-// How the CDN answers for media it no longer has, or for a link past its expiry.
-const MEDIA_EXPIRED = /\b(403|404|410)\b|expired/i
 
 // The library types USync results as `unknown`.
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })
@@ -136,9 +132,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private lastError: string | null = null
   private readonly startedAt = Date.now()
   private readonly historyWaiters = new Map<string, () => void>()
+  private readonly files = whatsappMedia({
+    raw: (chatJid, id) => this.archive.getRaw(chatJid, id),
+    socket: () => this.connectedSocket(),
+  })
   private readonly transcripts = voiceTranscripts({
     speech: speechFromEnv(this.env),
-    fetchAudio: (message) => this.fetchMedia(message),
+    fetchAudio: (message) => this.files.fetch(message),
     save: (message, transcript) =>
       this.archive.saveTranscript(message.chatJid, message.id, transcript),
     waitUntil: (work) => this.ctx.waitUntil(work),
@@ -146,8 +146,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private readonly media = mediaViewer({
     vision: visionFromEnv(this.env),
     transcripts: this.transcripts,
-    fetchMedia: (message) => this.fetchMedia(message),
-    thumbnail: (message) => this.thumbnail(message),
+    fetchMedia: (message) => this.files.fetch(message),
+    thumbnail: (message) => this.files.thumbnail(message),
     saveDescription: (message, description) =>
       this.archive.saveDescription(message.chatJid, message.id, description),
     waitUntil: (work) => this.ctx.waitUntil(work),
@@ -380,42 +380,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.archive.stats().messages - before
   }
 
-  private async fetchMedia(message: ArchivedMessage): Promise<MediaFile> {
-    const raw = this.rawMessage(message.chatJid, message.id)
-    const media = mediaOf(raw)
-    if (!media) throw new Error("the archived message has no media to download")
-    if (media.viewOnce) throw new Error("view-once media is not opened")
-    return { bytes: await this.downloadMedia(raw), mimetype: media.mimetype }
-  }
-
-  private thumbnail(message: ArchivedMessage): Uint8Array | null {
-    const raw = this.archive.getRaw(message.chatJid, message.id)
-    const media = raw ? mediaOf(decodeRaw(raw)) : null
-    return media && !media.viewOnce ? media.thumbnail : null
-  }
-
   // WhatsApp's CDN drops media after a few weeks. The phone, when online, can upload
   // it again under a new path.
-  private async downloadMedia(raw: KeyedMessage): Promise<Uint8Array> {
-    const socket = this.connectedSocket()
-    try {
-      return await socket.downloadMedia(raw, "buffer")
-    } catch (error) {
-      if (!MEDIA_EXPIRED.test(errorText(error))) {
-        throw new Error(`could not download the media: ${errorText(error)}`, { cause: error })
-      }
-    }
-    try {
-      const reuploaded = await socket.updateMediaMessage(raw)
-      return await socket.downloadMedia(reuploaded, "buffer")
-    } catch (error) {
-      throw new Error(
-        `the media expired on WhatsApp's servers and the phone did not upload it again: ${errorText(error)}`,
-        { cause: error },
-      )
-    }
-  }
-
   private async keepAlive(): Promise<void> {
     await this.ensureConnected()
     await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS)
