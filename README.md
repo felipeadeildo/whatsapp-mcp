@@ -81,9 +81,9 @@ Scripts and clients that can set a header can skip the browser and send `Authori
 | `list_chats`          | Chats in the order your phone shows them, with unread counts    |
 | `find_chats`          | Chats by any name or phone number                               |
 | `find_people`         | People by any name or phone, including group members            |
-| `get_messages`        | A chat's messages, with paging and date or sender filters       |
+| `get_messages`        | A chat's messages, with voice messages transcribed              |
 | `get_message_context` | A message and the conversation around it                        |
-| `search_messages`     | Search all chats by words, ignoring accents and capitals        |
+| `search_messages`     | Search all chats by words, including transcribed voice messages |
 | `send_message`        | Sends text, as a reply or with mentions, never twice on retries |
 | `react_to_message`    | Adds or removes a reaction                                      |
 | `edit_message`        | Edits a message you sent                                        |
@@ -110,19 +110,24 @@ flowchart LR
     socket --> archive
   end
   socket <-- "WebSocket" --> whatsapp["WhatsApp"]
+  account -- "voice messages" --> ai["Workers AI<br/>speech to text"]
 ```
 
 Each WhatsApp account lives in its own [Durable Object](https://developers.cloudflare.com/durable-objects/), a small server that Cloudflare keeps running with its own SQLite database. The WhatsApp session inside it is [baileyrs](https://github.com/oxidezap/baileyrs), whose protocol core is [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) compiled to WebAssembly. An alarm every 30 seconds keeps the object in memory and reconnects it after deploys.
 
 WhatsApp sends your recent history once, when you link, and the archive keeps every message after that. Search finds people by any name they have used, and treats a person's phone number and their anonymous WhatsApp ID (LID) as the same person.
 
+The server transcribes a voice message when your assistant reads it, not when it arrives. WhatsApp's own transcripts never leave the phone, so the server downloads the audio and sends it to [Workers AI](https://developers.cloudflare.com/workers-ai/). Each read transcribes up to 10 voice messages, newest first, and waits up to 8 seconds for them. The archive keeps the text, so later reads and search find it without another call. A voice message nobody reads costs nothing. The server skips view-once audio, and deleting a message for everyone deletes its transcript.
+
 ## Configuration
 
-| Name        | Kind     | Purpose                                                               |
-| ----------- | -------- | --------------------------------------------------------------------- |
-| `SECRET`    | Secret   | The password of your server, at least 16 characters                   |
-| `AUTH_MODE` | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset |
-| `TIMEZONE`  | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset         |
+| Name                  | Kind     | Purpose                                                                       |
+| --------------------- | -------- | ----------------------------------------------------------------------------- |
+| `SECRET`              | Secret   | The password of your server, at least 16 characters                           |
+| `AUTH_MODE`           | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset         |
+| `TIMEZONE`            | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset                 |
+| `TRANSCRIBE_MODEL`    | Variable | `@cf/openai/whisper-large-v3-turbo` (default), `@cf/deepgram/nova-3` or `off` |
+| `TRANSCRIBE_LANGUAGE` | Variable | Language of most voice messages, like `pt`. Detected per message if empty     |
 
 With `oauth`, an app connects after you sign in with `SECRET` in the browser and allow it. With `api_key`, clients send `Authorization: Bearer <SECRET>` on every request. The pairing page asks for `SECRET` in every mode, and allows five attempts per minute.
 
@@ -142,6 +147,8 @@ The object stays in memory all day, and Cloudflare bills that time as if it used
 
 More accounts share the same plan. Cloudflare bills extra time in blocks of 1 million GB-s at $12.50, so two to four accounts cost $17.50 per month.
 
+Workers AI bills transcription per audio minute, $0.0005 with Whisper and $0.0052 with Nova-3. A thousand 30-second voice messages cost about $0.26 with Whisper. The 10,000 free neurons a day cover about 200 minutes of Whisper.
+
 Workers Free is not enough, even for one account.
 
 > [!WARNING]
@@ -151,7 +158,7 @@ See [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing
 
 ## Is it safe?
 
-Your session and your messages stay in your Cloudflare account. The server talks only to WhatsApp, and only someone who knows your `SECRET` can use it or allow an app in.
+Your session and your messages stay in your Cloudflare account. The server talks to WhatsApp, and sends the voice messages your assistant reads to Workers AI in the same Cloudflare account. Only someone who knows your `SECRET` can use it or allow an app in.
 
 This is an unofficial WhatsApp client, not affiliated with WhatsApp or Meta, and WhatsApp can ban accounts that use one. Link a number you can afford to lose, and keep your assistant asking before it sends messages.
 

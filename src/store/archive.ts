@@ -91,6 +91,29 @@ const MIGRATIONS = [
     message_id TEXT NOT NULL,
     sent_at INTEGER NOT NULL
   ) WITHOUT ROWID`,
+  // What a voice or audio message says, once a read asked for it. "" is no speech.
+  `ALTER TABLE messages ADD COLUMN transcript TEXT`,
+  `DROP TRIGGER messages_fts_insert`,
+  `DROP TRIGGER messages_fts_delete`,
+  `DROP TRIGGER messages_fts_update`,
+  `DROP TABLE messages_fts`,
+  `CREATE VIRTUAL TABLE messages_fts USING fts5 (
+    text, transcript, content = 'messages', content_rowid = 'rowid',
+    tokenize = 'unicode61 remove_diacritics 2'
+  )`,
+  `CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts (rowid, text, transcript) VALUES (new.rowid, new.text, new.transcript);
+  END`,
+  `CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text, transcript)
+    VALUES ('delete', old.rowid, old.text, old.transcript);
+  END`,
+  `CREATE TRIGGER messages_fts_update AFTER UPDATE OF text, transcript ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text, transcript)
+    VALUES ('delete', old.rowid, old.text, old.transcript);
+    INSERT INTO messages_fts (rowid, text, transcript) VALUES (new.rowid, new.text, new.transcript);
+  END`,
+  `INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')`,
 ]
 
 const OWN_REACTION_SENDER = "me"
@@ -176,6 +199,8 @@ export interface ArchivedMessage {
   readonly mentions: readonly Mention[]
   readonly forwarded: boolean
   readonly media: MediaInfo | null
+  // Null until transcribed; "" when nothing was said.
+  readonly transcript: string | null
   readonly edited: boolean
   readonly deleted: boolean
   readonly reactions: readonly { readonly emoji: string; readonly senderJid: string }[]
@@ -239,12 +264,13 @@ type MessageRow = {
   mentions: string | null
   forwarded: number
   media: string | null
+  transcript: string | null
   edited: number
   deleted: number
 }
 
 const MESSAGE_COLUMNS = `m.chat_jid, m.id, m.from_me, m.sender_jid, m.sent_at, m.kind, m.text, m.quoted_id,
-  m.mentions, m.forwarded, m.media, m.edited, m.deleted`
+  m.mentions, m.forwarded, m.media, m.transcript, m.edited, m.deleted`
 
 const CHAT_COLUMNS = "c.jid, c.unread_count, c.last_message_at, c.archived, c.pinned"
 
@@ -536,9 +562,19 @@ export class Archive {
     )
   }
 
+  saveTranscript(chatJid: string, id: string, transcript: string): void {
+    this.sql.exec(
+      "UPDATE messages SET transcript = ? WHERE chat_jid = ? AND id = ? AND deleted = 0",
+      transcript,
+      chatJid,
+      id,
+    )
+  }
+
   applyRevoke(chatJid: string, id: string): void {
     this.sql.exec(
-      "UPDATE messages SET text = NULL, media = NULL, deleted = 1 WHERE chat_jid = ? AND id = ?",
+      `UPDATE messages SET text = NULL, media = NULL, transcript = NULL, deleted = 1
+       WHERE chat_jid = ? AND id = ?`,
       chatJid,
       id,
     )
@@ -798,7 +834,7 @@ export class Archive {
     }
     const rows = this.sql
       .exec<MessageRow & { snippet: string }>(
-        `SELECT ${MESSAGE_COLUMNS}, snippet(messages_fts, 0, '[', ']', '…', 16) AS snippet
+        `SELECT ${MESSAGE_COLUMNS}, snippet(messages_fts, -1, '[', ']', '…', 16) AS snippet
          FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid
          WHERE ${filters.join(" AND ")} ORDER BY rank LIMIT ?`,
         ...params,
@@ -883,6 +919,7 @@ export class Archive {
       }),
       forwarded: row.forwarded === 1,
       media: parseMedia(row.media),
+      transcript: row.transcript,
       edited: row.edited === 1,
       deleted: row.deleted === 1,
       reactions: this.reactionsOf(row.chat_jid, row.id),

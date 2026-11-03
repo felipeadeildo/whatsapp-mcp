@@ -25,9 +25,11 @@ import {
 } from "./store/archive"
 import { durableKvStore } from "./store/durable-kv"
 import type { Identity } from "./store/names"
+import { readTranscribeConfig, type TranscribeConfig, transcribe } from "./transcribe"
 import { fetchWaWebVersion } from "./wa-version"
 import { type ContactName, removeContact, resolveAddress, saveContact } from "./whatsapp/contacts"
-import { decodeRaw, type KeyedMessage } from "./whatsapp/raw"
+import type { MessageKind } from "./whatsapp/message"
+import { audioOf, decodeRaw, type KeyedMessage } from "./whatsapp/raw"
 import { makeSocket, type Socket } from "./whatsapp/socket"
 import { refreshGroupNames, syncArchive } from "./whatsapp/sync"
 import "./wasm"
@@ -41,6 +43,37 @@ const GROUPS_REFRESHED_AT = "groups_refreshed_at"
 const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
 // The phone sends history in batches; a pause this long means it is done or stalled.
 const HISTORY_IDLE_MS = 45_000
+const TRANSCRIBED_KINDS: ReadonlySet<MessageKind> = new Set(["voice", "audio"])
+// A read transcribes at most this many messages, newest first, and waits this long
+// for them; the rest of what it started finishes in the background.
+const TRANSCRIBE_PER_READ = 10
+const TRANSCRIBE_WAIT_MS = 8_000
+// Workers AI takes the audio in one request; larger files are long recordings.
+const TRANSCRIBE_MAX_BYTES = 20 * 1024 * 1024
+
+// Why a voice or audio message has no transcript yet. `pending` is still running,
+// `not_requested` was left out of this read, `unavailable` failed with `transcriptError`.
+export type TranscriptStatus = "pending" | "not_requested" | "unavailable"
+
+export type ReadMessage = ArchivedMessage & {
+  readonly transcriptStatus?: TranscriptStatus
+  readonly transcriptError?: string
+}
+
+// What a read learned about one message that had no transcript.
+type TranscriptOutcome =
+  | { readonly transcript: string }
+  | { readonly transcriptStatus: "pending" | "not_requested" }
+  | { readonly transcriptStatus: "unavailable"; readonly transcriptError: string }
+
+function unavailable(error: unknown): TranscriptOutcome {
+  const transcriptError = error instanceof Error ? error.message : String(error)
+  return { transcriptStatus: "unavailable", transcriptError }
+}
+
+function needsTranscript(message: ArchivedMessage): boolean {
+  return TRANSCRIBED_KINDS.has(message.kind) && message.transcript === null && !message.deleted
+}
 
 // The library types USync results as `unknown`.
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })
@@ -130,6 +163,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private lastError: string | null = null
   private readonly startedAt = Date.now()
   private readonly historyWaiters = new Map<string, () => void>()
+  // Keyed by chat and message id, so overlapping reads share one transcription.
+  private readonly transcribing = new Map<string, Promise<string>>()
   private historyProgress: number | null = null
   private historyBatchAt = 0
 
@@ -189,17 +224,24 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.archive.findPeople(text, limit)
   }
 
-  getMessages(query: MessageQuery): ArchivedMessage[] {
+  async getMessages(query: MessageQuery, transcribeVoice: boolean): Promise<ReadMessage[]> {
     const senderJid = query.senderJid === undefined ? undefined : this.resolveChat(query.senderJid)
-    return this.archive.getMessages({
+    const messages = this.archive.getMessages({
       ...query,
       chatJid: this.resolveChat(query.chatJid),
       senderJid,
     })
+    return this.withTranscripts(messages, transcribeVoice)
   }
 
-  getMessageContext(chatJid: string, id: string, around: number): ArchivedMessage[] {
-    return this.archive.getMessageContext(this.resolveChat(chatJid), id, around)
+  async getMessageContext(
+    chatJid: string,
+    id: string,
+    around: number,
+    transcribeVoice: boolean,
+  ): Promise<ReadMessage[]> {
+    const messages = this.archive.getMessageContext(this.resolveChat(chatJid), id, around)
+    return this.withTranscripts(messages, transcribeVoice)
   }
 
   searchMessages(query: SearchQuery): SearchHit[] {
@@ -342,6 +384,86 @@ export class WhatsAppAccount extends DurableObject<Env> {
     await arrived
     this.historyWaiters.delete(jid)
     return this.archive.stats().messages - before
+  }
+
+  // Transcribes the voice and audio messages a read returns. The text is saved, so
+  // later reads and search have it without another call.
+  private async withTranscripts(
+    messages: ArchivedMessage[],
+    wanted: boolean,
+  ): Promise<ReadMessage[]> {
+    const missing = messages.filter(needsTranscript)
+    const config = readTranscribeConfig(this.env)
+    if (missing.length === 0 || config === null) return messages
+    const outcomes =
+      typeof config === "string"
+        ? new Map(missing.map((message) => [message, unavailable(config)]))
+        : await this.transcribeNewest(missing, config, wanted)
+    return messages.map((message) => ({ ...message, ...outcomes.get(message) }))
+  }
+
+  // Waits at most TRANSCRIBE_WAIT_MS. Whatever is still running then finishes in the
+  // background and saves its text for the next read.
+  private async transcribeNewest(
+    missing: ArchivedMessage[],
+    config: TranscribeConfig,
+    wanted: boolean,
+  ): Promise<Map<ArchivedMessage, TranscriptOutcome>> {
+    const outcomes = new Map<ArchivedMessage, TranscriptOutcome>(
+      missing.map((message) => [message, { transcriptStatus: "not_requested" }]),
+    )
+    if (!wanted) return outcomes
+    const newest = missing.toSorted((a, b) => b.sentAt - a.sentAt).slice(0, TRANSCRIBE_PER_READ)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<TranscriptOutcome>((resolve) => {
+      timer = setTimeout(resolve, TRANSCRIBE_WAIT_MS, { transcriptStatus: "pending" })
+    })
+    await Promise.all(
+      newest.map(async (message) => {
+        const job = this.transcribeOnce(message, config).then(
+          (transcript): TranscriptOutcome => ({ transcript }),
+          unavailable,
+        )
+        outcomes.set(message, await Promise.race([job, deadline]))
+      }),
+    )
+    if (timer !== undefined) clearTimeout(timer)
+    return outcomes
+  }
+
+  private transcribeOnce(message: ArchivedMessage, config: TranscribeConfig): Promise<string> {
+    const key = `${message.chatJid}\u0000${message.id}`
+    const running = this.transcribing.get(key)
+    if (running) return running
+    const job = this.transcribeMessage(message, config).finally(() => {
+      this.transcribing.delete(key)
+    })
+    this.transcribing.set(key, job)
+    this.ctx.waitUntil(job.catch(() => undefined))
+    return job
+  }
+
+  private async transcribeMessage(
+    message: ArchivedMessage,
+    config: TranscribeConfig,
+  ): Promise<string> {
+    const size = message.media?.bytes ?? 0
+    if (size > TRANSCRIBE_MAX_BYTES) throw new Error(`too large to transcribe (${size} bytes)`)
+    const raw = this.rawMessage(message.chatJid, message.id)
+    const audio = audioOf(raw)
+    if (!audio) throw new Error("the archived message has no audio to download")
+    if (audio.viewOnce) throw new Error("view-once media is not transcribed")
+    const socket = this.connectedSocket()
+    let file: Uint8Array
+    try {
+      file = await socket.downloadMedia(raw, "buffer")
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new Error(`could not download the audio: ${reason}`, { cause: error })
+    }
+    const text = await transcribe(this.env.AI, config, file, audio.mimetype)
+    this.archive.saveTranscript(message.chatJid, message.id, text)
+    return text
   }
 
   private async keepAlive(): Promise<void> {

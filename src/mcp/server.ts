@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 
-import type { WhatsAppAccount } from "../account"
+import type { ReadMessage, WhatsAppAccount } from "../account"
 import type { ArchivedMessage, ChatSummary, SearchHit } from "../store/archive"
 import type { Identity } from "../store/names"
 import { formatLocal, parseLocal } from "../time"
@@ -13,6 +13,8 @@ const INSTRUCTIONS = `Read and act on one WhatsApp account.
 Chats and people are identified by JID: "<id>@lid" or "<number>@s.whatsapp.net" for people (the same person can have both; results always use one), "<id>@g.us" for groups. Tools that take a chat or person also accept a phone number with country code. When you only have a name, call find_chats or find_people first.
 
 Reading comes from the account's archive, which holds what WhatsApp synced at pairing plus everything since. If a chat's history stops too early, load_older_messages asks the phone for more.
+
+Voice and audio messages carry a transcript once transcribed. get_messages and get_message_context transcribe the ones they return (up to 10 per call, newest first) and save the text, so later reads and search_messages have it. transcript_status explains a missing one: "pending" is still running (read again in a few seconds), "not_requested" was left out (narrow the read or use get_message_context), "unavailable" failed with transcript_error, "no_speech" means nothing was said. Pass transcribe: false to read without transcribing.
 
 Times are shown in the account's time zone as "YYYY-MM-DD HH:mm". Date filters accept the same format, a bare date, or ISO 8601 with an offset.
 
@@ -35,7 +37,7 @@ function withMentionNames(text: string, mentions: ArchivedMessage["mentions"]): 
 }
 
 function presentMessage(
-  message: ArchivedMessage,
+  message: ReadMessage,
   timeZone: string,
 ): Record<string, string | number | boolean | object> {
   const out: Record<string, string | number | boolean | object> = {
@@ -51,6 +53,10 @@ function presentMessage(
     const { mimetype, fileName, bytes, seconds } = message.media
     out.media = withoutNulls({ mimetype, fileName, bytes, seconds })
   }
+  if (message.transcript === "") out.transcript_status = "no_speech"
+  else if (message.transcript) out.transcript = message.transcript
+  else if (message.transcriptStatus) out.transcript_status = message.transcriptStatus
+  if (message.transcriptError) out.transcript_error = message.transcriptError
   if (message.quotedId) out.reply_to = message.quotedId
   if (message.reactions.length > 0)
     out.reactions = message.reactions.map((reaction) => reaction.emoji).join("")
@@ -94,6 +100,12 @@ function json(value: object): { content: { type: "text"; text: string }[] } {
 }
 
 const chat = z.string().min(1).describe("Chat JID, or a phone number with country code")
+const transcribe = z
+  .boolean()
+  .default(true)
+  .describe(
+    "Transcribe returned voice and audio messages that have no transcript yet (a speech-to-text call each, saved for later reads)",
+  )
 const messageId = z.string().min(1).describe("Message id, as returned by the reading tools")
 const when = z.string().min(1)
 const PHONE = /^\+?\d{8,15}$/
@@ -247,17 +259,21 @@ export function createServer(account: Account, timeZone: string): McpServer {
         before: when.optional().describe("Only messages before this time"),
         after: when.optional().describe("Only messages after this time"),
         from: z.string().min(1).optional().describe("Sender JID (see `from_jid` in results)"),
+        transcribe,
       }),
       annotations: READ,
     },
     async (input) => {
-      const messages = await account.getMessages({
-        chatJid: input.chat,
-        limit: input.limit,
-        before: toUnix(input.before),
-        after: toUnix(input.after),
-        senderJid: input.from,
-      })
+      const messages = await account.getMessages(
+        {
+          chatJid: input.chat,
+          limit: input.limit,
+          before: toUnix(input.before),
+          after: toUnix(input.after),
+          senderJid: input.from,
+        },
+        input.transcribe,
+      )
       return json({ messages: messages.map((message) => presentMessage(message, timeZone)) })
     },
   )
@@ -272,11 +288,17 @@ export function createServer(account: Account, timeZone: string): McpServer {
         chat,
         message_id: messageId,
         around: z.number().int().min(1).max(50).default(8),
+        transcribe,
       }),
       annotations: READ,
     },
     async (input) => {
-      const messages = await account.getMessageContext(input.chat, input.message_id, input.around)
+      const messages = await account.getMessageContext(
+        input.chat,
+        input.message_id,
+        input.around,
+        input.transcribe,
+      )
       return json({ messages: messages.map((message) => presentMessage(message, timeZone)) })
     },
   )
@@ -286,7 +308,7 @@ export function createServer(account: Account, timeZone: string): McpServer {
     {
       title: "Search messages",
       description:
-        "Full-text search across all chats, best matches first. Every word must appear (prefix match, accents and case ignored). Narrow with `chat`, `from`, `after`, `before`.",
+        "Full-text search across all chats, best matches first, including what was said in voice and audio messages already transcribed. Every word must appear (prefix match, accents and case ignored). Narrow with `chat`, `from`, `after`, `before`.",
       inputSchema: z.object({
         query: z.string().min(1),
         chat: chat.optional(),

@@ -160,6 +160,26 @@ describe("messages", () => {
     expect(archive.searchMessages({ query: "10", limit: 10 })).toHaveLength(0)
   })
 
+  test("a transcript is searchable, survives a redelivery and goes with a revoke", () => {
+    const archive = new Archive(memoryDatabase())
+    const voice = message({ chatJid: LID, id: "V", kind: "voice", text: null })
+    archive.saveMessages([voice])
+    expect(archive.getMessage(LID, "V")?.transcript).toBeNull()
+
+    archive.saveTranscript(LID, "V", "meet me at the café at eight")
+    archive.saveMessages([voice])
+    expect(archive.getMessage(LID, "V")?.transcript).toBe("meet me at the café at eight")
+    expect(archive.searchMessages({ query: "cafe", limit: 10 })).toMatchObject([
+      { id: "V", snippet: "meet me at the [café] at eight" },
+    ])
+
+    archive.applyRevoke(LID, "V")
+    expect(archive.getMessage(LID, "V")?.transcript).toBeNull()
+    expect(archive.searchMessages({ query: "cafe", limit: 10 })).toHaveLength(0)
+    archive.saveTranscript(LID, "V", "meet me at the café at eight")
+    expect(archive.getMessage(LID, "V")?.transcript).toBeNull()
+  })
+
   test("mentions resolve to names", () => {
     const archive = new Archive(memoryDatabase())
     archive.learnPair(PN, LID)
