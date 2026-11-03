@@ -1,5 +1,8 @@
 // The session engine's state, as opaque bytes in one table.
 import type { HostStoreCallbacks } from "@oxidezap/baileyrs/host"
+import { type AtomicRows, atomicCallbacks } from "@oxidezap/baileyrs/lib/Utils/atomic-store.js"
+
+import type { SqlDatabase } from "./sql"
 
 type Entry = [key: string, value: Uint8Array]
 
@@ -15,12 +18,26 @@ const SCHEMA = `
 // Binds (store, prefix, prefix).
 const IN_STORE_WITH_PREFIX = "store = ? AND substr(key, 1, length(?)) = ?"
 
+// The inverse of baileyrs' rowKey, which is JSON.stringify([store, key]).
+function parseRowKey(row: string): [store: string, key: string] {
+  const parsed: unknown = JSON.parse(row)
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 2 ||
+    typeof parsed[0] !== "string" ||
+    typeof parsed[1] !== "string"
+  ) {
+    throw new TypeError(`not a store row key: ${row}`)
+  }
+  return [parsed[0], parsed[1]]
+}
+
 // The SQL API binds whole ArrayBuffers, not views.
 function toBlob(value: Uint8Array): ArrayBuffer {
   return value.slice().buffer
 }
 
-export function durableKvStore(storage: DurableObjectStorage): HostStoreCallbacks & {
+export function durableKvStore(storage: SqlDatabase): HostStoreCallbacks & {
   clear(): void
 } {
   const sql = storage.sql
@@ -49,6 +66,28 @@ export function durableKvStore(storage: DurableObjectStorage): HostStoreCallback
   const remove = (store: string, key: string): void => {
     sql.exec("DELETE FROM wa_store WHERE store = ? AND key = ?", store, key)
   }
+  // The bridge's atomic writes (app state patches, trusted-contact tokens) work on rows
+  // keyed by rowKey(store, key). This map reads and writes wa_store directly, so a
+  // change inside transactionSync sees and commits every row in one transaction.
+  class StoreRows extends Map<string, Uint8Array> {
+    override get(row: string): Uint8Array | undefined {
+      const [store, key] = parseRowKey(row)
+      return read(store, key) ?? undefined
+    }
+    override set(row: string, value: Uint8Array): this {
+      const [store, key] = parseRowKey(row)
+      put(store, key, value)
+      return this
+    }
+    override delete(row: string): boolean {
+      const [store, key] = parseRowKey(row)
+      remove(store, key)
+      return true
+    }
+  }
+  const transaction = async (change: (rows: AtomicRows) => void): Promise<void> => {
+    storage.transactionSync(() => change(new StoreRows()))
+  }
   const entries = (store: string, prefix = ""): Entry[] =>
     Array.from(
       sql.exec<{ key: string; value: ArrayBuffer }>(
@@ -62,6 +101,7 @@ export function durableKvStore(storage: DurableObjectStorage): HostStoreCallback
 
   return {
     capabilities: { batch: true, enumerate: true, prefixDelete: true },
+    ...atomicCallbacks(transaction),
 
     async get(store, key) {
       return read(store, key)
