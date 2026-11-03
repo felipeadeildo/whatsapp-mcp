@@ -211,8 +211,8 @@ describe("descriptions", () => {
     )
   })
 
-  test("the prompt names the configured language, or follows the image", () => {
+  test("the prompt names the configured language, English when none is", () => {
     expect(describePrompt("pt")).toContain("Write in Portuguese.")
-    expect(describePrompt(null)).toContain("in the language of the text in the image")
+    expect(describePrompt(null)).toContain("Write in English.")
   })
 })

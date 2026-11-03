@@ -11,11 +11,11 @@ describe("transcription config", () => {
     expect(
       readTranscribeConfig({
         TRANSCRIBE_MODEL: "@cf/openai/whisper-large-v3-turbo",
-        MEDIA_LANGUAGE: "",
+        TRANSCRIBE_LANGUAGE: "",
       }),
     ).toEqual({ model: "@cf/openai/whisper-large-v3-turbo", language: null })
     expect(
-      readTranscribeConfig({ TRANSCRIBE_MODEL: "@cf/deepgram/nova-3", MEDIA_LANGUAGE: "pt" }),
+      readTranscribeConfig({ TRANSCRIBE_MODEL: "@cf/deepgram/nova-3", TRANSCRIBE_LANGUAGE: "pt" }),
     ).toEqual({ model: "@cf/deepgram/nova-3", language: "pt" })
   })
 

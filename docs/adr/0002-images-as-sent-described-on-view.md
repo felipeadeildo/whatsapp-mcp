@@ -19,5 +19,5 @@ A `view_media` tool downloads the media of one message when the assistant asks f
 
 - The first view of an image takes 2 to 7 seconds more. After 15 seconds the view returns with `description_status: "pending"`, and the description saves in the background.
 - A description costs about $0.0004 per image.
-- Mistral Small 3.1 ignored a prompt in Portuguese and wrote English descriptions until the prompt named the language. `MEDIA_LANGUAGE` sets it; without it, descriptions follow the text in the image.
+- Asked to follow the language of the text in the image, Mistral Small 3.1 still wrote the description in English. Naming the language works, so `DESCRIBE_LANGUAGE` sets it and descriptions are English without it. It is separate from `TRANSCRIBE_LANGUAGE` because forcing one language on Whisper breaks voice messages in another, while detection got every one right in production.
 - If a client needs smaller images, revisit the Images binding.

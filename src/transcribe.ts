@@ -175,7 +175,7 @@ function isSpeechModel(model: string): model is SpeechModel {
 
 interface TranscribeEnv {
   readonly TRANSCRIBE_MODEL?: string
-  readonly MEDIA_LANGUAGE?: string
+  readonly TRANSCRIBE_LANGUAGE?: string
 }
 
 /** The configuration, null when transcription is off, or a message that says what to fix. */
@@ -185,7 +185,7 @@ export function readTranscribeConfig(env: TranscribeEnv): TranscribeConfig | nul
   if (!isSpeechModel(model)) {
     return `TRANSCRIBE_MODEL must be one of ${Object.keys(TRANSCRIBERS).join(", ")} or "off", not "${model}".`
   }
-  return { model, language: env.MEDIA_LANGUAGE?.trim() || null }
+  return { model, language: env.TRANSCRIBE_LANGUAGE?.trim() || null }
 }
 
 /** Workers AI speech to text as configured, or what readTranscribeConfig said instead. */

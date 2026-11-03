@@ -124,14 +124,15 @@ Images work the same way. `view_media` downloads an image when your assistant as
 
 ## Configuration
 
-| Name               | Kind     | Purpose                                                                                                      |
-| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `SECRET`           | Secret   | The password of your server, at least 16 characters                                                          |
-| `AUTH_MODE`        | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset                                        |
-| `TIMEZONE`         | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset                                                |
-| `TRANSCRIBE_MODEL` | Variable | `@cf/openai/whisper-large-v3-turbo` (default), `@cf/deepgram/nova-3` or `off`                                |
-| `DESCRIBE_MODEL`   | Variable | `@cf/mistralai/mistral-small-3.1-24b-instruct` (default), `@cf/meta/llama-4-scout-17b-16e-instruct` or `off` |
-| `MEDIA_LANGUAGE`   | Variable | Language of voice messages and image descriptions, like `pt`. Detected if empty                              |
+| Name                  | Kind     | Purpose                                                                                                      |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| `SECRET`              | Secret   | The password of your server, at least 16 characters                                                          |
+| `AUTH_MODE`           | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset                                        |
+| `TIMEZONE`            | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset                                                |
+| `TRANSCRIBE_MODEL`    | Variable | `@cf/openai/whisper-large-v3-turbo` (default), `@cf/deepgram/nova-3` or `off`                                |
+| `DESCRIBE_MODEL`      | Variable | `@cf/mistralai/mistral-small-3.1-24b-instruct` (default), `@cf/meta/llama-4-scout-17b-16e-instruct` or `off` |
+| `TRANSCRIBE_LANGUAGE` | Variable | Language of most voice messages, like `pt`. Detected per message if empty                                    |
+| `DESCRIBE_LANGUAGE`   | Variable | Language of image descriptions, like `pt`. English if empty                                                  |
 
 With `oauth`, an app connects after you sign in with `SECRET` in the browser and allow it. With `api_key`, clients send `Authorization: Bearer <SECRET>` on every request. The pairing page asks for `SECRET` in every mode, and allows five attempts per minute.
 

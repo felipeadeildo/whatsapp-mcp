@@ -45,8 +45,8 @@ const GROUPS_REFRESHED_AT = "groups_refreshed_at"
 const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
 // The phone sends history in batches; a pause this long means it is done or stalled.
 const HISTORY_IDLE_MS = 45_000
-// How the CDN answers for media it no longer has.
-const MEDIA_EXPIRED = /\b(404|410)\b|expired/i
+// How the CDN answers for media it no longer has, or for a link past its expiry.
+const MEDIA_EXPIRED = /\b(403|404|410)\b|expired/i
 
 // The library types USync results as `unknown`.
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })

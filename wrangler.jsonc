@@ -27,9 +27,10 @@
     "TRANSCRIBE_MODEL": "@cf/openai/whisper-large-v3-turbo",
     // "@cf/mistralai/mistral-small-3.1-24b-instruct", "@cf/meta/llama-4-scout-17b-16e-instruct" or "off".
     "DESCRIBE_MODEL": "@cf/mistralai/mistral-small-3.1-24b-instruct",
-    // ISO 639-1 language of most voice messages and of image descriptions, e.g. "pt".
-    // Empty detects it per voice message and describes images in the language of their text.
-    "MEDIA_LANGUAGE": "",
+    // Language spoken in most voice messages, e.g. "pt". Empty detects it per message.
+    "TRANSCRIBE_LANGUAGE": "",
+    // Language image descriptions are written in, e.g. "pt". English if empty.
+    "DESCRIBE_LANGUAGE": "",
     // "oauth", "api_key" (SECRET as a Bearer token) or "both".
     "AUTH_MODE": "both",
   },

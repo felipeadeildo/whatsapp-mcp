@@ -200,9 +200,8 @@ function languageName(code: string): string {
 }
 
 export function describePrompt(language: string | null): string {
-  const write = language
-    ? `Write in ${languageName(language)}.`
-    : "Write in the language of the text in the image, or in English when it has none."
+  // Told to follow the language of the text in the image, the models still wrote English.
+  const write = `Write in ${language ? languageName(language) : "English"}.`
   return [
     "You describe images sent on WhatsApp so they can be found by search later.",
     write,
@@ -213,7 +212,7 @@ export function describePrompt(language: string | null): string {
 
 interface DescribeEnv {
   readonly DESCRIBE_MODEL?: string
-  readonly MEDIA_LANGUAGE?: string
+  readonly DESCRIBE_LANGUAGE?: string
 }
 
 /** Workers AI image descriptions as configured, null when off, or a message that says what to fix. */
@@ -223,7 +222,7 @@ export function visionFromEnv(env: DescribeEnv & { readonly AI: Ai }): Vision | 
   if (!isVisionModel(model)) {
     return `DESCRIBE_MODEL must be one of ${Object.keys(VISION_MODELS).join(", ")} or "off", not "${model}".`
   }
-  const system = describePrompt(env.MEDIA_LANGUAGE?.trim() || null)
+  const system = describePrompt(env.DESCRIBE_LANGUAGE?.trim() || null)
   return (image) =>
     VISION_MODELS[model](env.AI, {
       messages: [
