@@ -66,9 +66,15 @@ type TranscriptOutcome =
   | { readonly transcriptStatus: "pending" | "not_requested" }
   | { readonly transcriptStatus: "unavailable"; readonly transcriptError: string }
 
+// How the CDN answers for media it no longer has.
+const MEDIA_EXPIRED = /\b(404|410)\b|expired/i
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function unavailable(error: unknown): TranscriptOutcome {
-  const transcriptError = error instanceof Error ? error.message : String(error)
-  return { transcriptStatus: "unavailable", transcriptError }
+  return { transcriptStatus: "unavailable", transcriptError: errorText(error) }
 }
 
 function needsTranscript(message: ArchivedMessage): boolean {
@@ -453,17 +459,32 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const audio = audioOf(raw)
     if (!audio) throw new Error("the archived message has no audio to download")
     if (audio.viewOnce) throw new Error("view-once media is not transcribed")
-    const socket = this.connectedSocket()
-    let file: Uint8Array
-    try {
-      file = await socket.downloadMedia(raw, "buffer")
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      throw new Error(`could not download the audio: ${reason}`, { cause: error })
-    }
+    const file = await this.downloadMedia(raw)
     const text = await transcribe(this.env.AI, config, file, audio.mimetype)
     this.archive.saveTranscript(message.chatJid, message.id, text)
     return text
+  }
+
+  // WhatsApp's CDN drops media after a few weeks. The phone, when online, can upload
+  // it again under a new path.
+  private async downloadMedia(raw: KeyedMessage): Promise<Uint8Array> {
+    const socket = this.connectedSocket()
+    try {
+      return await socket.downloadMedia(raw, "buffer")
+    } catch (error) {
+      if (!MEDIA_EXPIRED.test(errorText(error))) {
+        throw new Error(`could not download the media: ${errorText(error)}`, { cause: error })
+      }
+    }
+    try {
+      const reuploaded = await socket.updateMediaMessage(raw)
+      return await socket.downloadMedia(reuploaded, "buffer")
+    } catch (error) {
+      throw new Error(
+        `the media expired on WhatsApp's servers and the phone did not upload it again: ${errorText(error)}`,
+        { cause: error },
+      )
+    }
   }
 
   private async keepAlive(): Promise<void> {
