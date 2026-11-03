@@ -35,6 +35,7 @@ function fakeWhatsApp(
   }),
 ) {
   const calls: string[] = []
+  let archivedRaw = raw
   const socket: MediaSocket = {
     async downloadMedia(message) {
       calls.push(`download ${message.message?.imageMessage?.directPath ?? "?"}`)
@@ -47,7 +48,14 @@ function fakeWhatsApp(
       return reupload(message)
     },
   }
-  const media = whatsappMedia({ raw: () => raw, socket: () => socket })
+  const media = whatsappMedia({
+    raw: () => archivedRaw,
+    saveRaw: (_chatJid, _id, fresh) => {
+      calls.push("save")
+      archivedRaw = fresh
+    },
+    socket: () => socket,
+  })
   return { media, calls }
 }
 
@@ -75,8 +83,17 @@ describe("whatsapp media", () => {
       const { media, calls } = fakeWhatsApp(photo, [failure])
 
       expect((await media.fetch(A)).bytes).toEqual(PHOTO)
-      expect(calls).toEqual(["download /old", "reupload", "download /new"])
+      expect(calls).toEqual(["download /old", "reupload", "download /new", "save"])
     }
+  })
+
+  test("after a reupload, the next download uses the new link without the phone", async () => {
+    const { media, calls } = fakeWhatsApp(photo, [GONE_410])
+    await media.fetch(A)
+    calls.length = 0
+
+    await media.fetch(A)
+    expect(calls).toEqual(["download /new"])
   })
 
   test("any other failure does not bother the phone", async () => {

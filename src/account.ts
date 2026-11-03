@@ -134,6 +134,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private readonly historyWaiters = new Map<string, () => void>()
   private readonly files = whatsappMedia({
     raw: (chatJid, id) => this.archive.getRaw(chatJid, id),
+    saveRaw: (chatJid, id, raw) => this.archive.saveRaw(chatJid, id, raw),
     socket: () => this.connectedSocket(),
   })
   private readonly transcripts = voiceTranscripts({

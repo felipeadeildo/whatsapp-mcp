@@ -2,7 +2,7 @@ import type { WAMessage } from "@oxidezap/baileyrs/lib/Types/Message.js"
 
 import type { MediaFile } from "../bytes"
 import { errorText } from "../errors"
-import { decodeRaw, mediaOf } from "./raw"
+import { decodeRaw, encodeRaw, mediaOf } from "./raw"
 
 // The two socket calls a download needs, so tests can stand in for WhatsApp.
 export interface MediaSocket {
@@ -18,6 +18,8 @@ export interface MessageRef {
 export interface WhatsAppMediaDeps {
   // The archived protobuf of a message, null when the archive has none.
   raw(chatJid: string, id: string): Uint8Array | null
+  // Keeps the message the phone uploaded again, so the next download uses its new link.
+  saveRaw(chatJid: string, id: string, raw: Uint8Array): void
   // Throws when WhatsApp is not connected, so the error shows at download time.
   socket(): MediaSocket
 }
@@ -33,7 +35,11 @@ export interface WhatsAppMedia {
 // How the CDN answers for media it no longer has, or for a link past its expiry.
 const MEDIA_EXPIRED = /\b(403|404|410)\b|expired/i
 
-async function download(socket: MediaSocket, message: WAMessage): Promise<Uint8Array> {
+async function download(
+  socket: MediaSocket,
+  message: WAMessage,
+  reuploaded: (message: WAMessage) => void,
+): Promise<Uint8Array> {
   try {
     return await socket.downloadMedia(message, "buffer")
   } catch (error) {
@@ -42,8 +48,10 @@ async function download(socket: MediaSocket, message: WAMessage): Promise<Uint8A
     }
   }
   try {
-    const reuploaded = await socket.updateMediaMessage(message)
-    return await socket.downloadMedia(reuploaded, "buffer")
+    const fresh = await socket.updateMediaMessage(message)
+    const bytes = await socket.downloadMedia(fresh, "buffer")
+    reuploaded(fresh)
+    return bytes
   } catch (error) {
     throw new Error(
       `the media expired on WhatsApp's servers and the phone did not upload it again: ${errorText(error)}`,
@@ -61,7 +69,11 @@ export function whatsappMedia(deps: WhatsAppMediaDeps): WhatsAppMedia {
       const media = mediaOf(message)
       if (!media) throw new Error("the archived message has no media to download")
       if (media.viewOnce) throw new Error("view-once media is not opened")
-      return { bytes: await download(deps.socket(), message), mimetype: media.mimetype }
+      const bytes = await download(deps.socket(), message, (fresh) => {
+        const encoded = encodeRaw(fresh)
+        if (encoded) deps.saveRaw(ref.chatJid, ref.id, encoded)
+      })
+      return { bytes, mimetype: media.mimetype }
     },
 
     thumbnail(ref) {

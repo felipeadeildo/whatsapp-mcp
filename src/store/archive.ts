@@ -599,6 +599,15 @@ export class Archive {
     )
   }
 
+  saveRaw(chatJid: string, id: string, raw: Uint8Array): void {
+    this.sql.exec(
+      "UPDATE messages SET raw = ? WHERE chat_jid = ? AND id = ?",
+      raw.slice().buffer,
+      chatJid,
+      id,
+    )
+  }
+
   saveDescription(chatJid: string, id: string, description: string): void {
     this.sql.exec(
       "UPDATE messages SET description = ? WHERE chat_jid = ? AND id = ? AND deleted = 0",

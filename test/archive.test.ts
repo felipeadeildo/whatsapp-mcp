@@ -180,6 +180,15 @@ describe("messages", () => {
     expect(archive.getMessage(LID, "V")?.transcript).toBeNull()
   })
 
+  test("a message the phone uploaded again replaces the archived one", () => {
+    const archive = new Archive(memoryDatabase())
+    const old = new Uint8Array([1, 2, 3])
+    archive.saveMessages([message({ chatJid: LID, id: "I", kind: "image", raw: old })])
+
+    archive.saveRaw(LID, "I", new Uint8Array([4, 5]))
+    expect(archive.getRaw(LID, "I")).toEqual(new Uint8Array([4, 5]))
+  })
+
   test("an image description is searchable and goes with a revoke", () => {
     const archive = new Archive(memoryDatabase())
     archive.saveMessages([message({ chatJid: LID, id: "I", kind: "image", text: null })])
