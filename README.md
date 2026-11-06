@@ -122,7 +122,7 @@ Say Marina sends you a 30-second voice message about the trip. WhatsApp transcri
 
 Images wait longer. A read lists them only by caption and size, because each image would cost your assistant more than 1,000 tokens of context. Your assistant asks for one with `view_media`. If Marina also sends a photo of the hotel booking, the server downloads it then and passes it on as WhatsApp sent it, without resizing. The first time, a Workers AI vision model also describes the photo and copies the text in it, like the hotel's name and the dates. The archive keeps that description, so the next search for the hotel finds the photo too. A video shows the small preview that comes inside the message, and the server downloads nothing. It also sends that preview when WhatsApp no longer has an image, or when the image is over 3.75 MB, because Claude rejects anything over 5 MB once it's base64 encoded.
 
-The server never opens view-once media. When someone deletes a message for everyone, the server deletes its transcript or description too.
+The server never opens view-once media. When someone deletes a message for everyone, the archive keeps what it already had (the text, the media, the transcript and the description) and marks the message as deleted. A message deleted before it reached the server has no content.
 
 ## Configuration
 

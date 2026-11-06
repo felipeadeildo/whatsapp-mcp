@@ -150,6 +150,27 @@ describe("messages", () => {
     })
   })
 
+  test("a revoke keeps the text and media, also through a redelivery without them", () => {
+    const archive = new Archive(memoryDatabase())
+    const media = {
+      mimetype: "image/jpeg",
+      fileName: null,
+      bytes: 1000,
+      seconds: null,
+      width: null,
+      height: null,
+    }
+    archive.saveMessages([message({ chatJid: LID, id: "A", text: "te ligo amanhã", media })])
+    archive.applyRevoke(LID, "A")
+    archive.saveMessages([message({ chatJid: LID, id: "A", text: null, media: null })])
+    expect(archive.getMessage(LID, "A")).toMatchObject({
+      text: "te ligo amanhã",
+      media,
+      deleted: true,
+    })
+    expect(archive.searchMessages({ query: "amanhã", limit: 10 })).toHaveLength(1)
+  })
+
   test("an edit replaces the searchable text and survives a redelivery of the original", () => {
     const archive = new Archive(memoryDatabase())
     archive.saveMessages([message({ chatJid: LID, id: "A", text: "reunião às 10" })])
@@ -160,7 +181,7 @@ describe("messages", () => {
     expect(archive.searchMessages({ query: "10", limit: 10 })).toHaveLength(0)
   })
 
-  test("a transcript is searchable, survives a redelivery and goes with a revoke", () => {
+  test("a transcript is searchable, survives a redelivery and stays after a revoke", () => {
     const archive = new Archive(memoryDatabase())
     const voice = message({ chatJid: LID, id: "V", kind: "voice", text: null })
     archive.saveMessages([voice])
@@ -174,10 +195,11 @@ describe("messages", () => {
     ])
 
     archive.applyRevoke(LID, "V")
-    expect(archive.getMessage(LID, "V")?.transcript).toBeNull()
-    expect(archive.searchMessages({ query: "cafe", limit: 10 })).toHaveLength(0)
-    archive.saveTranscript(LID, "V", "meet me at the café at eight")
-    expect(archive.getMessage(LID, "V")?.transcript).toBeNull()
+    expect(archive.getMessage(LID, "V")).toMatchObject({
+      transcript: "meet me at the café at eight",
+      deleted: true,
+    })
+    expect(archive.searchMessages({ query: "cafe", limit: 10 })).toHaveLength(1)
   })
 
   test("a message the phone uploaded again replaces the archived one", () => {
@@ -189,7 +211,7 @@ describe("messages", () => {
     expect(archive.getRaw(LID, "I")).toEqual(new Uint8Array([4, 5]))
   })
 
-  test("an image description is searchable and goes with a revoke", () => {
+  test("an image description is searchable and stays after a revoke", () => {
     const archive = new Archive(memoryDatabase())
     archive.saveMessages([message({ chatJid: LID, id: "I", kind: "image", text: null })])
 
@@ -200,8 +222,11 @@ describe("messages", () => {
     ])
 
     archive.applyRevoke(LID, "I")
-    expect(archive.getMessage(LID, "I")?.description).toBeNull()
-    expect(archive.searchMessages({ query: "comprovante", limit: 10 })).toHaveLength(0)
+    expect(archive.getMessage(LID, "I")).toMatchObject({
+      description: "Comprovante de Pix. Valor: R$ 350,00",
+      deleted: true,
+    })
+    expect(archive.searchMessages({ query: "comprovante", limit: 10 })).toHaveLength(1)
   })
 
   test("mentions resolve to names", () => {

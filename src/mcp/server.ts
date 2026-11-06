@@ -15,7 +15,7 @@ const INSTRUCTIONS = `Read and act on one WhatsApp account.
 
 Chats and people are identified by JID: "<id>@lid" or "<number>@s.whatsapp.net" for people (the same person can have both; results always use one), "<id>@g.us" for groups. Tools that take a chat or person also accept a phone number with country code. When you only have a name, call find_chats or find_people first.
 
-Reading comes from the account's archive, which holds what WhatsApp synced at pairing plus everything since. If a chat's history stops too early, load_older_messages asks the phone for more.
+Reading comes from the account's archive, which holds what WhatsApp synced at pairing plus everything since. If a chat's history stops too early, load_older_messages asks the phone for more. A message someone deleted for everyone keeps the content the archive already had and is marked deleted: true. One deleted before it reached the archive has no content.
 
 Voice and audio messages carry a transcript once transcribed. get_messages and get_message_context transcribe the ones they return (up to 10 per call, newest first) and save the text, so later reads and search_messages have it. transcript_status explains a missing one: "pending" is still running (read again in a few seconds), "not_requested" was left out (narrow the read or use get_message_context), "unavailable" failed with transcript_error, "no_speech" means nothing was said. Pass transcribe: false to read without transcribing.
 

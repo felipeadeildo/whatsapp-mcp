@@ -112,17 +112,25 @@ describe("voice transcripts", () => {
     expect(account.fetched).toEqual(["NEW"])
   })
 
-  test("transcribed and deleted messages are left as they are", async () => {
+  test("a voice message deleted for everyone is still transcribed", async () => {
     const account = fakeAccount()
     const read = await voiceTranscripts(account.deps).read(
-      [message("DONE", { transcript: "already" }), message("GONE", { deleted: true })],
+      [message("GONE", { deleted: true })],
       true,
     )
 
-    expect(read.map((m) => [m.transcript, m.transcriptStatus])).toEqual([
-      ["already", undefined],
-      [null, undefined],
-    ])
+    expect(read[0]?.transcript).toBe("said GONE")
+    expect(account.fetched).toEqual(["GONE"])
+  })
+
+  test("transcribed messages are left as they are", async () => {
+    const account = fakeAccount()
+    const read = await voiceTranscripts(account.deps).read(
+      [message("DONE", { transcript: "already" })],
+      true,
+    )
+
+    expect(read.map((m) => [m.transcript, m.transcriptStatus])).toEqual([["already", undefined]])
     expect(account.fetched).toEqual([])
   })
 

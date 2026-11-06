@@ -551,7 +551,7 @@ export class Archive {
              quoted_id = excluded.quoted_id,
              mentions = excluded.mentions,
              forwarded = excluded.forwarded,
-             media = excluded.media,
+             media = CASE WHEN deleted THEN COALESCE(excluded.media, media) ELSE excluded.media END,
              raw = COALESCE(excluded.raw, raw)`,
           message.chatJid,
           message.id,
@@ -592,7 +592,7 @@ export class Archive {
 
   saveTranscript(chatJid: string, id: string, transcript: string): void {
     this.sql.exec(
-      "UPDATE messages SET transcript = ? WHERE chat_jid = ? AND id = ? AND deleted = 0",
+      "UPDATE messages SET transcript = ? WHERE chat_jid = ? AND id = ?",
       transcript,
       chatJid,
       id,
@@ -610,7 +610,7 @@ export class Archive {
 
   saveDescription(chatJid: string, id: string, description: string): void {
     this.sql.exec(
-      "UPDATE messages SET description = ? WHERE chat_jid = ? AND id = ? AND deleted = 0",
+      "UPDATE messages SET description = ? WHERE chat_jid = ? AND id = ?",
       description,
       chatJid,
       id,
@@ -618,12 +618,7 @@ export class Archive {
   }
 
   applyRevoke(chatJid: string, id: string): void {
-    this.sql.exec(
-      `UPDATE messages SET text = NULL, media = NULL, transcript = NULL, description = NULL, deleted = 1
-       WHERE chat_jid = ? AND id = ?`,
-      chatJid,
-      id,
-    )
+    this.sql.exec("UPDATE messages SET deleted = 1 WHERE chat_jid = ? AND id = ?", chatJid, id)
   }
 
   saveReaction(

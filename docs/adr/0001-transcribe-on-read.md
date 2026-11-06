@@ -10,7 +10,7 @@ WhatsApp transcribes voice messages on the phone and never sends the text to lin
 
 `get_messages` and `get_message_context` transcribe the voice and audio messages they return. Each read transcribes at most 10, newest first, and waits at most 8 seconds. Whatever is still running then finishes in the background. `messages.transcript` keeps the text, and the full-text index covers it, so later reads and `search_messages` find it without another call. An empty string means nothing was said.
 
-The server downloads the audio only to transcribe it and does not keep the file. It skips view-once audio, and revoking a message clears its transcript.
+The server downloads the audio only to transcribe it and does not keep the file. It skips view-once audio. Revoking a message keeps its transcript and still allows transcribing it.
 
 The model is `@cf/openai/whisper-large-v3-turbo` by default, at $0.0005 a minute. `TRANSCRIBE_MODEL` switches to `@cf/deepgram/nova-3` or turns transcription off. A filter drops transcripts that are only a subtitle credit ("Legendas pela comunidade Amara.org"), which Whisper writes over silence.
 

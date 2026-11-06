@@ -117,9 +117,7 @@ export function voiceTranscripts(deps: TranscriptsDeps): VoiceTranscripts {
 
   return {
     async read(messages, wanted) {
-      const voices = messages.filter(
-        (message) => TRANSCRIBED_KINDS.has(message.kind) && !message.deleted,
-      )
+      const voices = messages.filter((message) => TRANSCRIBED_KINDS.has(message.kind))
       const missing = voices.filter((message) => message.transcript === null)
       const outcomes = await outcomesOf(missing, wanted)
       for (const message of voices) {

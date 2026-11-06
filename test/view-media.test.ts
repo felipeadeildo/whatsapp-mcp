@@ -193,11 +193,7 @@ describe("view media", () => {
       },
     })
 
-    for (const message of [
-      pdf,
-      archivedMessage("T", { kind: "text", text: "hi" }),
-      image("GONE", { deleted: true }),
-    ]) {
+    for (const message of [pdf, archivedMessage("T", { kind: "text", text: "hi" })]) {
       const failure = await viewer.view(message).catch((error: unknown) => error)
       expect(failure).toBeInstanceOf(Error)
     }

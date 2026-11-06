@@ -122,7 +122,6 @@ export function mediaViewer(deps: MediaViewerDeps): MediaViewer {
 
   return {
     async view(message) {
-      if (message.deleted) throw new Error("the message was deleted")
       switch (message.kind) {
         case "voice":
         case "audio": {
