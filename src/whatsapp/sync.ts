@@ -172,10 +172,12 @@ export interface SyncHooks {
   readonly onMessages?: (messages: readonly MessageInput[], source: "live" | "history") => void
   /** A batch of the initial history arrived. `progress` runs from 0 to 100, or is null when the phone does not say. */
   readonly onHistoryBatch?: (progress: number | null) => void
+  /** False drops events, as for a number that does not own the archive. */
+  readonly accepts?: () => boolean
 }
 
 export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks = {}): void {
-  const { ev } = socket
+  const ev = guardedEvents(socket.ev, hooks.accepts ?? (() => true))
   const ingest = new Ingest(archive)
   const chats = (list: readonly Partial<Chat>[]) =>
     archive.saveChats(list.map((chat) => ingest.chat(chat)).filter((chat) => chat !== null))
@@ -234,6 +236,15 @@ export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks =
     ingest.pair(jid, me.lid)
     if (me.name) archive.learnNames(jid, [{ source: "push", name: me.name }])
   })
+}
+
+function guardedEvents(ev: Socket["ev"], accepts: () => boolean): Pick<Socket["ev"], "on"> {
+  return {
+    on: (event, listener) =>
+      ev.on(event, (arg) => {
+        if (accepts()) listener(arg)
+      }),
+  }
 }
 
 // History carries no group subjects. The bridge lists all groups in one request,

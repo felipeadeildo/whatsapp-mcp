@@ -112,6 +112,7 @@ function show(view) {
   $("connect").hidden = !view.connect
   $("unlink").hidden = !view.connect
   $("link").hidden = !view.link
+  $("erase").hidden = !view.erase
 
   const finder = $("viewfinder")
   finder.dataset.mode = view.mode
@@ -140,6 +141,8 @@ function escapeHtml(text) {
 }
 
 function viewFor(status) {
+  // Unlinked, the page offers to link again, and to erase an archive that is left.
+  const relink = { link: true, erase: Boolean(status.owner) }
   switch (status.state) {
     case "open": {
       const archive = status.archive
@@ -151,7 +154,7 @@ function viewFor(status) {
       if (archive.messages === 0) lead = escapeHtml(t.syncStart)
       else if (syncing) lead = fill(t.syncing, counts)
       else lead = fill(t.archived, { ...counts, date: day.format(new Date(archive.oldestMessageAt * 1000)) })
-      const phone = status.me ? "+" + status.me.split("@")[0] : null
+      const phone = status.me ? phoneOf(status.me) : null
       return {
         title: fill(t.linked, { name: status.myName || phone || account }),
         who: status.myName ? phone : null,
@@ -176,13 +179,21 @@ function viewFor(status) {
         detail: status.lastError,
       }
     case "logged_out":
-      if (status.lastError) {
-        return { title: t.unlinked[0], lead: escapeHtml(t.unlinked[1]), mode: "alert", glyph: "alert", link: true }
+      if (status.refused && status.owner) {
+        const numbers = { tried: phoneOf(status.refused), owner: phoneOf(status.owner) }
+        return { title: t.refused[0], lead: escapeHtml(fill(t.refused[1], numbers)), mode: "alert", glyph: "alert", ...relink }
       }
-      return { title: t.notLinked[0], lead: escapeHtml(t.notLinked[1]), mode: "idle", glyph: "idle", link: true }
+      if (status.lastError) {
+        return { title: t.unlinked[0], lead: escapeHtml(t.unlinked[1]), mode: "alert", glyph: "alert", ...relink }
+      }
+      return { title: t.notLinked[0], lead: escapeHtml(t.notLinked[1]), mode: "idle", glyph: "idle", ...relink }
     default:
-      return { title: t.notLinked[0], lead: escapeHtml(t.notLinked[1]), mode: "idle", glyph: "idle", link: true }
+      return { title: t.notLinked[0], lead: escapeHtml(t.notLinked[1]), mode: "idle", glyph: "idle", ...relink }
   }
+}
+
+function phoneOf(jid) {
+  return "+" + jid.split("@")[0]
 }
 
 function schedule(ms) {
@@ -289,6 +300,10 @@ $("unlink").textContent = t.unlink
 $("unlink").addEventListener("click", () => {
   if (confirm(t.confirmUnlink)) act($("unlink"), "logout", t.unlinking)
 })
+$("erase").textContent = t.erase
+$("erase").addEventListener("click", () => {
+  if (confirm(t.confirmErase)) act($("erase"), "erase", t.erasing)
+})
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh()
 })
@@ -330,6 +345,7 @@ export function pairingPage(accountId: string, mode: AuthMode, lang: Lang): stri
       <div class="actions">
         <button id="link" class="primary" type="button" hidden></button>
         <button id="unlink" class="quiet" type="button" hidden></button>
+        <button id="erase" class="quiet" type="button" hidden></button>
       </div>
     </div>
     <div id="viewfinder" class="viewfinder" data-mode="wait">

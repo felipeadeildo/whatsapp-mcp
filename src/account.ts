@@ -40,6 +40,8 @@ const IMPLICIT_DEDUP_SECONDS = 120
 const EXPLICIT_DEDUP_SECONDS = 24 * 60 * 60
 const HISTORY_WAIT_MS = 20_000
 const GROUPS_REFRESHED_AT = "groups_refreshed_at"
+// The first number to link owns the archive, and still does after it unlinks.
+const OWNER = "owner"
 const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
 // The phone sends history in batches; a pause this long means it is done or stalled.
 const HISTORY_IDLE_MS = 45_000
@@ -60,6 +62,10 @@ export interface AccountStatus {
   readonly myName: string | null
   readonly qrSvg: string | null
   readonly lastError: string | null
+  /** The number the archive belongs to, kept while unlinked. */
+  readonly owner: string | null
+  /** Another number tried to link and was refused. */
+  readonly refused: string | null
   readonly startedAt: number
   readonly history: HistorySync
 }
@@ -114,6 +120,12 @@ export interface Profile {
   readonly pictureUrl: string | null
 }
 
+// The phone JID the socket is logged in as, without the device suffix.
+function numberOf(socket: Socket | null): string | null {
+  const id = socket?.user?.id
+  return id ? jidNormalizedUser(id) : null
+}
+
 async function digest(parts: readonly string[]): Promise<string> {
   const bytes = await crypto.subtle.digest(
     "SHA-256",
@@ -130,6 +142,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private state: ConnectionState = "idle"
   private qrSvg: string | null = null
   private lastError: string | null = null
+  private refused: string | null = null
   private readonly startedAt = Date.now()
   private readonly historyWaiters = new Map<string, () => void>()
   private readonly files = whatsappMedia({
@@ -157,6 +170,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private historyBatchAt = 0
 
   async start(): Promise<AccountStatus> {
+    this.refused = null
     await this.ctx.storage.put(WANTS_CONNECTION, true)
     await this.keepAlive()
     return this.status()
@@ -168,7 +182,19 @@ export class WhatsAppAccount extends DurableObject<Env> {
     // Unlinking needs a paired session; while still pairing only the socket goes.
     if (this.socket?.user) await this.socket.logout()
     else await this.socket?.end(undefined)
-    this.forgetDevice()
+    this.forgetCredentials()
+    return this.status()
+  }
+
+  // The only way to delete the archive. Any number can link after it.
+  async erase(): Promise<AccountStatus> {
+    await this.logout()
+    this.archive.clear()
+    this.ctx.storage.kv.delete(OWNER)
+    // The next pairing starts from an empty archive, so it should not wait for the throttle.
+    await this.ctx.storage.delete(GROUPS_REFRESHED_AT)
+    this.lastError = null
+    this.refused = null
     return this.status()
   }
 
@@ -176,10 +202,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const user = this.socket?.user
     return {
       state: this.state,
-      me: user?.id ? jidNormalizedUser(user.id) : null,
+      me: numberOf(this.socket),
       myName: user?.name || null,
       qrSvg: this.state === "pairing" ? this.qrSvg : null,
       lastError: this.lastError,
+      owner: this.owner(),
+      refused: this.refused,
       startedAt: this.startedAt,
       history: {
         active: Date.now() - this.historyBatchAt < HISTORY_IDLE_MS && this.historyProgress !== 100,
@@ -405,8 +433,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
     ])
     // The socket connects on creation; progress arrives as `connection.update`.
     const socket = makeSocket({ auth, version })
-    socket.ev.on("connection.update", (update) => this.onConnectionUpdate(update))
+    // A socket that was dropped or refused no longer speaks for the account.
+    socket.ev.on("connection.update", (update) => {
+      if (this.socket === socket) this.onConnectionUpdate(socket, update)
+    })
     syncArchive(socket, this.archive, {
+      accepts: () => this.socket === socket && this.ownedBy(socket),
       onMessages: (messages, source) => {
         if (source !== "history") return
         for (const chat of new Set(messages.map((message) => message.chatJid))) {
@@ -421,13 +453,30 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.socket = socket
   }
 
-  private onConnectionUpdate(update: HostConnectionUpdate): void {
+  private owner(): string | null {
+    return this.ctx.storage.kv.get<string>(OWNER) ?? null
+  }
+
+  // Before the first link nobody owns the archive, so any number may write to it.
+  private ownedBy(socket: Socket): boolean {
+    const owner = this.owner()
+    return owner === null || numberOf(socket) === owner
+  }
+
+  private onConnectionUpdate(socket: Socket, update: HostConnectionUpdate): void {
     if (update.qr) {
       this.state = "pairing"
       this.qrSvg = renderSVG(update.qr)
       this.lastError = null
     }
     if (update.connection === "open") {
+      const me = numberOf(socket)
+      const owner = this.owner()
+      if (me && owner && me !== owner) {
+        this.ctx.waitUntil(this.refuse(socket, me))
+        return
+      }
+      if (me && !owner) this.ctx.storage.kv.put(OWNER, me)
       this.state = "open"
       this.qrSvg = null
       this.lastError = null
@@ -438,7 +487,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       const error = update.lastDisconnect?.error
       this.lastError = error?.message ?? "connection closed"
       if (isBoom(error, DisconnectReason.loggedOut)) {
-        this.forgetDevice()
+        this.forgetCredentials()
         void this.ctx.storage.put(WANTS_CONNECTION, false)
       } else {
         this.socket = null
@@ -457,13 +506,24 @@ export class WhatsAppAccount extends DurableObject<Env> {
     })
   }
 
-  private forgetDevice(): void {
+  // WhatsApp unlinks devices on its own, even after internal errors, so the archive
+  // stays: linking the same number again merges into it.
+  private forgetCredentials(): void {
     this.socket = null
-    // A new pairing starts from an empty archive, so it should not wait for the throttle.
-    void this.ctx.storage.delete(GROUPS_REFRESHED_AT)
     this.store.clear()
-    this.archive.clear()
     this.state = "logged_out"
+  }
+
+  // Unlinking the refused device keeps a dead entry off that phone.
+  private async refuse(socket: Socket, me: string): Promise<void> {
+    this.socket = null
+    this.state = "logged_out"
+    this.refused = me
+    this.lastError = `${me} is not the owner of this account`
+    await this.ctx.storage.put(WANTS_CONNECTION, false)
+    await this.ctx.storage.deleteAlarm()
+    await socket.logout().catch(() => socket.end(undefined))
+    this.store.clear()
   }
 
   private connectedSocket(): Socket {

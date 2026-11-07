@@ -30,6 +30,7 @@ const REST_METHODS: Record<string, string> = {
   start: "POST",
   send: "POST",
   logout: "POST",
+  erase: "POST",
 }
 
 export default {
@@ -101,6 +102,8 @@ async function rest(
         return Response.json(await account.start())
       case "logout":
         return Response.json(await account.logout())
+      case "erase":
+        return Response.json(await account.erase())
       default: {
         const body = SendBody.safeParse(await request.json().catch(() => null))
         if (!body.success) {

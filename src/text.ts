@@ -35,7 +35,11 @@ const en = {
     ],
     unlinked: [
       "Your phone unlinked this device",
-      "Its archive was cleared. Link it again to continue.",
+      "This server kept its archive. Link the same number again to continue.",
+    ],
+    refused: [
+      "This account belongs to another number",
+      "{tried} tried to link, but this archive belongs to {owner}. Link {owner}, or erase the archive to start over with another number.",
     ],
     connecting: ["Connecting to WhatsApp", "This takes a few seconds."],
     pairing: [
@@ -69,7 +73,11 @@ const en = {
     unlink: "Unlink this device",
     unlinking: "Unlinking…",
     confirmUnlink:
-      "Unlink WhatsApp from this server? Its archive is deleted, and linking again means scanning a new code.",
+      "Unlink WhatsApp from this server? The archive stays here, and linking again means scanning a new code.",
+    erase: "Erase the archive",
+    erasing: "Erasing…",
+    confirmErase:
+      "Erase every message, chat and name archived here? This cannot be undone, and any number can link next.",
     copy: "Copy",
     copied: "Copied",
     connect: {
@@ -126,7 +134,11 @@ const pt: typeof en = {
     ],
     unlinked: [
       "Seu celular desconectou este aparelho",
-      "O arquivo dele foi apagado. Conecte de novo para continuar.",
+      "Este servidor guardou o arquivo. Conecte o mesmo número de novo para continuar.",
+    ],
+    refused: [
+      "Esta conta pertence a outro número",
+      "{tried} tentou conectar, mas este arquivo pertence a {owner}. Conecte {owner}, ou apague o arquivo para começar de novo com outro número.",
     ],
     connecting: ["Conectando ao WhatsApp", "Isso leva alguns segundos."],
     pairing: [
@@ -161,7 +173,11 @@ const pt: typeof en = {
     unlink: "Desconectar este aparelho",
     unlinking: "Desconectando…",
     confirmUnlink:
-      "Desconectar o WhatsApp deste servidor? O arquivo é apagado, e conectar de novo exige escanear um novo código.",
+      "Desconectar o WhatsApp deste servidor? O arquivo fica aqui, e conectar de novo exige escanear um novo código.",
+    erase: "Apagar o arquivo",
+    erasing: "Apagando…",
+    confirmErase:
+      "Apagar todas as mensagens, conversas e nomes arquivados aqui? Isso não pode ser desfeito, e qualquer número poderá conectar depois.",
     copy: "Copiar",
     copied: "Copiado",
     connect: {
