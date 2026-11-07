@@ -14,11 +14,7 @@
 
 </div>
 
-whatsapp-mcp lets an AI assistant like Claude read your WhatsApp chats, search them and send messages for you. It connects to your account the same way [WhatsApp Web](https://faq.whatsapp.com/1317564962315842) does, as a linked device, and keeps a searchable copy of your chats.
-
-It speaks [MCP](https://modelcontextprotocol.io/introduction), the standard way AI apps connect to tools, so it works with Claude, ChatGPT, Claude Code, Cursor and other MCP clients. It runs on your own [Cloudflare](https://www.cloudflare.com) account, so your messages stay with you.
-
-Once it is set up, you ask in plain words and your assistant calls the tools for you:
+whatsapp-mcp lets an AI assistant like Claude read, search and send your WhatsApp messages. It links to your account as a device, the way [WhatsApp Web](https://faq.whatsapp.com/1317564962315842) does, and keeps a searchable archive of your chats in your own [Cloudflare](https://www.cloudflare.com) account. It speaks [MCP](https://modelcontextprotocol.io/introduction), so it works with Claude, ChatGPT, Claude Code, Cursor and other MCP clients.
 
 <div align="center">
 <img src="docs/use-cases.svg" alt="Three examples. You ask what Marina said about the trip, the assistant calls find_people and search_messages, and you get her message. You ask which chats are unread since yesterday, it calls list_chats, and you get Family, Book club and Marina with their counts. You ask it to tell the family group you'll be late, it calls find_chats and send_message, and the message is delivered once." width="820">
@@ -26,52 +22,24 @@ Once it is set up, you ask in plain words and your assistant calls the tools for
 
 ## Get started
 
-You need a [Cloudflare account](https://dash.cloudflare.com/sign-up), a [GitHub account](https://github.com/signup) and your phone with WhatsApp.
+You need a [Cloudflare account](https://dash.cloudflare.com/sign-up) on Workers Paid, a [GitHub account](https://github.com/signup) and your phone.
 
-### 1. Deploy
+1. Click **Deploy to Cloudflare** above. Cloudflare copies this project to your GitHub and puts it online at `https://whatsapp-mcp.<your-name>.workers.dev`. When it asks for `SECRET`, give it a password of at least 16 characters, like the output of `openssl rand -hex 32`. Anyone who has it can read and send your messages.
+2. Open `https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal`, sign in with `SECRET` and select **Link WhatsApp**. On your phone, go to **Settings → Linked devices → Link a device** and scan the code. `personal` is a name you choose, and each name is a separate WhatsApp account.
+3. Add `https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp` as a custom connector in Claude or ChatGPT, or as a remote MCP server in any other client. It opens your server in the browser, where you sign in with `SECRET` and select **Allow**.
 
-Click **Deploy to Cloudflare** above. Cloudflare copies this project to your GitHub, builds it and puts it online at an address like `https://whatsapp-mcp.<your-name>.workers.dev`.
+In Claude Code and [pi](https://pi.dev):
 
-During the setup it asks for a `SECRET`. That is the password of your server, at least 16 characters. Generate a strong one in a terminal with `openssl rand -hex 32`, or use a password manager, and keep it safe. Anyone who has it can read and send your messages.
-
-### 2. Link your WhatsApp
-
-Open this address in your browser and sign in with your `SECRET`:
-
-```
-https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal
+```sh
+claude mcp add --transport http whatsapp https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
+pi mcp add whatsapp --url https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp && pi mcp login whatsapp
 ```
 
-Select **Link WhatsApp**. On your phone, open WhatsApp, go to **Settings → Linked devices → Link a device** and point the camera at the code. The page then counts your chats as they arrive.
-
-`personal` is a name you choose. Each name is a separate WhatsApp account, so one server can hold several.
+Clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>`. Scripts can use the same header with the REST API under `/accounts/personal`: `status`, `start`, `send`, `logout` and `erase`.
 
 <div align="center">
 <img src="docs/linked.png" alt="Pairing page after linking, with the archive size and the MCP endpoint ready to copy" width="820">
 </div>
-
-### 3. Connect your AI assistant
-
-Add this address as a custom connector in Claude or ChatGPT, or as a remote MCP server in any other client:
-
-```
-https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
-```
-
-The app opens your server in the browser. Sign in with your `SECRET` and select **Allow**. In [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp) that is:
-
-```sh
-claude mcp add --transport http whatsapp https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
-```
-
-In [pi](https://pi.dev), add it and sign in from the terminal:
-
-```sh
-pi mcp add whatsapp --url https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp
-pi mcp login whatsapp
-```
-
-Scripts and clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>` instead.
 
 ## What your assistant can do
 
@@ -97,7 +65,7 @@ Scripts and clients that can set a header can skip the browser and send `Authori
 | `get_group_info`      | A group's details and members                                   |
 | `get_profile`         | Someone's name, About text and picture                          |
 
-Tools that send or change something tell your assistant so, and most assistants ask you before using them.
+Tools that send or change something say so, and most assistants ask you before using them.
 
 ## How it works
 
@@ -114,75 +82,50 @@ flowchart LR
   account -- "voice messages, images" --> ai["Workers AI<br/>speech to text, vision"]
 ```
 
-Each WhatsApp account lives in its own [Durable Object](https://developers.cloudflare.com/durable-objects/), a small server that Cloudflare keeps running with its own SQLite database. The WhatsApp session inside it is [baileyrs](https://github.com/oxidezap/baileyrs), whose protocol core is [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust) compiled to WebAssembly. An alarm every 30 seconds keeps the object in memory and reconnects it after deploys.
+Each account lives in its own [Durable Object](https://developers.cloudflare.com/durable-objects/), a small server with its own SQLite database. Inside it runs [baileyrs](https://github.com/oxidezap/baileyrs), a WhatsApp client built on [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust). An alarm every 30 seconds keeps it connected, also after deploys.
 
-WhatsApp sends your recent history once, when you link, and the archive keeps every message after that. Search finds people by any name they have used, and treats a person's phone number and their anonymous WhatsApp ID (LID) as the same person.
+Your phone sends your recent history when you link, and the archive keeps every message after that, even the ones deleted for everyone, marked as deleted. If WhatsApp unlinks the device, link the same number again and the archive picks up where it stopped. Only **Erase the archive** on the pairing page deletes it ([ADR 0003](docs/adr/0003-archive-outlives-the-link.md)).
 
-Say Marina sends you a 30-second voice message about the trip. WhatsApp transcribes it on your phone, but that text never leaves the phone, so the server makes its own. It waits until your assistant first reads the chat. Then it downloads the audio, sends it to [Workers AI](https://developers.cloudflare.com/workers-ai/) and saves the text in the archive. After that, a search for "hotel" finds what Marina said, and no read pays for it again. A voice message nobody reads costs nothing. One read transcribes at most 10 voice messages, newest first, and waits up to 8 seconds for them. Any that take longer finish in the background, and the next read shows them.
-
-Images wait longer. A read lists them only by caption and size, because each image would cost your assistant more than 1,000 tokens of context. Your assistant asks for one with `view_media`. If Marina also sends a photo of the hotel booking, the server downloads it then and passes it on as WhatsApp sent it, without resizing. The first time, a Workers AI vision model also describes the photo and copies the text in it, like the hotel's name and the dates. The archive keeps that description, so the next search for the hotel finds the photo too. A video shows the small preview that comes inside the message, and the server downloads nothing. It also sends that preview when WhatsApp no longer has an image, or when the image is over 3.75 MB, because Claude rejects anything over 5 MB once it's base64 encoded.
-
-The server never opens view-once media. When someone deletes a message for everyone, the archive keeps what it already had (the text, the media, the transcript and the description) and marks the message as deleted. A message deleted before it reached the server has no content.
+The server transcribes a voice message the first time your assistant reads it, and describes an image the first time your assistant views it, both with [Workers AI](https://developers.cloudflare.com/workers-ai/). The archive keeps the text, so search finds it and nobody pays twice ([ADR 0001](docs/adr/0001-transcribe-on-read.md), [ADR 0002](docs/adr/0002-images-as-sent-described-on-view.md)).
 
 ## Configuration
 
 | Name                  | Kind     | Purpose                                                                                                      |
 | --------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
 | `SECRET`              | Secret   | The password of your server, at least 16 characters                                                          |
-| `AUTH_MODE`           | Variable | How MCP clients get in: `oauth`, `api_key` or `both`. `both` if unset                                        |
+| `AUTH_MODE`           | Variable | `oauth` (sign in through the browser), `api_key` (Bearer header) or `both`. `both` if unset                  |
 | `TIMEZONE`            | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset                                                |
 | `TRANSCRIBE_MODEL`    | Variable | `@cf/openai/whisper-large-v3-turbo` (default), `@cf/deepgram/nova-3` or `off`                                |
 | `DESCRIBE_MODEL`      | Variable | `@cf/mistralai/mistral-small-3.1-24b-instruct` (default), `@cf/meta/llama-4-scout-17b-16e-instruct` or `off` |
 | `TRANSCRIBE_LANGUAGE` | Variable | Language of most voice messages, like `pt`. Detected per message if empty                                    |
 | `DESCRIBE_LANGUAGE`   | Variable | Language of image descriptions, like `pt`. English if empty                                                  |
 
-With `oauth`, an app connects after you sign in with `SECRET` in the browser and allow it. With `api_key`, clients send `Authorization: Bearer <SECRET>` on every request. The pairing page asks for `SECRET` in every mode, and allows five attempts per minute.
-
-Change the variables in `wrangler.jsonc`, or pass `--var TIMEZONE:<zone>` to `wrangler deploy`. OAuth grants live in a KV namespace that the first deploy creates. The pairing page also uses a small REST API under `/accounts/:id`: `status`, `start`, `send` and `logout`.
+Set them in `wrangler.jsonc`, or with `--var NAME:value` on `wrangler deploy`.
 
 ## Costs
 
-**One personal account running 24/7 costs $5 per month**, the price of Workers Paid. Its included usage covers everything one account does:
-
-|                | One account, per month                              | Workers Paid includes |
-| -------------- | --------------------------------------------------- | --------------------- |
-| Time in memory | 324,000 GB-s                                        | 400,000 GB-s          |
-| Requests       | 90,000, plus your assistant's calls                 | 1 million             |
-| Written rows   | 260,000 once to link, then 90,000 plus new messages | 50 million            |
-
-The object stays in memory all day, and Cloudflare bills that time as if it used the full 128 MB, however busy the account is. It also wakes every 30 seconds, which explains the 90,000 requests and rows. Linking saves the whole history at once: an account with about 30,000 messages wrote 258,000 rows in its first hour. Going past the included usage would take about 30,000 assistant calls or 100,000 new messages a day.
-
-More accounts share the same plan. Cloudflare bills extra time in blocks of 1 million GB-s at $12.50, so two to four accounts cost $17.50 per month.
-
-Workers AI bills transcription per audio minute, $0.0005 with Whisper and $0.0052 with Nova-3. A thousand 30-second voice messages cost about $0.26 with Whisper. The 10,000 free neurons a day cover about 200 minutes of Whisper. An image description costs about $0.0004 with Mistral Small 3.1, so a thousand viewed images cost about $0.40.
-
-Workers Free is not enough, even for one account.
-
-> [!WARNING]
-> Workers Free allows 100,000 written rows per day, fewer than the first sync writes. When an account crosses that limit, Cloudflare blocks every write until 00:00 UTC, so the server can't save new messages or schedule its heartbeat. Upgrading to Workers Paid lifts the block.
-
-See [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [limits](https://developers.cloudflare.com/durable-objects/platform/limits/) for current numbers.
+One account costs $5 per month, the price of Workers Paid, and its included usage covers it. Transcribing a thousand voice messages adds about $0.26. Workers Free isn't enough: the first sync writes more rows than it allows in a day. [docs/costs.md](docs/costs.md) has the numbers.
 
 ## Is it safe?
 
-Your session and your messages stay in your Cloudflare account. The server talks to WhatsApp, and sends the voice messages your assistant reads and the images it views to Workers AI in the same Cloudflare account. Only someone who knows your `SECRET` can use it or allow an app in.
+Your session and messages stay in your Cloudflare account. The server talks to WhatsApp, and to Workers AI for the voice messages and images your assistant opens. Without `SECRET`, nobody can use it or allow an app in. The server never opens view-once media.
 
 This is an unofficial WhatsApp client, not affiliated with WhatsApp or Meta, and WhatsApp can ban accounts that use one. Link a number you can afford to lose, and keep your assistant asking before it sends messages.
 
 ## Development
 
-You need [Bun](https://bun.sh). [Wrangler](https://developers.cloudflare.com/workers/wrangler/) comes with the project.
+You need [Bun](https://bun.sh).
 
 ```sh
 bun install
-printf 'SECRET=%s\n' "$(openssl rand -hex 32)" > .dev.vars   # see .dev.vars.example
+printf 'SECRET=%s\n' "$(openssl rand -hex 32)" > .dev.vars
 bun run dev     # http://localhost:8787/accounts/dev
 bun run check   # types, lint, format and tests
 ```
 
 To deploy from your machine, run `bunx wrangler secret put SECRET` once and then `bun run deploy`.
 
-Built on [baileyrs](https://github.com/oxidezap/baileyrs) and [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust). Message rendering and identity rules follow [mautrix-whatsapp](https://github.com/mautrix/whatsapp). Licensed under [GPL-3.0](LICENSE).
+Message rendering and identity rules follow [mautrix-whatsapp](https://github.com/mautrix/whatsapp). Licensed under [GPL-3.0](LICENSE).
 
 <br>
 
