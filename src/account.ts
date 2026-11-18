@@ -563,7 +563,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private emit(events: readonly WebhookEvent[]): void {
     const now = Date.now()
     let queued = 0
-    for (const event of events) queued += this.webhooks.enqueue(event, now)
+    const canonical = (jid: string) => this.archive.canonical(jid)
+    for (const event of events) queued += this.webhooks.enqueue(event, now, canonical)
     if (queued > 0) this.ctx.waitUntil(this.deliver())
   }
 

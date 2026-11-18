@@ -8,6 +8,8 @@ import type { Identity } from "../store/names"
 import { formatLocal, parseLocal } from "../time"
 import type { ReadMessage } from "../transcribe"
 import type { MediaView } from "../view-media"
+import type { WebhookTools } from "../webhooks/config"
+import { registerWebhookTools, WEBHOOK_INSTRUCTIONS } from "./webhook-tools"
 
 type Account = DurableObjectStub<WhatsAppAccount>
 
@@ -167,11 +169,17 @@ function presentPerson(
 const READ = { readOnlyHint: true, openWorldHint: false } as const
 const LIVE_READ = { readOnlyHint: true, openWorldHint: true } as const
 
-export function createServer(account: Account, timeZone: string): McpServer {
-  const server = new McpServer(
-    { name: "whatsapp-mcp", version: "2.0.0" },
-    { instructions: INSTRUCTIONS },
-  )
+export interface ServerOptions {
+  readonly accountId: string
+  readonly timeZone: string
+  readonly webhookTools: WebhookTools
+}
+
+export function createServer(account: Account, options: ServerOptions): McpServer {
+  const { timeZone } = options
+  const instructions =
+    options.webhookTools === "off" ? INSTRUCTIONS : `${INSTRUCTIONS}\n\n${WEBHOOK_INSTRUCTIONS}`
+  const server = new McpServer({ name: "whatsapp-mcp", version: "2.0.0" }, { instructions })
   const toUnix = (value: string | undefined) =>
     value === undefined ? undefined : parseLocal(value, timeZone)
 
@@ -585,6 +593,12 @@ export function createServer(account: Account, timeZone: string): McpServer {
     },
     async (input) => json({ loaded: await account.loadOlderMessages(input.chat, input.count) }),
   )
+
+  registerWebhookTools(server, account, {
+    accountId: options.accountId,
+    timeZone,
+    mode: options.webhookTools,
+  })
 
   return server
 }

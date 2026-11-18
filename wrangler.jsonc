@@ -33,6 +33,9 @@
     "DESCRIBE_LANGUAGE": "",
     // "oauth", "api_key" (SECRET as a Bearer token) or "both".
     "AUTH_MODE": "both",
+    // What MCP clients can do with webhooks: "manage", "read" (list only) or "off".
+    // The REST API and the pairing page manage them in every mode.
+    "WEBHOOK_TOOLS": "manage",
   },
   "durable_objects": {
     "bindings": [{ "name": "ACCOUNT", "class_name": "WhatsAppAccount" }],

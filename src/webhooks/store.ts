@@ -206,7 +206,9 @@ function secretsOf(row: SecretColumns, now: number): string[] {
   return [row.secret, ...previous]
 }
 
-function wants(row: WebhookRow, event: WebhookEvent): boolean {
+// A chat saved by phone becomes its LID once the pair is learned, so both sides are
+// compared in their canonical form.
+function wants(row: WebhookRow, event: WebhookEvent, canonical: (jid: string) => string): boolean {
   if (event.type === "webhook.test") return false
   const events = strings(row.events)
   if (!events.includes("*") && !events.includes(event.type)) return false
@@ -214,7 +216,7 @@ function wants(row: WebhookRow, event: WebhookEvent): boolean {
   const types = strings(row.chat_types)
   if (!types.includes(event.chat.type)) return false
   const chats = row.chats === null ? null : strings(row.chats)
-  return chats === null || chats.includes(event.chat.jid)
+  return chats === null || chats.some((jid) => canonical(jid) === event.chat?.jid)
 }
 
 export class WebhookStore {
@@ -364,11 +366,15 @@ export class WebhookStore {
   }
 
   /** One delivery per enabled webhook that wants the event. Returns how many. */
-  enqueue(event: WebhookEvent, now: number): number {
+  enqueue(
+    event: WebhookEvent,
+    now: number,
+    canonical: (jid: string) => string = (jid) => jid,
+  ): number {
     const rows = this.sql
       .exec<WebhookRow>("SELECT * FROM webhooks WHERE enabled = 1")
       .toArray()
-      .filter((row) => wants(row, event))
+      .filter((row) => wants(row, event, canonical))
     for (const row of rows) {
       const transcribe =
         row.transcribe_voice === 1 && event.voice ? JSON.stringify(event.voice) : null

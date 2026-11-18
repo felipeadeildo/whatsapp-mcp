@@ -43,6 +43,9 @@
       },
       "TIMEZONE": {
         "description": "IANA time zone the tools show and read dates in, e.g. `America/Sao_Paulo`."
+      },
+      "WEBHOOK_TOOLS": {
+        "description": "What AI apps can do with webhooks over MCP: `manage` (create, change, delete), `read` (list only) or `off`. The REST API and the pairing page manage them in every mode."
       }
     }
   },

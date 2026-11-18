@@ -18,6 +18,10 @@ const DIRECT: ChatRef = { jid: "1@lid", name: "Marina", type: "direct" }
 const GROUP: ChatRef = { jid: "120363000000000001@g.us", name: "Família", type: "group" }
 const T0 = 1_791_000_000_000
 
+function phoneToLid(jid: string): string {
+  return jid.endsWith("@s.whatsapp.net") ? DIRECT.jid : jid
+}
+
 const FIELDS: WebhookFields = {
   url: "https://hooks.example.com/whatsapp",
   events: ["*"],
@@ -112,6 +116,11 @@ describe("webhook queue", () => {
     )
     expect(store.enqueue(received(), T0)).toBe(2)
     expect(store.due(T0, 10).map((due) => due.webhookId)).toEqual(["wh_0", "wh_4"])
+  })
+
+  test("a chat saved by phone still matches once its LID is known", () => {
+    const { store } = storeWith({ chats: ["5511999999999@s.whatsapp.net"] })
+    expect(store.enqueue(received(), T0, phoneToLid)).toBe(1)
   })
 
   test("account events ignore the chat filters", () => {
