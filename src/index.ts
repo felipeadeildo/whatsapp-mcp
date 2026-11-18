@@ -6,9 +6,12 @@ import { type AccountOAuth, SCOPE, accountOAuth } from "./auth/oauth"
 import { consentPage, failurePage, signInPage } from "./auth/pages"
 import { bearerToken, sameSecret } from "./auth/secret"
 import { hasSession, sessionCookie } from "./auth/session"
+import { errorText } from "./errors"
 import { serveMcp } from "./mcp/handler"
 import { pairingPage } from "./pairing-page"
 import { requestLang } from "./text"
+import { isoTime } from "./webhooks/events"
+import { presentDelivery, presentWebhook, WebhookCreate, WebhookUpdate } from "./webhooks/schema"
 
 export { WhatsAppAccount } from "./account"
 
@@ -20,7 +23,8 @@ const SendBody = z.object({
 })
 
 const ACCOUNT_ID = "[a-z0-9-]{1,64}"
-const ACCOUNT_ROUTE = new RegExp(`^/accounts/(${ACCOUNT_ID})(?:/([a-z/]+))?$`)
+const ACCOUNT_ROUTE = new RegExp(`^/accounts/(${ACCOUNT_ID})(?:/([a-z0-9_/]+))?$`)
+const WEBHOOK_ROUTE = /^webhooks(?:\/(wh_[0-9a-f]{32})(\/test)?)?$/
 const WELL_KNOWN_ROUTE = new RegExp(
   `^/\\.well-known/(oauth-protected-resource|oauth-authorization-server)/accounts/(${ACCOUNT_ID})(/mcp)?$`,
 )
@@ -74,6 +78,9 @@ export default {
         if (!oauth) return notFound()
         return oauth.authorization.fetch(request, env, ctx)
       default:
+        if (action === "webhooks" || action.startsWith("webhooks/")) {
+          return webhooks(request, env, config, accountId, action)
+        }
         return rest(request, env, config, accountId, action)
     }
   },
@@ -115,6 +122,98 @@ async function rest(
   } catch (error) {
     return Response.json({ error: String(error) }, { status: 500 })
   }
+}
+
+// Webhooks are managed with the same credentials as the rest of the API: the
+// pairing page's session or the SECRET as a Bearer token.
+async function webhooks(
+  request: Request,
+  env: Env,
+  config: AuthConfig,
+  accountId: string,
+  action: string,
+): Promise<Response> {
+  const route = WEBHOOK_ROUTE.exec(action)
+  if (!route) return notFound()
+  const bearer = await hasBearerSecret(request, config)
+  if (!bearer && !(await hasSession(request, config.secret))) return unauthorized()
+  const [, id, test] = route
+  const account = env.ACCOUNT.getByName(accountId)
+  const method = request.method
+
+  try {
+    if (!id) {
+      if (method === "GET") {
+        const list = await account.listWebhooks()
+        return Response.json({ webhooks: list.map((webhook) => presentWebhook(webhook, isoTime)) })
+      }
+      if (method !== "POST") return methodNotAllowed()
+      const body = WebhookCreate.safeParse(await request.json().catch(() => null))
+      if (!body.success) return badRequest(z.prettifyError(body.error))
+      const created = await settle(
+        account.createWebhook(body.data, accountId, bearer ? "api" : "page"),
+      )
+      if (!created.ok) return badRequest(created.error)
+      return Response.json(
+        { webhook: presentWebhook(created.value.webhook, isoTime), secret: created.value.secret },
+        { status: 201 },
+      )
+    }
+    if (test) {
+      if (method !== "POST") return methodNotAllowed()
+      const attempt = await account.testWebhook(id)
+      return attempt ? Response.json(attempt) : webhookNotFound(id)
+    }
+    switch (method) {
+      case "GET": {
+        const found = await account.getWebhook(id)
+        if (!found) return webhookNotFound(id)
+        return Response.json({
+          webhook: presentWebhook(found.webhook, isoTime),
+          deliveries: found.deliveries.map((delivery) => presentDelivery(delivery, isoTime)),
+        })
+      }
+      case "PATCH": {
+        const body = WebhookUpdate.safeParse(await request.json().catch(() => null))
+        if (!body.success) return badRequest(z.prettifyError(body.error))
+        const updated = await settle(account.updateWebhook(id, body.data))
+        if (!updated.ok) return badRequest(updated.error)
+        if (!updated.value) return webhookNotFound(id)
+        const { webhook, secret } = updated.value
+        return Response.json({
+          webhook: presentWebhook(webhook, isoTime),
+          ...(secret ? { secret } : {}),
+        })
+      }
+      case "DELETE":
+        return (await account.deleteWebhook(id))
+          ? new Response(null, { status: 204 })
+          : webhookNotFound(id)
+      default:
+        return methodNotAllowed()
+    }
+  } catch (error) {
+    return Response.json({ error: String(error) }, { status: 500 })
+  }
+}
+
+// What the account refused, such as an 11th webhook or a chat it cannot resolve.
+async function settle<T>(
+  work: Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+  try {
+    return { ok: true, value: await work }
+  } catch (error) {
+    return { ok: false, error: errorText(error) }
+  }
+}
+
+function badRequest(error: string): Response {
+  return Response.json({ error }, { status: 400 })
+}
+
+function webhookNotFound(id: string): Response {
+  return Response.json({ error: `webhook ${id} not found` }, { status: 404 })
 }
 
 async function hasBearerSecret(request: Request, config: AuthConfig): Promise<boolean> {

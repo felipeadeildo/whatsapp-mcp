@@ -108,7 +108,13 @@ class Ingest {
     }
   }
 
-  messages(messages: readonly WAMessage[]): MessageInput[] {
+  // `created` are the messages the archive did not have; `changes` the edits,
+  // deletions and reactions that changed something.
+  messages(messages: readonly WAMessage[]): {
+    saved: MessageInput[]
+    created: MessageInput[]
+    changes: ArchiveChange[]
+  } {
     const inputs: MessageInput[] = []
     const changes: MessageEvent[] = []
     for (const raw of messages) {
@@ -129,9 +135,8 @@ class Ingest {
       }
       changes.push(...attachedReactions(raw))
     }
-    this.archive.saveMessages(inputs)
-    this.applyChanges(changes)
-    return inputs
+    const created = this.archive.saveMessages(inputs)
+    return { saved: inputs, created, changes: this.applyChanges(changes) }
   }
 
   private toInput(message: StoredMessage, raw: WAMessage): MessageInput | null {
@@ -153,23 +158,49 @@ class Ingest {
     }
   }
 
-  applyChanges(events: readonly MessageEvent[]): void {
+  applyChanges(events: readonly MessageEvent[]): ArchiveChange[] {
+    const applied: ArchiveChange[] = []
     for (const event of events) {
       if (event.type === "message" || event.type === "ignored") continue
       const chatJid = this.canonical(event.remoteJid)
       if (!chatJid) continue
-      if (event.type === "edit") this.archive.applyEdit(chatJid, event.id, event.text)
-      if (event.type === "revoke") this.archive.applyRevoke(chatJid, event.id)
+      const { id } = event
+      if (event.type === "edit" && this.archive.applyEdit(chatJid, id, event.text)) {
+        applied.push({ type: "edit", chatJid, id })
+      }
+      if (event.type === "revoke" && this.archive.applyRevoke(chatJid, id)) {
+        applied.push({ type: "revoke", chatJid, id })
+      }
       if (event.type === "reaction") {
-        const sender = event.senderJid === null ? null : this.canonical(event.senderJid)
-        this.archive.saveReaction(chatJid, event.id, sender, event.emoji, event.atMs)
+        const senderJid = event.senderJid === null ? null : this.canonical(event.senderJid)
+        if (this.archive.saveReaction(chatJid, id, senderJid, event.emoji, event.atMs)) {
+          applied.push({ type: "reaction", chatJid, id, senderJid, emoji: event.emoji })
+        }
       }
     }
+    return applied
   }
 }
 
+/** Something new in the archive that came from WhatsApp live, not from history. */
+export type ArchiveChange =
+  | { readonly type: "message"; readonly chatJid: string; readonly id: string }
+  | { readonly type: "edit"; readonly chatJid: string; readonly id: string }
+  | { readonly type: "revoke"; readonly chatJid: string; readonly id: string }
+  | {
+      readonly type: "reaction"
+      readonly chatJid: string
+      readonly id: string
+      // `null` when the reaction is ours.
+      readonly senderJid: string | null
+      // Empty when the reaction was removed.
+      readonly emoji: string
+    }
+
 export interface SyncHooks {
   readonly onMessages?: (messages: readonly MessageInput[], source: "live" | "history") => void
+  /** Live changes, each once: a message WhatsApp sends again or an echo of our own edit is not news. */
+  readonly onChanges?: (changes: readonly ArchiveChange[]) => void
   /** A batch of the initial history arrived. `progress` runs from 0 to 100, or is null when the phone does not say. */
   readonly onHistoryBatch?: (progress: number | null) => void
   /** False drops events, as for a number that does not own the archive. */
@@ -186,24 +217,37 @@ export function syncArchive(socket: Socket, archive: Archive, hooks: SyncHooks =
     for (const { lid, pn } of batch.lidPnMappings ?? []) ingest.pair(lid, pn)
     for (const contact of batch.contacts) ingest.contact(contact, "history")
     chats(batch.chats)
-    hooks.onMessages?.(ingest.messages(batch.messages), "history")
+    // Saved first: an optional call would skip evaluating its argument.
+    const { saved } = ingest.messages(batch.messages)
+    hooks.onMessages?.(saved, "history")
     if (batch.syncType !== proto.HistorySync.HistorySyncType.ON_DEMAND) {
       hooks.onHistoryBatch?.(batch.progress ?? null)
     }
   })
 
+  const changed = (changes: readonly ArchiveChange[]) => {
+    if (changes.length > 0) hooks.onChanges?.(changes)
+  }
+
   ev.on("messages.upsert", ({ messages }) => {
-    hooks.onMessages?.(ingest.messages(messages), "live")
+    const { saved, created, changes } = ingest.messages(messages)
+    hooks.onMessages?.(saved, "live")
+    changed([
+      ...created.map(({ chatJid, id }): ArchiveChange => ({ type: "message", chatJid, id })),
+      ...changes,
+    ])
   })
 
   ev.on("messages.update", (updates) => {
     for (const update of updates) ingest.learnFromKey(update.key, null)
-    ingest.applyChanges(updates.map(interpretUpdate))
+    changed(ingest.applyChanges(updates.map(interpretUpdate)))
   })
 
   ev.on("messages.reaction", (reactions) => {
-    ingest.applyChanges(
-      reactions.map(({ key, reaction }) => reactionEvent(key, reaction, Date.now())),
+    changed(
+      ingest.applyChanges(
+        reactions.map(({ key, reaction }) => reactionEvent(key, reaction, Date.now())),
+      ),
     )
   })
 

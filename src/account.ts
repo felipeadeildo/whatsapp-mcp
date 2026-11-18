@@ -12,9 +12,11 @@ import { DurableObject } from "cloudflare:workers"
 import { renderSVG } from "uqr"
 import { z } from "zod"
 
+import { errorText } from "./errors"
 import {
   Archive,
   type ArchiveStats,
+  chatTypeOf,
   type ChatListQuery,
   type ChatSummary,
   type MessageQuery,
@@ -31,7 +33,30 @@ import { type ContactName, removeContact, resolveAddress, saveContact } from "./
 import { whatsappMedia } from "./whatsapp/media"
 import { decodeRaw, type KeyedMessage } from "./whatsapp/raw"
 import { makeSocket, type Socket } from "./whatsapp/socket"
-import { refreshGroupNames, syncArchive } from "./whatsapp/sync"
+import { type ArchiveChange, refreshGroupNames, syncArchive } from "./whatsapp/sync"
+import { type Attempt, drain, post } from "./webhooks/deliver"
+import {
+  type ChatRef,
+  type ConnectionChange,
+  connectionEvent,
+  messageData,
+  messageEvent,
+  newId,
+  type Person,
+  reactionEvent,
+  serialize,
+  testEvent,
+  type WebhookEvent,
+} from "./webhooks/events"
+import {
+  fieldsOf,
+  MAX_WEBHOOKS,
+  patchOf,
+  type WebhookCreate,
+  type WebhookUpdate,
+} from "./webhooks/schema"
+import { newSecret } from "./webhooks/sign"
+import { type CreatedVia, type Delivery, type Webhook, WebhookStore } from "./webhooks/store"
 import "./wasm"
 
 const HEARTBEAT_MS = 30_000
@@ -45,6 +70,10 @@ const OWNER = "owner"
 const GROUP_REFRESH_MS = 6 * 60 * 60 * 1000
 // The phone sends history in batches; a pause this long means it is done or stalled.
 const HISTORY_IDLE_MS = 45_000
+// Set while a number is linked, so reconnects are not reported as new links.
+const LINKED = "linked"
+const SECRET_GRACE_MS = 24 * 60 * 60 * 1000
+const PRUNE_EVERY_MS = 60 * 60 * 1000
 
 // The library types USync results as `unknown`.
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })
@@ -168,6 +197,10 @@ export class WhatsAppAccount extends DurableObject<Env> {
   })
   private historyProgress: number | null = null
   private historyBatchAt = 0
+  private readonly webhooks = new WebhookStore(this.ctx.storage)
+  private draining: Promise<void> | null = null
+  private drainAgain = false
+  private prunedAt = 0
 
   async start(): Promise<AccountStatus> {
     this.refused = null
@@ -178,18 +211,22 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   async logout(): Promise<AccountStatus> {
     await this.ctx.storage.put(WANTS_CONNECTION, false)
-    await this.ctx.storage.deleteAlarm()
+    const me = numberOf(this.socket)
     // Unlinking needs a paired session; while still pairing only the socket goes.
     if (this.socket?.user) await this.socket.logout()
     else await this.socket?.end(undefined)
     this.forgetCredentials()
+    this.connectionChanged("unlinked", me, null)
+    await this.scheduleAlarm()
     return this.status()
   }
 
-  // The only way to delete the archive. Any number can link after it.
+  // The only way to delete the archive. Any number can link after it, so the
+  // webhooks go too: they would send the next owner's messages to the last one's.
   async erase(): Promise<AccountStatus> {
     await this.logout()
     this.archive.clear()
+    this.webhooks.clear()
     this.ctx.storage.kv.delete(OWNER)
     // The next pairing starts from an empty archive, so it should not wait for the throttle.
     await this.ctx.storage.delete(GROUPS_REFRESHED_AT)
@@ -225,7 +262,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
-    if (await this.ctx.storage.get<boolean>(WANTS_CONNECTION)) await this.keepAlive()
+    try {
+      if (await this.ctx.storage.get<boolean>(WANTS_CONNECTION)) await this.ensureConnected()
+    } catch (error) {
+      this.lastError = errorText(error)
+    } finally {
+      await this.deliver()
+    }
   }
 
   listChats(query: ChatListQuery): ChatSummary[] {
@@ -288,6 +331,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const sent = await socket.sendMessage(chatJid, { text: request.text, mentions }, { quoted })
     const id = sent?.key.id
     if (!id) throw new Error("WhatsApp did not return a message id")
+    // The echo of the sent message is what makes `message.sent`.
     this.archive.rememberSend(requestKey, id)
     return { chatJid, id, deduplicated: false }
   }
@@ -297,7 +341,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const jid = this.resolveChat(chatJid)
     const { key } = this.rawMessage(jid, messageId)
     await socket.sendMessage(jid, { react: { text: emoji, key } })
-    this.archive.saveReaction(jid, messageId, null, emoji, Date.now())
+    if (this.archive.saveReaction(jid, messageId, null, emoji, Date.now())) {
+      this.publish([{ type: "reaction", chatJid: jid, id: messageId, senderJid: null, emoji }])
+    }
   }
 
   async editMessage(chatJid: string, messageId: string, text: string): Promise<void> {
@@ -306,7 +352,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const { key } = this.rawMessage(jid, messageId)
     if (!key.fromMe) throw new Error("only messages sent by this account can be edited")
     await socket.sendMessage(jid, { text, edit: key })
-    this.archive.applyEdit(jid, messageId, text)
+    if (this.archive.applyEdit(jid, messageId, text)) {
+      this.publish([{ type: "edit", chatJid: jid, id: messageId }])
+    }
   }
 
   async deleteMessage(chatJid: string, messageId: string): Promise<void> {
@@ -314,7 +362,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const jid = this.resolveChat(chatJid)
     const { key } = this.rawMessage(jid, messageId)
     await socket.sendMessage(jid, { delete: key })
-    this.archive.applyRevoke(jid, messageId)
+    if (this.archive.applyRevoke(jid, messageId)) {
+      this.publish([{ type: "revoke", chatJid: jid, id: messageId }])
+    }
   }
 
   async markRead(chatJid: string): Promise<number> {
@@ -409,11 +459,201 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return this.archive.stats().messages - before
   }
 
+  listWebhooks(): Webhook[] {
+    return this.webhooks.list()
+  }
+
+  getWebhook(id: string): { webhook: Webhook; deliveries: Delivery[] } | null {
+    const webhook = this.webhooks.get(id)
+    return webhook ? { webhook, deliveries: this.webhooks.recent(id) } : null
+  }
+
+  // The secret is shown here and on rotation only.
+  createWebhook(
+    input: WebhookCreate,
+    account: string,
+    via: CreatedVia,
+  ): { webhook: Webhook; secret: string } {
+    if (this.webhooks.count() >= MAX_WEBHOOKS) {
+      throw new Error(`an account has at most ${MAX_WEBHOOKS} webhooks`)
+    }
+    const fields = fieldsOf(input)
+    const chats = fields.chats?.map((chat) => this.resolveChat(chat)) ?? null
+    const secret = newSecret()
+    const webhook = this.webhooks.create(
+      newId("wh"),
+      { ...fields, chats, account, createdVia: via },
+      secret,
+      Date.now(),
+    )
+    return { webhook, secret }
+  }
+
+  updateWebhook(
+    id: string,
+    input: WebhookUpdate,
+  ): { webhook: Webhook; secret: string | null } | null {
+    const patch = patchOf(input)
+    if (patch.chats) patch.chats = patch.chats.map((chat) => this.resolveChat(chat))
+    const now = Date.now()
+    let secret: string | null = null
+    if (input.rotate_secret && this.webhooks.get(id)) {
+      secret = newSecret()
+      this.webhooks.rotateSecret(id, secret, now + SECRET_GRACE_MS, now)
+    }
+    const webhook = this.webhooks.update(id, patch, now)
+    if (!webhook) return null
+    if (patch.enabled) this.ctx.waitUntil(this.deliver())
+    return { webhook, secret }
+  }
+
+  deleteWebhook(id: string): boolean {
+    return this.webhooks.delete(id)
+  }
+
+  /** Sends `webhook.test` right away, outside the queue, and says how it went. */
+  async testWebhook(id: string): Promise<Attempt | null> {
+    const now = Date.now()
+    const target = this.webhooks.target(id, now)
+    const webhook = this.webhooks.get(id)
+    if (!target || !webhook) return null
+    const event = testEvent(now)
+    return post(target, event.id, serialize(event, webhook.account), {
+      fetch: (url, init) => fetch(url, init),
+      now: () => Date.now(),
+    })
+  }
+
   // WhatsApp's CDN drops media after a few weeks. The phone, when online, can upload
   // it again under a new path.
   private async keepAlive(): Promise<void> {
     await this.ensureConnected()
-    await this.ctx.storage.setAlarm(Date.now() + HEARTBEAT_MS)
+    await this.scheduleAlarm()
+  }
+
+  // One alarm serves the heartbeat and the webhook retries: it is set for whichever
+  // comes first, and never pushed later, so steady traffic cannot starve the heartbeat.
+  private async scheduleAlarm(): Promise<void> {
+    const now = Date.now()
+    const wants = await this.ctx.storage.get<boolean>(WANTS_CONNECTION)
+    const due = this.webhooks.nextDueAt()
+    const times = [
+      ...(wants ? [now + HEARTBEAT_MS] : []),
+      ...(due === null ? [] : [Math.max(due, now)]),
+    ]
+    if (times.length === 0) {
+      await this.ctx.storage.deleteAlarm()
+      return
+    }
+    const target = Math.min(...times)
+    const current = await this.ctx.storage.getAlarm()
+    if (current !== null && current > now && current <= target) return
+    await this.ctx.storage.setAlarm(target)
+  }
+
+  // Live archive changes become webhook events in the same turn as the writes, so
+  // the Durable Object commits both together.
+  private publish(changes: readonly ArchiveChange[]): void {
+    if (!this.webhooks.hasActive()) return
+    const now = Date.now()
+    const events = changes.flatMap((change) => this.eventFor(change, now) ?? [])
+    this.emit(events)
+  }
+
+  private emit(events: readonly WebhookEvent[]): void {
+    const now = Date.now()
+    let queued = 0
+    for (const event of events) queued += this.webhooks.enqueue(event, now)
+    if (queued > 0) this.ctx.waitUntil(this.deliver())
+  }
+
+  private eventFor(change: ArchiveChange, now: number): WebhookEvent | null {
+    const chat = this.chatRef(change.chatJid)
+    if (change.type === "reaction") {
+      const sender = change.senderJid === null ? null : this.person(change.senderJid)
+      return reactionEvent(chat, change.id, sender, change.emoji, now)
+    }
+    const message = this.archive.getMessage(change.chatJid, change.id)
+    if (!message) return null
+    const sender = message.fromMe || !message.senderJid ? null : this.person(message.senderJid)
+    const type =
+      change.type === "edit"
+        ? "message.edited"
+        : change.type === "revoke"
+          ? "message.deleted"
+          : message.fromMe
+            ? "message.sent"
+            : "message.received"
+    return messageEvent(type, chat, message, sender, now)
+  }
+
+  private chatRef(jid: string): ChatRef {
+    const chat = this.archive.getChat(jid)
+    return { jid, name: chat?.name ?? null, type: chat?.type ?? chatTypeOf(jid) }
+  }
+
+  private person(jid: string): Person {
+    const { name, phone } = this.archive.getPerson(jid)
+    return { jid, name, phone }
+  }
+
+  // Reports links and unlinks, not every reconnect.
+  private connectionChanged(
+    state: ConnectionChange,
+    me: string | null,
+    error: string | null,
+  ): void {
+    const linked = this.ctx.storage.kv.get<boolean>(LINKED) ?? false
+    if (state === "linked" && linked) return
+    if (state === "unlinked" && !linked) return
+    if (state !== "refused") this.ctx.storage.kv.put(LINKED, state === "linked")
+    this.emit([connectionEvent(state, { me, owner: this.owner(), error }, Date.now())])
+  }
+
+  // One drain at a time; changes that arrive meanwhile run another round.
+  private deliver(): Promise<void> {
+    if (this.draining) {
+      this.drainAgain = true
+      return this.draining
+    }
+    this.draining = this.drainAll().finally(() => {
+      this.draining = null
+    })
+    return this.draining
+  }
+
+  private async drainAll(): Promise<void> {
+    try {
+      do {
+        this.drainAgain = false
+        await drain({
+          store: this.webhooks,
+          fetch: (url, init) => fetch(url, init),
+          now: () => Date.now(),
+          transcribe: (voice) => this.transcribedMessage(voice.chatJid, voice.id),
+        })
+      } while (this.drainAgain)
+      if (Date.now() - this.prunedAt > PRUNE_EVERY_MS) {
+        this.webhooks.prune(Date.now())
+        this.prunedAt = Date.now()
+      }
+    } catch (error) {
+      console.warn("webhook delivery failed:", errorText(error))
+    } finally {
+      await this.scheduleAlarm()
+    }
+  }
+
+  private async transcribedMessage(
+    chatJid: string,
+    id: string,
+  ): Promise<Record<string, unknown> | null> {
+    const message = this.archive.getMessage(chatJid, id)
+    if (!message) return null
+    const [read] = await this.transcripts.read([message], true)
+    if (!read) return null
+    const sender = read.fromMe || !read.senderJid ? null : this.person(read.senderJid)
+    return messageData(read, sender)
   }
 
   // Concurrent callers share one attempt.
@@ -449,6 +689,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
         this.historyBatchAt = Date.now()
         if (progress !== null) this.historyProgress = progress
       },
+      onChanges: (changes) => this.publish(changes),
     })
     this.socket = socket
   }
@@ -480,6 +721,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.state = "open"
       this.qrSvg = null
       this.lastError = null
+      this.connectionChanged("linked", me, null)
       this.ctx.waitUntil(this.refreshGroups())
     } else if (update.connection === "close") {
       // `close` is terminal for this socket; the next heartbeat builds a new one,
@@ -488,6 +730,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
       this.lastError = error?.message ?? "connection closed"
       if (isBoom(error, DisconnectReason.loggedOut)) {
         this.forgetCredentials()
+        this.connectionChanged("unlinked", numberOf(socket), this.lastError)
         void this.ctx.storage.put(WANTS_CONNECTION, false)
       } else {
         this.socket = null
@@ -520,8 +763,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
     this.state = "logged_out"
     this.refused = me
     this.lastError = `${me} is not the owner of this account`
+    this.connectionChanged("refused", me, this.lastError)
     await this.ctx.storage.put(WANTS_CONNECTION, false)
-    await this.ctx.storage.deleteAlarm()
+    await this.scheduleAlarm()
     await socket.logout().catch(() => socket.end(undefined))
     this.store.clear()
   }

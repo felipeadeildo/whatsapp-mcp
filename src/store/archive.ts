@@ -535,11 +535,20 @@ export class Archive {
     })
   }
 
-  saveMessages(messages: readonly MessageInput[]): void {
-    if (messages.length === 0) return
-    this.storage.transactionSync(() => {
+  // Returns the messages the archive did not have, so a message WhatsApp sends again
+  // is news only once.
+  saveMessages(messages: readonly MessageInput[]): MessageInput[] {
+    if (messages.length === 0) return []
+    return this.storage.transactionSync(() => {
+      const created: MessageInput[] = []
       const lastByChat = new Map<string, number>()
       for (const message of messages) {
+        const known = !this.sql
+          .exec("SELECT 1 FROM messages WHERE chat_jid = ? AND id = ?", message.chatJid, message.id)
+          .next().done
+        if (!known && !created.some((m) => m.chatJid === message.chatJid && m.id === message.id)) {
+          created.push(message)
+        }
         this.sql.exec(
           `INSERT INTO messages (chat_jid, id, from_me, sender_jid, sent_at, kind, text, quoted_id,
              mentions, forwarded, media, raw)
@@ -578,15 +587,21 @@ export class Archive {
           sentAt,
         )
       }
+      return created
     })
   }
 
-  applyEdit(chatJid: string, id: string, text: string): void {
-    this.sql.exec(
-      "UPDATE messages SET text = ?, edited = 1 WHERE chat_jid = ? AND id = ?",
-      text,
-      chatJid,
-      id,
+  // True when the text changed, so the echo of an edit already applied is not news.
+  applyEdit(chatJid: string, id: string, text: string): boolean {
+    return (
+      this.sql.exec(
+        `UPDATE messages SET text = ?, edited = 1
+         WHERE chat_jid = ? AND id = ? AND (edited = 0 OR text IS NOT ?)`,
+        text,
+        chatJid,
+        id,
+        text,
+      ).rowsWritten > 0
     )
   }
 
@@ -617,8 +632,15 @@ export class Archive {
     )
   }
 
-  applyRevoke(chatJid: string, id: string): void {
-    this.sql.exec("UPDATE messages SET deleted = 1 WHERE chat_jid = ? AND id = ?", chatJid, id)
+  // True when the message was not deleted yet.
+  applyRevoke(chatJid: string, id: string): boolean {
+    return (
+      this.sql.exec(
+        "UPDATE messages SET deleted = 1 WHERE chat_jid = ? AND id = ? AND deleted = 0",
+        chatJid,
+        id,
+      ).rowsWritten > 0
+    )
   }
 
   saveReaction(
@@ -627,18 +649,28 @@ export class Archive {
     senderJid: string | null,
     emoji: string,
     atMs: number,
-  ): void {
+  ): boolean {
     const sender = senderJid ?? OWN_REACTION_SENDER
     if (emoji === "") {
-      this.sql.exec(
-        "DELETE FROM reactions WHERE chat_jid = ? AND message_id = ? AND sender_jid = ?",
+      return (
+        this.sql.exec(
+          "DELETE FROM reactions WHERE chat_jid = ? AND message_id = ? AND sender_jid = ?",
+          chatJid,
+          messageId,
+          sender,
+        ).rowsWritten > 0
+      )
+    }
+    // True when the emoji changed: a newer copy of the same reaction is not news.
+    const before = this.sql
+      .exec<{ emoji: string }>(
+        "SELECT emoji FROM reactions WHERE chat_jid = ? AND message_id = ? AND sender_jid = ?",
         chatJid,
         messageId,
         sender,
       )
-      return
-    }
-    this.sql.exec(
+      .next()
+    const written = this.sql.exec(
       `INSERT INTO reactions (chat_jid, message_id, sender_jid, emoji, reacted_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT (chat_jid, message_id, sender_jid) DO UPDATE SET emoji = excluded.emoji, reacted_at = excluded.reacted_at
        WHERE excluded.reacted_at >= reactions.reacted_at`,
@@ -647,7 +679,8 @@ export class Archive {
       sender,
       emoji,
       Math.floor(atMs / 1000),
-    )
+    ).rowsWritten
+    return written > 0 && (before.done || before.value.emoji !== emoji)
   }
 
   saveChats(chats: readonly ChatInput[]): void {
