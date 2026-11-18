@@ -241,6 +241,40 @@ button:disabled { cursor: progress; opacity: 0.7; }
   clip-path: inset(50%);
   white-space: nowrap;
 }
+.hooks-list { margin: 0; padding: 0; list-style: none; }
+.hook { padding: 1rem 0; border-top: 1px solid var(--line); }
+.hook:last-child { border-bottom: 1px solid var(--line); }
+.hook-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 0.9rem; }
+.hook-url { font: 0.9rem/1.4 var(--code); overflow-wrap: anywhere; flex: 1 1 16rem; }
+.hook-status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; font-weight: 600; }
+.hook-status::before { content: ""; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor; }
+.hook-status[data-status="ok"] { color: var(--signal); }
+.hook-status[data-status="failing"] { color: var(--wait); }
+.hook-status[data-status="disabled"] { color: var(--muted); }
+.hook-meta, .hook-result { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.88rem; overflow-wrap: anywhere; }
+.hook-result[data-ok="false"] { color: var(--alert); }
+.hook-actions { display: flex; gap: 0.5rem; }
+.small { padding: 0.5rem 0.8rem; font-size: 0.88rem; }
+.empty { color: var(--muted); }
+.hook-created { margin-top: 1.2rem; }
+.hook-form { margin-top: 1.4rem; padding: 1.2rem; background: var(--surface); border: 1px solid var(--line); border-radius: 0.6rem; }
+.hook-form label.block { display: block; margin-bottom: 0.4rem; font-weight: 600; }
+.hook-form input[type="url"] {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 0.5rem;
+  font: 0.95rem/1.4 var(--code);
+}
+.hook-form input:focus-visible { outline: 3px solid var(--signal); outline-offset: 2px; }
+.hook-form fieldset { margin: 1.1rem 0 0; padding: 0; border: 0; }
+.hook-form legend { margin-bottom: 0.4rem; font-weight: 600; }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.35rem 1rem; }
+.check-row { display: flex; gap: 0.5rem; align-items: flex-start; font-size: 0.95rem; }
+.check-row input { margin-top: 0.3rem; accent-color: var(--signal); }
+.hook-form .check-row.wide { margin-top: 1rem; }
 .form { margin-top: 1.5rem; }
 .form label { display: block; margin-bottom: 0.4rem; font-weight: 600; }
 .form input[type="password"] {

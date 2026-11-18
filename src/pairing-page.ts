@@ -254,14 +254,15 @@ function highlight(command) {
 }
 
 // Fills one labelled, copyable field: a value, an icon button and an optional note.
-function field(id, label, value, note) {
+// Plain values (the endpoint, a secret) are not highlighted as shell.
+function field(id, label, value, note, plain) {
   $(id + "-label").textContent = label
-  $(id).replaceChildren(...(id === "endpoint" ? [value] : highlight(value)))
+  $(id).replaceChildren(...(id === "endpoint" || plain ? [value] : highlight(value)))
   const button = $(id + "-copy")
   const status = $(id + "-status")
   button.innerHTML = ICONS.copy
   button.setAttribute("aria-label", t.copy + ": " + label)
-  button.addEventListener("click", async () => {
+  button.onclick = async () => {
     await navigator.clipboard.writeText(value)
     button.innerHTML = ICONS.check
     button.dataset.copied = ""
@@ -271,7 +272,7 @@ function field(id, label, value, note) {
       delete button.dataset.copied
       status.textContent = ""
     }, 1600)
-  })
+  }
   if (note) {
     $(id + "-note").innerHTML = note
     $(id + "-note").hidden = false
@@ -308,8 +309,190 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) refresh()
 })
 
+// Webhooks: listed from the REST API with the page's session, refreshed every 10 s.
+const w = t.webhooks
+const EVENT_NAMES = Object.keys(w.eventNames)
+let hooksTimer = null
+const testResults = {}
+
+async function send(path, method, body) {
+  const response = await fetch(base + "/" + path, {
+    method,
+    headers: body ? { "content-type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (response.status === 401) {
+    location.reload()
+    throw new Error("unauthorized")
+  }
+  const data = response.status === 204 ? {} : await response.json()
+  if (!response.ok) throw new Error(data.error || response.statusText)
+  return data
+}
+
+function element(tag, className, text) {
+  const node = document.createElement(tag)
+  if (className) node.className = className
+  if (text !== undefined) node.textContent = text
+  return node
+}
+
+function hookMeta(hook) {
+  const events = hook.events.includes("*")
+    ? w.allEvents
+    : hook.events.map((name) => w.eventNames[name] || name).join(", ")
+  const plural = new Intl.PluralRules(lang).select(hook.chats ? hook.chats.length : 0)
+  const chats = hook.chats
+    ? fill(w.someChats[plural] || w.someChats.other, { count: hook.chats.length })
+    : w.allChats
+  const parts = [events, chats]
+  if (hook.pending > 0) parts.push(fill(w.pending, { count: number.format(hook.pending) }))
+  const last = hook.last_delivery
+  if (last && last.last_attempt_at) {
+    let attempt = fill(w.lastDelivery, { ago: ago(Date.parse(last.last_attempt_at) / 1000) })
+    if (last.last_status) attempt += " · HTTP " + last.last_status
+    else if (last.last_error) attempt += " · " + last.last_error
+    parts.push(attempt)
+  } else {
+    parts.push(w.never)
+  }
+  if (hook.disabled_reason) parts.push(w.reason[hook.disabled_reason])
+  return parts.join(" · ")
+}
+
+function hookButton(label, className, onClick) {
+  const button = element("button", className + " small", label)
+  button.type = "button"
+  button.addEventListener("click", () => onClick(button))
+  return button
+}
+
+async function hookAction(button, pendingLabel, work) {
+  const label = button.textContent
+  button.disabled = true
+  button.textContent = pendingLabel
+  try {
+    await work()
+  } catch (error) {
+    if (error.message !== "unauthorized") alert(error.message)
+  } finally {
+    button.disabled = false
+    button.textContent = label
+    refreshHooks()
+  }
+}
+
+function hookItem(hook) {
+  const item = element("li", "hook")
+  const head = element("div", "hook-head")
+  const status = element("span", "hook-status", w.status[hook.status])
+  status.dataset.status = hook.status
+  const actions = element("div", "hook-actions")
+  actions.append(
+    hookButton(w.test, "secondary", (button) =>
+      hookAction(button, w.testing, async () => {
+        const attempt = await send("webhooks/" + hook.id + "/test", "POST")
+        testResults[hook.id] = attempt
+      }),
+    ),
+    hookButton(hook.enabled ? w.pause : w.resume, "secondary", (button) =>
+      hookAction(button, "…", () => send("webhooks/" + hook.id, "PATCH", { enabled: !hook.enabled })),
+    ),
+    hookButton(w.remove, "quiet", (button) => {
+      if (confirm(w.confirmRemove)) hookAction(button, "…", () => send("webhooks/" + hook.id, "DELETE"))
+    }),
+  )
+  head.append(status, element("span", "hook-url", hook.url), actions)
+  item.append(head)
+  if (hook.description) item.append(element("p", "hook-meta", hook.description))
+  item.append(element("p", "hook-meta", hookMeta(hook)))
+  const result = testResults[hook.id]
+  if (result) {
+    const text = result.ok
+      ? fill(w.testOk, { ms: result.ms, status: result.status })
+      : fill(w.testFailed, { error: result.error || "HTTP " + result.status })
+    const line = element("p", "hook-result", text)
+    line.dataset.ok = String(result.ok)
+    item.append(line)
+  }
+  return item
+}
+
+async function refreshHooks() {
+  clearTimeout(hooksTimer)
+  try {
+    const { webhooks } = await send("webhooks", "GET")
+    $("hooks").hidden = false
+    $("hooks-list").replaceChildren(...webhooks.map(hookItem))
+    $("hooks-empty").hidden = webhooks.length > 0
+  } catch (error) {
+    if (error.message === "unauthorized") return
+  }
+  if (!document.hidden) hooksTimer = setTimeout(refreshHooks, 10000)
+}
+
+function toggleForm(open) {
+  $("hook-form").hidden = !open
+  $("hook-add").hidden = open
+  $("hook-error").hidden = true
+  if (open) $("hook-url").focus()
+}
+
+$("hooks-title").textContent = w.title
+$("hooks-lead").textContent = w.lead
+$("hooks-empty").textContent = w.empty
+$("hook-add").textContent = w.add
+$("hook-url-label").textContent = w.url
+$("hook-url").placeholder = w.urlHint
+$("hook-events-label").textContent = w.events
+$("hook-transcribe-label").textContent = w.transcribe
+$("hook-create").textContent = w.create
+$("hook-cancel").textContent = w.cancel
+EVENT_NAMES.forEach((name) => {
+  const row = element("label", "check-row")
+  const box = element("input")
+  box.type = "checkbox"
+  box.value = name
+  box.defaultChecked = true
+  row.append(box, element("span", "", w.eventNames[name]))
+  $("hook-events").append(row)
+})
+$("hook-add").addEventListener("click", () => toggleForm(true))
+$("hook-cancel").addEventListener("click", () => toggleForm(false))
+$("hook-form").addEventListener("submit", async (event) => {
+  event.preventDefault()
+  const chosen = [...$("hook-events").querySelectorAll("input:checked")].map((box) => box.value)
+  const events = chosen.length === EVENT_NAMES.length ? ["*"] : chosen
+  const button = $("hook-create")
+  button.disabled = true
+  button.textContent = w.creating
+  try {
+    const created = await send("webhooks", "POST", {
+      url: $("hook-url").value.trim(),
+      events,
+      transcribe_voice: $("hook-transcribe").checked,
+    })
+    $("hook-form").reset()
+    toggleForm(false)
+    field("hook-secret", w.secret, created.secret, escapeHtml(w.secretNote), true)
+    $("hook-created").hidden = false
+    refreshHooks()
+  } catch (error) {
+    if (error.message === "unauthorized") return
+    $("hook-error").hidden = false
+    $("hook-error").textContent = error.message
+  } finally {
+    button.disabled = false
+    button.textContent = w.create
+  }
+})
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshHooks()
+})
+
 show({ title: t.loading[0], lead: escapeHtml(t.loading[1]), mode: "wait", glyph: "spin" })
 refresh()
+refreshHooks()
 `
 
 function copyableField(id: string): string {
@@ -356,6 +539,25 @@ export function pairingPage(accountId: string, mode: AuthMode, lang: Lang): stri
     <h2 id="connect-title"></h2>
     <p id="connect-lead"></p>
     ${["endpoint", "claude", "pi"].map(copyableField).join("")}
+  </section>
+  <section id="hooks" class="connect" hidden>
+    <h2 id="hooks-title"></h2>
+    <p id="hooks-lead"></p>
+    <ul id="hooks-list" class="hooks-list"></ul>
+    <p id="hooks-empty" class="empty" hidden></p>
+    <div id="hook-created" class="hook-created" hidden>${copyableField("hook-secret")}</div>
+    <div class="actions"><button id="hook-add" class="secondary" type="button"></button></div>
+    <form id="hook-form" class="hook-form" hidden>
+      <label class="block" for="hook-url" id="hook-url-label"></label>
+      <input id="hook-url" type="url" required autocomplete="off" spellcheck="false">
+      <fieldset><legend id="hook-events-label"></legend><div id="hook-events" class="checks"></div></fieldset>
+      <label class="check-row wide"><input id="hook-transcribe" type="checkbox"><span id="hook-transcribe-label"></span></label>
+      <p id="hook-error" class="detail" hidden></p>
+      <div class="actions">
+        <button id="hook-create" class="primary" type="submit"></button>
+        <button id="hook-cancel" class="secondary" type="button"></button>
+      </div>
+    </form>
   </section>`,
     scripts: `<script type="application/json" id="text">${text}</script>
 <script>${SCRIPT}</script>`,
