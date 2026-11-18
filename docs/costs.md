@@ -14,6 +14,8 @@ More accounts share the same plan. Cloudflare bills extra time in blocks of 1 mi
 
 Workers AI bills transcription per audio minute: $0.0005 with Whisper and $0.0052 with Nova-3. A thousand 30-second voice messages cost about $0.26 with Whisper, and the 10,000 free neurons a day cover about 200 minutes of it. An image description costs about $0.0004 with Mistral Small 3.1.
 
+Webhooks add almost nothing. The heartbeat already keeps the object awake while it sends, outgoing requests are free, and each event writes about three rows per webhook: 10,000 messages a month with two webhooks write 60,000.
+
 Workers Free isn't enough, even for one account. It allows 100,000 written rows a day, fewer than the first sync writes. When an account crosses that limit, Cloudflare blocks every write until 00:00 UTC, so the server can't save messages or schedule its heartbeat.
 
 For current prices, see [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/), [Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) and [limits](https://developers.cloudflare.com/durable-objects/platform/limits/).

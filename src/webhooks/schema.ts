@@ -69,7 +69,7 @@ const description = z
 const transcribeVoice = z
   .boolean()
   .describe(
-    "Transcribe a received voice or audio message before delivering it: waits up to 10 s and costs a speech-to-text call, saved for later reads",
+    "Transcribe a received voice or audio message before delivering it: waits up to 8 s and costs a speech-to-text call, saved for later reads",
   )
 
 export const WebhookCreate = z.object({

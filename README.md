@@ -35,7 +35,7 @@ claude mcp add --transport http whatsapp https://whatsapp-mcp.<your-name>.worker
 pi mcp add whatsapp --url https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp && pi mcp login whatsapp
 ```
 
-Clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>`. Scripts can use the same header with the REST API under `/accounts/personal`: `status`, `start`, `send`, `logout` and `erase`.
+Clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>`. Scripts can use the same header with the REST API under `/accounts/personal`: `status`, `start`, `send`, `logout`, `erase` and [`webhooks`](#webhooks).
 
 <div align="center">
 <img src="docs/linked.png" alt="Pairing page after linking, with the archive size and the MCP endpoint ready to copy" width="820">
@@ -65,7 +65,55 @@ Clients that can set a header can skip the browser and send `Authorization: Bear
 | `get_group_info`      | A group's details and members                                   |
 | `get_profile`         | Someone's name, About text and picture                          |
 
-Tools that send or change something say so, and most assistants ask you before using them.
+Tools that send or change something say so, and most assistants ask you before using them. Six more tools manage [webhooks](#webhooks): `list_webhooks`, `get_webhook`, `create_webhook`, `update_webhook`, `delete_webhook` and `test_webhook`.
+
+## Webhooks
+
+The server can POST every new message to your own URL as it arrives, for an n8n flow, a bot or an agent that answers on its own. Add one on the pairing page, ask your assistant, or call the API:
+
+```sh
+curl -X POST https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/webhooks \
+  -H "Authorization: Bearer $SECRET" \
+  -d '{"url": "https://example.com/whatsapp", "events": ["message.received"]}'
+```
+
+The answer has the webhook's `id` and its signing `secret`, shown only this once. Each event arrives as its own request:
+
+```json
+{
+  "id": "evt_6f1c0e2a9b8d4c3e8a7f5d1b2c3e4f50",
+  "type": "message.received",
+  "account": "personal",
+  "created_at": "2026-11-18T15:03:12.481Z",
+  "data": {
+    "chat": { "jid": "120363041234567890@g.us", "name": "Family", "type": "group" },
+    "message": {
+      "id": "3EB0C4F1A2B3C4D5E6F7",
+      "sent_at": "2026-11-18T15:03:11.000Z",
+      "from_me": false,
+      "sender": { "jid": "182736455463@lid", "name": "Marina", "phone": "+5511987654321" },
+      "kind": "text",
+      "text": "I'll be there at 7",
+      "reply_to": null
+    }
+  }
+}
+```
+
+The message, shortened here, has every field that `get_messages` shows, with `null` for the empty ones. The events are `message.received`, `message.sent`, `message.edited`, `message.deleted`, `message.reaction` and `account.connection`, which says when the number links, unlinks or is refused. A webhook can be limited to some events, to some chats (`chats`), to direct chats or groups (`chat_types`), send up to five fixed headers like `Authorization` (`headers`), and wait for voice messages to be transcribed (`transcribe_voice`).
+
+Requests are signed with [Standard Webhooks](https://www.standardwebhooks.com), so any of its libraries verifies them with the secret. A receiver that fails gets the event again after 5 seconds, then over about a day; `webhook-id` stays the same, so drop repeats by it. A receiver that answers `410 Gone`, or fails for three days, is paused.
+
+| Method and path under `/accounts/personal` | What it does                                                 |
+| ------------------------------------------ | ------------------------------------------------------------ |
+| `GET /webhooks`                            | Lists webhooks with their status and pending deliveries      |
+| `POST /webhooks`                           | Adds one and returns its secret                              |
+| `GET /webhooks/:id`                        | One webhook and its last 50 deliveries                       |
+| `PATCH /webhooks/:id`                      | Changes it; `enabled` pauses or resumes, `rotate_secret` too |
+| `DELETE /webhooks/:id`                     | Deletes it and what it had pending                           |
+| `POST /webhooks/:id/test`                  | Sends a `webhook.test` event now and reports how it went     |
+
+A webhook copies every later message out of your account, so an assistant should create one only when you ask. The tools make clients ask you first, and `WEBHOOK_TOOLS` can turn them down to `read` or `off`. [ADR 0004](docs/adr/0004-webhooks-from-a-queue-in-the-archive.md) explains how delivery works.
 
 ## How it works
 
@@ -94,6 +142,7 @@ The server transcribes a voice message the first time your assistant reads it, a
 | --------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
 | `SECRET`              | Secret   | The password of your server, at least 16 characters                                                          |
 | `AUTH_MODE`           | Variable | `oauth` (sign in through the browser), `api_key` (Bearer header) or `both`. `both` if unset                  |
+| `WEBHOOK_TOOLS`       | Variable | What MCP clients can do with webhooks: `manage`, `read` or `off`. `manage` if unset                          |
 | `TIMEZONE`            | Variable | Time zone for dates, like `America/Sao_Paulo`. `UTC` if unset                                                |
 | `TRANSCRIBE_MODEL`    | Variable | `@cf/openai/whisper-large-v3-turbo` (default), `@cf/deepgram/nova-3` or `off`                                |
 | `DESCRIBE_MODEL`      | Variable | `@cf/mistralai/mistral-small-3.1-24b-instruct` (default), `@cf/meta/llama-4-scout-17b-16e-instruct` or `off` |

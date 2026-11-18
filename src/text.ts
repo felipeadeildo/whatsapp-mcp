@@ -119,7 +119,7 @@ const en = {
         "account.connection": "Link and unlink",
       },
       transcribe:
-        "Transcribe voice messages before sending them (up to 10 s more, billed per audio minute)",
+        "Transcribe voice messages before sending them (up to 8 s more, billed per audio minute)",
       create: "Add",
       creating: "Adding…",
       cancel: "Cancel",
@@ -261,7 +261,7 @@ const pt: typeof en = {
         "account.connection": "Conexão e desconexão",
       },
       transcribe:
-        "Transcrever áudios antes de enviar (até 10 s a mais, cobrado por minuto de áudio)",
+        "Transcrever áudios antes de enviar (até 8 s a mais, cobrado por minuto de áudio)",
       create: "Adicionar",
       creating: "Adicionando…",
       cancel: "Cancelar",
