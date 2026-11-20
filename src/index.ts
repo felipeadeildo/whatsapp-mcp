@@ -23,7 +23,9 @@ const SendBody = z.object({
 })
 
 const ACCOUNT_ID = "[a-z0-9-]{1,64}"
-const ACCOUNT_ROUTE = new RegExp(`^/accounts/(${ACCOUNT_ID})(?:/([a-z0-9_/]+))?$`)
+const ACCOUNT_ROUTE = new RegExp(`^/accounts/(${ACCOUNT_ID})(?:/(.+))?$`)
+// Served by the account's Durable Object; see src/api/rest.ts.
+const API_RESOURCES: ReadonlySet<string> = new Set(["me", "messages", "chats", "groups"])
 const WEBHOOK_ROUTE = /^webhooks(?:\/(wh_[0-9a-f]{32})(\/test)?)?$/
 const WELL_KNOWN_ROUTE = new RegExp(
   `^/\\.well-known/(oauth-protected-resource|oauth-authorization-server)/accounts/(${ACCOUNT_ID})(/mcp)?$`,
@@ -81,6 +83,9 @@ export default {
         if (action === "webhooks" || action.startsWith("webhooks/")) {
           return webhooks(request, env, config, accountId, action)
         }
+        if (API_RESOURCES.has(action.split("/")[0] ?? "")) {
+          return serveApi(request, env, config, accountId, action, url.search)
+        }
         return rest(request, env, config, accountId, action)
     }
   },
@@ -122,6 +127,23 @@ async function rest(
   } catch (error) {
     return Response.json({ error: String(error) }, { status: 500 })
   }
+}
+
+// Same credentials as the rest of the API. The object answers with its own status
+// codes, so a refusal such as an edit after WhatsApp's window keeps its `code`.
+async function serveApi(
+  request: Request,
+  env: Env,
+  config: AuthConfig,
+  accountId: string,
+  action: string,
+  search: string,
+): Promise<Response> {
+  const allowed =
+    (await hasBearerSecret(request, config)) || (await hasSession(request, config.secret))
+  if (!allowed) return unauthorized()
+  const account = env.ACCOUNT.getByName(accountId)
+  return account.fetch(new Request(`https://account/${action}${search}`, request))
 }
 
 // Webhooks are managed with the same credentials as the rest of the API: the

@@ -35,7 +35,7 @@ claude mcp add --transport http whatsapp https://whatsapp-mcp.<your-name>.worker
 pi mcp add whatsapp --url https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mcp && pi mcp login whatsapp
 ```
 
-Clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>`. Scripts can use the same header with the REST API under `/accounts/personal`: `status`, `start`, `send`, `logout`, `erase` and [`webhooks`](#webhooks).
+Clients that can set a header can skip the browser and send `Authorization: Bearer <SECRET>`. Scripts and bots can use the same header with the [REST API](#rest-api).
 
 <div align="center">
 <img src="docs/linked.png" alt="Pairing page after linking, with the archive size and the MCP endpoint ready to copy" width="820">
@@ -100,7 +100,7 @@ The answer has the webhook's `id` and its signing `secret`, shown only this once
 }
 ```
 
-The message, shortened here, has every field that `get_messages` shows, with `null` for the empty ones. The events are `message.received`, `message.sent`, `message.edited`, `message.deleted`, `message.reaction` and `account.connection`, which says when the number links, unlinks or is refused. A webhook can be limited to some events, to some chats (`chats`), to direct chats or groups (`chat_types`), send up to five fixed headers like `Authorization` (`headers`), and wait for voice messages to be transcribed (`transcribe_voice`).
+The message, shortened here, has every field that `get_messages` shows, with `null` for the empty ones, plus `mentions_me` and `reply_to_me` (see [REST API](#rest-api)). The events are `message.received`, `message.sent`, `message.edited`, `message.deleted`, `message.reaction` and `account.connection`, which says when the number links, unlinks or is refused. A webhook can be limited to some events, to some chats (`chats`), to direct chats or groups (`chat_types`), send up to five fixed headers like `Authorization` (`headers`), and wait for voice messages to be transcribed (`transcribe_voice`).
 
 Requests are signed with [Standard Webhooks](https://www.standardwebhooks.com), so any of its libraries verifies them with the secret. A receiver that fails gets the event again after 5 seconds, then over about a day; `webhook-id` stays the same, so drop repeats by it. A receiver that answers `410 Gone`, or fails for three days, is paused.
 
@@ -114,6 +114,35 @@ Requests are signed with [Standard Webhooks](https://www.standardwebhooks.com), 
 | `POST /webhooks/:id/test`                  | Sends a `webhook.test` event now and reports how it went     |
 
 A webhook copies every later message out of your account, so an assistant should create one only when you ask. The tools make clients ask you first, and `WEBHOOK_TOOLS` can turn them down to `read` or `off`. [ADR 0004](docs/adr/0004-webhooks-from-a-queue-in-the-archive.md) explains how delivery works.
+
+## REST API
+
+Programs that act without an assistant, such as a bot that answers in a group, use the REST API with `Authorization: Bearer <SECRET>`. Bodies and answers are JSON like the webhooks': snake_case, `null` for empty fields, times in ISO 8601 UTC. Wherever a path or body takes a chat or a person, a phone number with country code works as well as a JID; encode the `@` as `%40` if your HTTP client needs it.
+
+| Method and path under `/accounts/personal` | What it does                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------ |
+| `GET /me`                                  | The linked number: `jid`, `lid`, `phone`, `name` and connection `state`  |
+| `POST /messages`                           | Sends `text` `to` a chat, with `reply_to`, `mentions`, `idempotency_key` |
+| `GET /messages/:chat/:id`                  | One message, as webhooks carry it                                        |
+| `PATCH /messages/:chat/:id`                | Edits a message this number sent, within WhatsApp's 15 minutes           |
+| `DELETE /messages/:chat/:id`               | Deletes a message for everyone                                           |
+| `GET /chats`                               | Chats; `type=group` or `direct`, `unread=true`, `limit`, `offset`        |
+| `GET /chats/:chat/messages`                | Messages in `[since, until)`, newest `limit` (max 1000), oldest first    |
+| `POST /chats/:chat/presence`               | Shows `typing`, `recording` or `paused` for about 25 seconds             |
+| `POST /chats/:chat/read`                   | Marks the chat as read                                                   |
+| `GET /groups/:jid`                         | A group, asked of WhatsApp now, with each member's `jid`, `phone`, admin |
+
+To mention someone, put their phone number or JID in `mentions` and write `@<their number>` in the text. The server rewrites it to what the group expects: groups that address members by LID need `@<lid>`, and WhatsApp shows a plain number otherwise.
+
+```sh
+curl -X POST https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/messages \
+  -H "Authorization: Bearer $SECRET" \
+  -d '{"to": "120363041234567890@g.us", "text": "@5511987654321 done", "mentions": ["+5511987654321"]}'
+```
+
+The answer is `{"chat_jid": "...", "id": "...", "deduplicated": false}`. A refusal has an `error` to read and a `code` to branch on: `invalid_request`, `invalid_address`, `not_found`, `message_not_found`, `not_own_message`, `edit_window_closed` (409), `not_connected` (503) or `whatsapp_error` (502).
+
+Webhook messages carry `mentions_me` and `reply_to_me`, so a bot knows it was called without comparing JIDs: WhatsApp names the same number by phone in some chats and by LID in others. A bot also receives its own messages as `message.sent` and its edits as `message.edited`, both with `from_me: true`.
 
 ## How it works
 

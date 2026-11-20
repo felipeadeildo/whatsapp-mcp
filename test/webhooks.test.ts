@@ -57,7 +57,7 @@ function received(chat: ChatRef = DIRECT, kind: "text" | "voice" = "text"): Webh
     kind,
     text: kind === "text" ? "oi" : null,
   })
-  return messageEvent("message.received", chat, message, null, T0)
+  return messageEvent("message.received", chat, message, null, new Set(), T0)
 }
 
 function bodyOf(init: RequestInit): string {
@@ -344,5 +344,35 @@ describe("webhook input", () => {
 
   test("refuses unknown event types", () => {
     expect(WebhookUpdate.safeParse({ events: ["message.typing"] }).success).toBe(false)
+  })
+})
+
+describe("message payload", () => {
+  const self = new Set(["5511000000000@s.whatsapp.net", "42@lid"])
+  const payload = (overrides: Parameters<typeof archivedMessage>[1]) =>
+    messageEvent("message.received", GROUP, archivedMessage("M", overrides), null, self, T0).data[
+      "message"
+    ]
+
+  test("says when a message mentions this account, with each mention's phone", () => {
+    const mention = { user: "42", jid: "42@lid", name: "Bob", phone: "+5511000000000" }
+    expect(payload({ kind: "text", text: "@42 oi", mentions: [mention] })).toMatchObject({
+      mentions_me: true,
+      reply_to_me: false,
+      mentions: [{ jid: "42@lid", name: "Bob", phone: "+5511000000000" }],
+    })
+  })
+
+  test("says when a message replies to this account, by the archive or by the quoted author", () => {
+    expect(payload({ quotedId: "Q", quotedFromMe: true })).toMatchObject({ reply_to_me: true })
+    expect(payload({ quotedId: "Q", quotedSenderJid: "42@lid" })).toMatchObject({
+      reply_to_me: true,
+    })
+    expect(
+      payload({ quotedId: "Q", quotedFromMe: false, quotedSenderJid: "42@lid" }),
+    ).toMatchObject({ reply_to_me: false })
+    expect(payload({ quotedId: "Q", quotedSenderJid: "7@lid" })).toMatchObject({
+      reply_to_me: false,
+    })
   })
 })

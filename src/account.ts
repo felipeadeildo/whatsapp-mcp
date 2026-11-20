@@ -6,13 +6,16 @@ import {
   DisconnectReason,
   type HostConnectionUpdate,
 } from "@oxidezap/baileyrs/host"
+import type { GroupMetadata } from "@oxidezap/baileyrs/lib/Types/GroupMetadata.js"
+import { WAMessageAddressingMode } from "@oxidezap/baileyrs/lib/Types/Message.js"
 import { isBoom } from "@oxidezap/baileyrs/lib/Utils/boom.js"
 import { jidNormalizedUser } from "@oxidezap/baileyrs/lib/WABinary/jid-utils.js"
 import { DurableObject } from "cloudflare:workers"
 import { renderSVG } from "uqr"
 import { z } from "zod"
 
-import { errorText } from "./errors"
+import { handleApi } from "./api/rest"
+import { errorText, RequestError } from "./errors"
 import {
   Archive,
   type ArchiveStats,
@@ -32,11 +35,13 @@ import { fetchWaWebVersion } from "./wa-version"
 import { type ContactName, removeContact, resolveAddress, saveContact } from "./whatsapp/contacts"
 import { whatsappMedia } from "./whatsapp/media"
 import { decodeRaw, type KeyedMessage } from "./whatsapp/raw"
+import { type MentionTarget, mentionJid, mentionText } from "./whatsapp/mentions"
 import { makeSocket, type Socket } from "./whatsapp/socket"
 import { type ArchiveChange, refreshGroupNames, syncArchive } from "./whatsapp/sync"
 import { type Attempt, drain, post } from "./webhooks/deliver"
 import {
   type ChatRef,
+  chatData,
   type ConnectionChange,
   connectionEvent,
   messageData,
@@ -44,6 +49,7 @@ import {
   newId,
   type Person,
   reactionEvent,
+  type Self,
   serialize,
   testEvent,
   type WebhookEvent,
@@ -74,6 +80,10 @@ const HISTORY_IDLE_MS = 45_000
 const LINKED = "linked"
 const SECRET_GRACE_MS = 24 * 60 * 60 * 1000
 const PRUNE_EVERY_MS = 60 * 60 * 1000
+// WhatsApp lets the sender edit a message for 15 minutes; later edits reach nobody.
+export const EDIT_WINDOW_SECONDS = 15 * 60
+// How long a group's addressing mode is trusted before it is asked again.
+const ADDRESSING_TTL_MS = 10 * 60 * 1000
 
 // The library types USync results as `unknown`.
 const AboutResult = z.object({ status: z.object({ status: z.string().nullish() }) })
@@ -117,6 +127,17 @@ export interface SendResult {
   readonly deduplicated: boolean
 }
 
+export type Presence = "typing" | "recording" | "paused"
+
+/** Who the linked number is, by every JID WhatsApp may use for it. */
+export interface Me {
+  readonly jid: string | null
+  readonly lid: string | null
+  readonly phone: string | null
+  readonly name: string | null
+  readonly state: ConnectionState
+}
+
 export interface NumberCheck {
   readonly phone: string
   readonly onWhatsApp: boolean
@@ -132,6 +153,8 @@ export interface GroupInfo {
   readonly size: number
   readonly announceOnly: boolean
   readonly restricted: boolean
+  /** Whether members are addressed by LID or by phone JID. */
+  readonly addressingMode: "lid" | "pn"
   readonly participants: readonly {
     readonly jid: string
     readonly name: string | null
@@ -147,6 +170,10 @@ export interface Profile {
   readonly aliases: readonly string[]
   readonly about: string | null
   readonly pictureUrl: string | null
+}
+
+function addressingOf(group: GroupMetadata): "lid" | "pn" {
+  return group.addressingMode === WAMessageAddressingMode.LID ? "lid" : "pn"
 }
 
 // The phone JID the socket is logged in as, without the device suffix.
@@ -201,6 +228,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
   private draining: Promise<void> | null = null
   private drainAgain = false
   private prunedAt = 0
+  private readonly addressing = new Map<string, { mode: "lid" | "pn"; at: number }>()
+
+  /** The REST API for programs; the Worker has already authenticated the caller. */
+  override async fetch(request: Request): Promise<Response> {
+    return handleApi(request, this)
+  }
 
   async start(): Promise<AccountStatus> {
     this.refused = null
@@ -319,16 +352,17 @@ export class WhatsAppAccount extends DurableObject<Env> {
   async send(request: SendRequest): Promise<SendResult> {
     const socket = this.connectedSocket()
     const chatJid = this.resolveChat(request.to)
-    const mentions = (request.mentions ?? []).map((jid) => this.resolveChat(jid))
+    const targets = await this.mentionTargets(chatJid, request.mentions ?? [])
+    const mentions = targets.map((target) => target.jid)
+    const text = mentionText(request.text, targets)
     const requestKey =
-      request.idempotencyKey ??
-      (await digest([chatJid, request.text, request.replyTo ?? "", ...mentions]))
+      request.idempotencyKey ?? (await digest([chatJid, text, request.replyTo ?? "", ...mentions]))
     const window = request.idempotencyKey ? EXPLICIT_DEDUP_SECONDS : IMPLICIT_DEDUP_SECONDS
     const previous = this.archive.findSend(requestKey, window)
     if (previous) return { chatJid, id: previous, deduplicated: true }
 
     const quoted = request.replyTo ? this.rawMessage(chatJid, request.replyTo) : undefined
-    const sent = await socket.sendMessage(chatJid, { text: request.text, mentions }, { quoted })
+    const sent = await socket.sendMessage(chatJid, { text, mentions }, { quoted })
     const id = sent?.key.id
     if (!id) throw new Error("WhatsApp did not return a message id")
     // The echo of the sent message is what makes `message.sent`.
@@ -350,7 +384,22 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const socket = this.connectedSocket()
     const jid = this.resolveChat(chatJid)
     const { key } = this.rawMessage(jid, messageId)
-    if (!key.fromMe) throw new Error("only messages sent by this account can be edited")
+    if (!key.fromMe) {
+      throw new RequestError(
+        403,
+        "not_own_message",
+        "only messages sent by this account can be edited",
+      )
+    }
+    const sentAt = this.archive.getMessage(jid, messageId)?.sentAt ?? 0
+    const age = Math.floor(Date.now() / 1000) - sentAt
+    if (age > EDIT_WINDOW_SECONDS) {
+      throw new RequestError(
+        409,
+        "edit_window_closed",
+        `WhatsApp allows edits for ${EDIT_WINDOW_SECONDS / 60} minutes; message ${messageId} was sent ${Math.floor(age / 60)} minutes ago`,
+      )
+    }
     await socket.sendMessage(jid, { text, edit: key })
     if (this.archive.applyEdit(jid, messageId, text)) {
       this.publish([{ type: "edit", chatJid: jid, id: messageId }])
@@ -399,17 +448,18 @@ export class WhatsAppAccount extends DurableObject<Env> {
   }
 
   async getGroupInfo(groupJid: string): Promise<GroupInfo> {
-    const socket = this.connectedSocket()
-    const group = await socket.groupMetadata(jidNormalizedUser(groupJid))
+    const group = await this.groupMetadata(groupJid)
     return {
       jid: group.id,
       subject: group.subject,
       description: group.desc ?? null,
       owner: group.ownerPn ?? group.owner ?? null,
-      createdAt: group.creation ?? null,
+      // The bridge reports a missing date as NaN.
+      createdAt: Number.isFinite(group.creation) ? (group.creation ?? null) : null,
       size: group.size ?? group.participants.length,
       announceOnly: group.announce ?? false,
       restricted: group.restrict ?? false,
+      addressingMode: addressingOf(group),
       participants: group.participants.map((participant) => {
         const person = this.archive.getPerson(jidNormalizedUser(participant.id))
         return {
@@ -420,6 +470,44 @@ export class WhatsAppAccount extends DurableObject<Env> {
         }
       }),
     }
+  }
+
+  /** Shows "typing…" or "recording audio…" in a chat until a message goes out, `paused`, or about 25 s pass. */
+  async setPresence(chatJid: string, state: Presence): Promise<void> {
+    const socket = this.connectedSocket()
+    const jid = this.resolveChat(chatJid)
+    await socket.sendPresenceUpdate(state === "typing" ? "composing" : state, jid)
+  }
+
+  me(): Me {
+    const jid = numberOf(this.socket) ?? this.owner()
+    const socketLid = this.socket?.user?.lid
+    const known = jid ? this.archive.canonical(jid) : null
+    const lid = socketLid ? jidNormalizedUser(socketLid) : known?.endsWith("@lid") ? known : null
+    return {
+      jid,
+      lid,
+      phone: jid ? `+${jid.slice(0, jid.indexOf("@"))}` : null,
+      name: this.socket?.user?.name || null,
+      state: this.state,
+    }
+  }
+
+  /** The chat and its messages as webhooks carry them. */
+  presentChat(jid: string): Record<string, unknown> {
+    return chatData(this.chatRef(jid))
+  }
+
+  presentMessages(messages: readonly ReadMessage[]): Record<string, unknown>[] {
+    const self = this.self()
+    return messages.map((message) => {
+      const sender = message.fromMe || !message.senderJid ? null : this.person(message.senderJid)
+      return messageData(message, sender, self)
+    })
+  }
+
+  resolve(to: string): string {
+    return this.resolveChat(to)
   }
 
   async getProfile(jid: string): Promise<Profile> {
@@ -585,7 +673,70 @@ export class WhatsAppAccount extends DurableObject<Env> {
           : message.fromMe
             ? "message.sent"
             : "message.received"
-    return messageEvent(type, chat, message, sender, now)
+    return messageEvent(type, chat, message, sender, this.self(), now)
+  }
+
+  private self(): Self {
+    const { jid, lid } = this.me()
+    return new Set([jid, lid, jid ? this.archive.canonical(jid) : null].filter((id) => id !== null))
+  }
+
+  // Asks WhatsApp, and learns each member's LID and phone pair on the way.
+  private async groupMetadata(groupJid: string): Promise<GroupMetadata> {
+    const socket = this.connectedSocket()
+    const jid = jidNormalizedUser(groupJid)
+    if (!jid.endsWith("@g.us"))
+      throw new RequestError(400, "invalid_address", `${jid} is not a group`)
+    let group: GroupMetadata
+    try {
+      group = await socket.groupMetadata(jid)
+    } catch (error) {
+      const status = isBoom(error) ? error.output.statusCode : 0
+      if (status === 403 || status === 404) {
+        throw new RequestError(
+          404,
+          "not_found",
+          `group ${jid} not found, or this number is not in it`,
+        )
+      }
+      throw new RequestError(502, "whatsapp_error", errorText(error))
+    }
+    for (const participant of group.participants) {
+      const ids = [participant.id, participant.lid, participant.phoneNumber].filter(
+        (id): id is string => Boolean(id),
+      )
+      const lid = ids.find((id) => id.endsWith("@lid"))
+      const pn = ids.find((id) => id.endsWith("@s.whatsapp.net"))
+      if (lid && pn) this.archive.learnPair(jidNormalizedUser(pn), jidNormalizedUser(lid))
+    }
+    this.addressing.set(jid, { mode: addressingOf(group), at: Date.now() })
+    return group
+  }
+
+  // `null` when WhatsApp would not say; mentions then go by the canonical JID.
+  private async addressingMode(groupJid: string): Promise<"lid" | "pn" | null> {
+    const cached = this.addressing.get(groupJid)
+    if (cached && Date.now() - cached.at < ADDRESSING_TTL_MS) return cached.mode
+    return this.groupMetadata(groupJid).then(addressingOf, () => null)
+  }
+
+  // In a group, people are mentioned by the JID kind the group addresses them with.
+  private async mentionTargets(
+    chatJid: string,
+    mentions: readonly string[],
+  ): Promise<MentionTarget[]> {
+    if (mentions.length === 0) return []
+    const mode = chatJid.endsWith("@g.us") ? await this.addressingMode(chatJid) : null
+    return mentions.map((mention) => {
+      const typed = mention.includes("@")
+        ? jidNormalizedUser(mention)
+        : `${mention.replace(/\D/g, "")}@s.whatsapp.net`
+      const jid = this.resolveChat(mention)
+      const pn = this.archive.phoneJidOf(jid)
+      const lid = jid.endsWith("@lid") ? jid : null
+      const known = [typed, jid, pn, lid].filter((id): id is string => id !== null)
+      return { jid: mentionJid({ jid, pn, lid }, mode), known }
+    })
   }
 
   private chatRef(jid: string): ChatRef {
@@ -654,7 +805,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     const [read] = await this.transcripts.read([message], true)
     if (!read) return null
     const sender = read.fromMe || !read.senderJid ? null : this.person(read.senderJid)
-    return messageData(read, sender)
+    return messageData(read, sender, this.self())
   }
 
   // Concurrent callers share one attempt.
@@ -773,7 +924,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   private connectedSocket(): Socket {
     if (!this.socket || this.state !== "open") {
-      throw new Error(`WhatsApp is not connected (${this.state})`)
+      throw new RequestError(503, "not_connected", `WhatsApp is not connected (${this.state})`)
     }
     return this.socket
   }
@@ -786,7 +937,13 @@ export class WhatsAppAccount extends DurableObject<Env> {
   // the JIDs WhatsApp addressed the message with, not the canonical ones.
   private rawMessage(chatJid: string, messageId: string): KeyedMessage {
     const raw = this.archive.getRaw(chatJid, messageId)
-    if (!raw) throw new Error(`message ${messageId} not found in ${chatJid}`)
+    if (!raw) {
+      throw new RequestError(
+        404,
+        "message_not_found",
+        `message ${messageId} not found in ${chatJid}`,
+      )
+    }
     return decodeRaw(raw)
   }
 }

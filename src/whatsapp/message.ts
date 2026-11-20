@@ -48,6 +48,8 @@ export interface StoredMessage {
   readonly kind: MessageKind
   readonly text: string | null
   readonly quotedId: string | null
+  // Who wrote the quoted message, as the reply addressed them.
+  readonly quotedSender: string | null
   readonly mentions: readonly string[]
   readonly forwarded: boolean
   readonly media: MediaInfo | null
@@ -426,6 +428,7 @@ export function interpret(raw: WAMessage): MessageEvent {
       kind: rendered?.kind ?? "other",
       text: rendered ? rendered.text : unknownType,
       quotedId: context?.stanzaId ?? null,
+      quotedSender: context?.stanzaId ? (context.participant ?? null) : null,
       mentions: context?.mentionedJid ?? [],
       forwarded: context?.isForwarded ?? false,
       media: rendered?.media ?? null,

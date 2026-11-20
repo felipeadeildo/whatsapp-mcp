@@ -33,6 +33,7 @@ describe("interpret", () => {
       kind: "text",
       text: "oi",
       quotedId: null,
+      quotedSender: null,
       mentions: [],
       forwarded: false,
       media: null,

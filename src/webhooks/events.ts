@@ -52,7 +52,20 @@ export function isoTime(ms: number): string {
 
 const VOICE_KINDS: ReadonlySet<string> = new Set(["voice", "audio"])
 
-export function messageData(message: ReadMessage, sender: Person | null): Record<string, unknown> {
+/** The JIDs this account goes by: its phone JID and its LID. */
+export type Self = ReadonlySet<string>
+
+// `mentions_me` and `reply_to_me` save a bot from comparing JIDs: WhatsApp names the
+// account by phone in some chats and by LID in others.
+export function messageData(
+  message: ReadMessage,
+  sender: Person | null,
+  self: Self,
+): Record<string, unknown> {
+  const replyToMe =
+    message.quotedId !== null &&
+    (message.quotedFromMe ??
+      (message.quotedSenderJid !== null && self.has(message.quotedSenderJid)))
   return {
     id: message.id,
     sent_at: isoTime(message.sentAt * 1000),
@@ -61,7 +74,9 @@ export function messageData(message: ReadMessage, sender: Person | null): Record
     kind: message.kind,
     text: message.text,
     reply_to: message.quotedId,
-    mentions: message.mentions.map(({ jid, name }) => ({ jid, name })),
+    reply_to_me: replyToMe,
+    mentions: message.mentions.map(({ jid, name, phone }) => ({ jid, name, phone })),
+    mentions_me: message.mentions.some(({ jid }) => self.has(jid)),
     forwarded: message.forwarded,
     media: message.media,
     transcript: message.transcript,
@@ -85,6 +100,7 @@ export function messageEvent(
   chat: ChatRef,
   message: ArchivedMessage,
   sender: Person | null,
+  self: Self,
   now: number,
 ): WebhookEvent {
   const isNewVoice = type === "message.received" && VOICE_KINDS.has(message.kind)
@@ -94,7 +110,7 @@ export function messageEvent(
     createdAt: now,
     chat,
     voice: isNewVoice && message.transcript === null ? { chatJid: chat.jid, id: message.id } : null,
-    data: { chat: chatData(chat), message: messageData(message, sender) },
+    data: { chat: chatData(chat), message: messageData(message, sender, self) },
   }
 }
 

@@ -139,6 +139,8 @@ const MIGRATIONS = [
     VALUES (new.rowid, new.text, new.transcript, new.description);
   END`,
   `INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')`,
+  // Who wrote the message a reply quotes, so a reply to this account is known as one.
+  `ALTER TABLE messages ADD COLUMN quoted_sender TEXT`,
 ]
 
 const OWN_REACTION_SENDER = "me"
@@ -174,6 +176,7 @@ export interface MessageInput {
   readonly kind: MessageKind
   readonly text: string | null
   readonly quotedId: string | null
+  readonly quotedSenderJid?: string | null | undefined
   readonly mentions: readonly string[]
   readonly forwarded: boolean
   readonly media: MediaInfo | null
@@ -208,6 +211,7 @@ export interface Mention {
   readonly user: string
   readonly jid: string
   readonly name: string | null
+  readonly phone: string | null
 }
 
 export interface ArchivedMessage {
@@ -221,6 +225,10 @@ export interface ArchivedMessage {
   readonly kind: MessageKind
   readonly text: string | null
   readonly quotedId: string | null
+  // The quoted message's author, when the reply named one; null for this account's own.
+  readonly quotedSenderJid: string | null
+  // Whether the quoted message is this account's, when the archive has it.
+  readonly quotedFromMe: boolean | null
   readonly mentions: readonly Mention[]
   readonly forwarded: boolean
   readonly media: MediaInfo | null
@@ -288,6 +296,8 @@ type MessageRow = {
   kind: string
   text: string | null
   quoted_id: string | null
+  quoted_sender: string | null
+  quoted_from_me: number | null
   mentions: string | null
   forwarded: number
   media: string | null
@@ -298,7 +308,8 @@ type MessageRow = {
 }
 
 const MESSAGE_COLUMNS = `m.chat_jid, m.id, m.from_me, m.sender_jid, m.sent_at, m.kind, m.text, m.quoted_id,
-  m.mentions, m.forwarded, m.media, m.transcript, m.description, m.edited, m.deleted`
+  m.quoted_sender, (SELECT q.from_me FROM messages q WHERE q.chat_jid = m.chat_jid AND q.id = m.quoted_id)
+  AS quoted_from_me, m.mentions, m.forwarded, m.media, m.transcript, m.description, m.edited, m.deleted`
 
 const CHAT_COLUMNS = "c.jid, c.unread_count, c.last_message_at, c.archived, c.pinned"
 
@@ -551,13 +562,14 @@ export class Archive {
         }
         this.sql.exec(
           `INSERT INTO messages (chat_jid, id, from_me, sender_jid, sent_at, kind, text, quoted_id,
-             mentions, forwarded, media, raw)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             quoted_sender, mentions, forwarded, media, raw)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (chat_jid, id) DO UPDATE SET
              sender_jid = excluded.sender_jid,
              kind = excluded.kind,
              text = CASE WHEN edited OR deleted THEN text ELSE excluded.text END,
              quoted_id = excluded.quoted_id,
+             quoted_sender = excluded.quoted_sender,
              mentions = excluded.mentions,
              forwarded = excluded.forwarded,
              media = CASE WHEN deleted THEN COALESCE(excluded.media, media) ELSE excluded.media END,
@@ -570,6 +582,7 @@ export class Archive {
           message.kind,
           message.text,
           message.quotedId,
+          message.quotedSenderJid ?? null,
           message.mentions.length > 0 ? JSON.stringify(message.mentions) : null,
           message.forwarded ? 1 : 0,
           message.media ? JSON.stringify(message.media) : null,
@@ -987,9 +1000,17 @@ export class Archive {
       kind: isMessageKind(row.kind) ? row.kind : "other",
       text: row.text,
       quotedId: row.quoted_id,
+      quotedSenderJid: row.quoted_sender ? this.canonical(row.quoted_sender) : null,
+      quotedFromMe: row.quoted_from_me === null ? null : row.quoted_from_me === 1,
       mentions: (mentions[index] ?? []).map((jid) => {
         const canonical = this.canonical(jid)
-        return { user: userOf(jid), jid: canonical, name: nameOf(canonical) }
+        const identity = identities.get(canonical)
+        return {
+          user: userOf(jid),
+          jid: canonical,
+          name: identity?.name ?? null,
+          phone: identity?.phone ?? phoneOf(canonical),
+        }
       }),
       forwarded: row.forwarded === 1,
       media: parseMedia(row.media),

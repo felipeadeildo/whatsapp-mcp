@@ -2,6 +2,7 @@
 // archive keeps people under their LID once the pair is known.
 import { jidNormalizedUser } from "@oxidezap/baileyrs/lib/WABinary/jid-utils.js"
 
+import { RequestError } from "../errors"
 import type { Archive } from "../store/archive"
 import type { Identity } from "../store/names"
 import type { Socket } from "./socket"
@@ -38,7 +39,7 @@ export class PhoneUnknownError extends Error {
 export function resolveAddress(archive: Pick<Archive, "canonical">, to: string): string {
   if (to.includes("@")) return archive.canonical(jidNormalizedUser(to))
   const digits = to.replace(/\D/g, "")
-  if (!digits) throw new Error(`not a JID or phone number: ${to}`)
+  if (!digits) throw new RequestError(400, "invalid_address", `not a JID or phone number: ${to}`)
   return archive.canonical(`${digits}${PN_SUFFIX}`)
 }
 

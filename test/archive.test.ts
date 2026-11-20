@@ -237,7 +237,40 @@ describe("messages", () => {
       message({ chatJid: "1@g.us", id: "A", text: "oi @5511999999999", mentions: [PN] }),
     ])
     expect(archive.getMessage("1@g.us", "A")?.mentions).toEqual([
-      { user: "5511999999999", jid: LID, name: "Ada" },
+      { user: "5511999999999", jid: LID, name: "Ada", phone: "+5511999999999" },
     ])
+  })
+})
+
+describe("replies", () => {
+  test("a reply knows whether the quoted message is this account's, and who wrote it", () => {
+    const archive = new Archive(memoryDatabase())
+    archive.learnPair(PN, LID)
+    archive.saveMessages([
+      message({ chatJid: "1@g.us", id: "MINE", fromMe: true, senderJid: null }),
+      message({
+        chatJid: "1@g.us",
+        id: "R1",
+        senderJid: LID,
+        quotedId: "MINE",
+        quotedSenderJid: "9@lid",
+      }),
+      message({
+        chatJid: "1@g.us",
+        id: "R2",
+        senderJid: LID,
+        quotedId: "GONE",
+        quotedSenderJid: PN,
+      }),
+    ])
+    expect(archive.getMessage("1@g.us", "R1")).toMatchObject({
+      quotedId: "MINE",
+      quotedFromMe: true,
+    })
+    // Not archived: only the author named in the reply is known, canonical.
+    expect(archive.getMessage("1@g.us", "R2")).toMatchObject({
+      quotedFromMe: null,
+      quotedSenderJid: LID,
+    })
   })
 })

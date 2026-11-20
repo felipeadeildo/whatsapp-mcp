@@ -16,6 +16,8 @@ export function archivedMessage(
     kind: "voice",
     text: null,
     quotedId: null,
+    quotedSenderJid: null,
+    quotedFromMe: null,
     mentions: [],
     forwarded: false,
     media: null,

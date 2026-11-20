@@ -151,6 +151,7 @@ class Ingest {
       kind: message.kind,
       text: message.text,
       quotedId: message.quotedId,
+      quotedSenderJid: this.canonical(message.quotedSender),
       mentions: message.mentions,
       forwarded: message.forwarded,
       media: message.media,
