@@ -255,6 +255,8 @@ async function getGroup(account: ApiAccount, jid: string): Promise<Response> {
         jid: participant.jid,
         phone: participant.phone,
         name: participant.name,
+        contact_name: participant.contactName,
+        profile_name: participant.profileName,
         admin: participant.admin,
       })),
     },

@@ -506,6 +506,17 @@ export class Archive {
     )
   }
 
+  /** The newest name of each source, for callers that tell them apart. */
+  namesBySource(jid: string): Partial<Record<NameSource, string>> {
+    const rows = this.sql.exec<{ source: string; name: string }>(
+      "SELECT source, name FROM names WHERE jid = ? ORDER BY seen_at",
+      this.canonical(jid),
+    )
+    const out: Partial<Record<NameSource, string>> = {}
+    for (const row of rows) if (isNameSource(row.source)) out[row.source] = row.name
+    return out
+  }
+
   getPerson(jid: string): Identity {
     const id = this.canonical(jid)
     const identity = this.identities([id]).get(id)

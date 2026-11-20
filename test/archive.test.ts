@@ -107,6 +107,16 @@ describe("names", () => {
     ])
   })
 
+  test("names by source keep the newest of each", () => {
+    const archive = new Archive(memoryDatabase())
+    archive.learnNames(LID, [
+      { source: "contact", name: "Ada (work)", seenAt: 100 },
+      { source: "push", name: "Augusta", seenAt: 100 },
+      { source: "push", name: "Ada 🌻", seenAt: 200 },
+    ])
+    expect(archive.namesBySource(LID)).toEqual({ contact: "Ada (work)", push: "Ada 🌻" })
+  })
+
   test("search ignores accents and case, and finds a chat by its phone", () => {
     const archive = new Archive(memoryDatabase())
     archive.learnPair(PN, LID)

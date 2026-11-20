@@ -169,6 +169,8 @@ export interface GroupInfo {
   readonly participants: readonly {
     readonly jid: string
     readonly name: string | null
+    readonly contactName: string | null
+    readonly profileName: string | null
     readonly phone: string | null
     readonly admin: "admin" | "superadmin" | null
   }[]
@@ -475,9 +477,12 @@ export class WhatsAppAccount extends DurableObject<Env> {
       addressingMode: addressingOf(group),
       participants: group.participants.map((participant) => {
         const person = this.archive.getPerson(jidNormalizedUser(participant.id))
+        const names = this.archive.namesBySource(person.jid)
         return {
           jid: person.jid,
           name: person.name ?? participant.notify ?? null,
+          contactName: names.contact ?? null,
+          profileName: names.push ?? names.business ?? participant.notify ?? null,
           phone: person.phone,
           admin: participant.admin ?? null,
         }

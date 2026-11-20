@@ -59,7 +59,16 @@ function fakeAccount(overrides: Partial<ApiAccount> = {}) {
         announceOnly: false,
         restricted: false,
         addressingMode: "lid" as const,
-        participants: [{ jid: "1@lid", name: "Ada", phone: "+5511999999999", admin: null }],
+        participants: [
+          {
+            jid: "1@lid",
+            name: "Ada",
+            contactName: "Ada (work)",
+            profileName: "Ada L.",
+            phone: "+5511999999999",
+            admin: null,
+          },
+        ],
       }),
     ),
     ...overrides,
@@ -177,7 +186,16 @@ describe("REST API", () => {
     expect(await jsonOf(group)).toMatchObject({
       group: {
         addressing_mode: "lid",
-        participants: [{ jid: "1@lid", phone: "+5511999999999", name: "Ada", admin: null }],
+        participants: [
+          {
+            jid: "1@lid",
+            phone: "+5511999999999",
+            name: "Ada",
+            contact_name: "Ada (work)",
+            profile_name: "Ada L.",
+            admin: null,
+          },
+        ],
       },
     })
   })
