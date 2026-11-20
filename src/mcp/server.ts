@@ -38,7 +38,8 @@ function withoutNulls<V>(record: Record<string, V | null>): Record<string, V> {
 function withMentionNames(text: string, mentions: ArchivedMessage["mentions"]): string {
   let out = text
   for (const mention of mentions) {
-    if (mention.name) out = out.replaceAll(`@${mention.user}`, `@${mention.name}`)
+    // A WhatsApp username already starts with `@`.
+    if (mention.name) out = out.replaceAll(`@${mention.user}`, `@${mention.name.replace(/^@/, "")}`)
   }
   return out
 }
