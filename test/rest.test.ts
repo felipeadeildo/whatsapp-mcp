@@ -3,7 +3,6 @@ import { z } from "zod"
 
 import { type ApiAccount, handleApi } from "../src/api/rest"
 import { RequestError } from "../src/errors"
-import { archivedMessage } from "./archived-message"
 
 const GROUP = "120363000000000001@g.us"
 
@@ -24,10 +23,16 @@ function fakeAccount(overrides: Partial<ApiAccount> = {}) {
       state: "open",
     }),
     send: record("send", Promise.resolve({ chatJid: GROUP, id: "SENT", deduplicated: false })),
-    editMessage: record("editMessage", Promise.resolve()),
+    editMessage: record("editMessage", Promise.resolve(GROUP)),
     deleteMessage: record("deleteMessage", Promise.resolve()),
-    getMessageContext: record("getMessageContext", Promise.resolve([archivedMessage("A")])),
-    getMessages: record("getMessages", Promise.resolve([archivedMessage("A")])),
+    readMessage: record(
+      "readMessage",
+      Promise.resolve({ chat: { jid: GROUP }, message: { id: "A" } }),
+    ),
+    readMessages: record(
+      "readMessages",
+      Promise.resolve({ chat: { jid: GROUP }, messages: [{ id: "A" }] }),
+    ),
     listChats: record("listChats", [
       {
         jid: GROUP,
@@ -57,9 +62,6 @@ function fakeAccount(overrides: Partial<ApiAccount> = {}) {
         participants: [{ jid: "1@lid", name: "Ada", phone: "+5511999999999", admin: null }],
       }),
     ),
-    presentChat: (jid) => ({ jid, name: null, type: "group" }),
-    presentMessages: (messages) => messages.map((message) => ({ id: message.id })),
-    resolve: (to) => to,
     ...overrides,
   }
   return { account, calls }
@@ -155,11 +157,11 @@ describe("REST API", () => {
       `/chats/${GROUP}/messages?since=2026-10-03T00:00:00-03:00&until=2026-10-04T00:00:00-03:00`,
     )
     expect(await jsonOf(response)).toEqual({
-      chat: { jid: GROUP, name: null, type: "group" },
+      chat: { jid: GROUP },
       messages: [{ id: "A" }],
     })
     const since = Date.parse("2026-10-03T03:00:00Z") / 1000
-    expect(argsOf(calls, "getMessages")[0]).toMatchObject({
+    expect(argsOf(calls, "readMessages")[0]).toMatchObject({
       chatJid: GROUP,
       after: since - 1,
       before: since + 86_400,

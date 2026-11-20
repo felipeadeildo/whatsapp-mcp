@@ -130,6 +130,16 @@ export interface SendResult {
 
 export type Presence = "typing" | "recording" | "paused"
 
+export interface MessagesData {
+  readonly chat: Record<string, unknown>
+  readonly messages: readonly Record<string, unknown>[]
+}
+
+export interface MessageData {
+  readonly chat: Record<string, unknown>
+  readonly message: Record<string, unknown>
+}
+
 /** Who the linked number is, by every JID WhatsApp may use for it. */
 export interface Me {
   readonly jid: string | null
@@ -381,7 +391,8 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  async editMessage(chatJid: string, messageId: string, text: string): Promise<void> {
+  /** Returns the chat's JID, resolved from a phone number if one was given. */
+  async editMessage(chatJid: string, messageId: string, text: string): Promise<string> {
     const socket = this.connectedSocket()
     const jid = this.resolveChat(chatJid)
     const { key } = this.rawMessage(jid, messageId)
@@ -405,6 +416,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (this.archive.applyEdit(jid, messageId, text)) {
       this.publish([{ type: "edit", chatJid: jid, id: messageId }])
     }
+    return jid
   }
 
   async deleteMessage(chatJid: string, messageId: string): Promise<void> {
@@ -491,18 +503,30 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
   }
 
-  /** The chat and its messages as webhooks carry them. */
-  presentChat(jid: string): Record<string, unknown> {
-    return chatData(this.chatRef(jid))
-  }
-
-  presentMessages(messages: readonly ReadMessage[]): Record<string, unknown>[] {
+  /** A chat's messages in the shape webhooks carry them. */
+  async readMessages(query: MessageQuery, transcribeVoice: boolean): Promise<MessagesData> {
+    const chatJid = this.resolveChat(query.chatJid)
+    const messages = await this.getMessages({ ...query, chatJid }, transcribeVoice)
     const self = this.self()
-    return messages.map((message) => messageData(message, this.senderOf(message), self))
+    return {
+      chat: chatData(this.chatRef(chatJid)),
+      messages: messages.map((message) => messageData(message, this.senderOf(message), self)),
+    }
   }
 
-  resolve(to: string): string {
-    return this.resolveChat(to)
+  /** One message in the shape webhooks carry it, or null when the archive lacks it. */
+  async readMessage(
+    chatJid: string,
+    id: string,
+    transcribeVoice: boolean,
+  ): Promise<MessageData | null> {
+    const jid = this.resolveChat(chatJid)
+    const [message] = await this.getMessageContext(jid, id, 0, transcribeVoice)
+    if (!message) return null
+    return {
+      chat: chatData(this.chatRef(jid)),
+      message: messageData(message, this.senderOf(message), this.self()),
+    }
   }
 
   async getProfile(jid: string): Promise<Profile> {

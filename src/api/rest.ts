@@ -4,31 +4,30 @@
 import { isBoom } from "@oxidezap/baileyrs/lib/Utils/boom.js"
 import { z } from "zod"
 
-import type { GroupInfo, Me, Presence, SendRequest, SendResult } from "../account"
+import type {
+  GroupInfo,
+  Me,
+  MessageData,
+  MessagesData,
+  Presence,
+  SendRequest,
+  SendResult,
+} from "../account"
 import { errorText, RequestError } from "../errors"
 import type { ChatListQuery, ChatSummary, MessageQuery } from "../store/archive"
-import type { ReadMessage } from "../transcribe"
 import { isoTime } from "../webhooks/events"
 
 export interface ApiAccount {
   me(): Me
   send(request: SendRequest): Promise<SendResult>
-  editMessage(chatJid: string, messageId: string, text: string): Promise<void>
+  editMessage(chatJid: string, messageId: string, text: string): Promise<string>
   deleteMessage(chatJid: string, messageId: string): Promise<void>
-  getMessageContext(
-    chatJid: string,
-    id: string,
-    around: number,
-    transcribeVoice: boolean,
-  ): Promise<ReadMessage[]>
-  getMessages(query: MessageQuery, transcribeVoice: boolean): Promise<ReadMessage[]>
+  readMessage(chatJid: string, id: string, transcribeVoice: boolean): Promise<MessageData | null>
+  readMessages(query: MessageQuery, transcribeVoice: boolean): Promise<MessagesData>
   listChats(query: ChatListQuery): ChatSummary[]
   markRead(chatJid: string): Promise<number>
   setPresence(chatJid: string, state: Presence): Promise<void>
   getGroupInfo(groupJid: string): Promise<GroupInfo>
-  presentChat(jid: string): Record<string, unknown>
-  presentMessages(messages: readonly ReadMessage[]): Record<string, unknown>[]
-  resolve(to: string): string
 }
 
 const flag = z
@@ -170,12 +169,9 @@ async function getMessage(
   url: URL,
 ): Promise<Response> {
   const query = parseQuery(url, MessageQueryParams)
-  const jid = account.resolve(chat)
-  const [message] = await account.getMessageContext(jid, id, 0, query.transcribe_voice ?? false)
-  if (!message)
-    throw new RequestError(404, "message_not_found", `message ${id} not found in ${jid}`)
-  const [data] = account.presentMessages([message])
-  return Response.json({ chat: account.presentChat(jid), message: data })
+  const found = await account.readMessage(chat, id, query.transcribe_voice ?? false)
+  if (!found) throw new RequestError(404, "message_not_found", `message ${id} not found in ${chat}`)
+  return Response.json(found)
 }
 
 async function editMessage(
@@ -185,8 +181,7 @@ async function editMessage(
   request: Request,
 ): Promise<Response> {
   const body = await parseBody(request, EditBody)
-  const jid = account.resolve(chat)
-  await account.editMessage(jid, id, body.text)
+  const jid = await account.editMessage(chat, id, body.text)
   return Response.json({ chat_jid: jid, id })
 }
 
@@ -221,10 +216,9 @@ async function listChats(account: ApiAccount, _request: Request, url: URL): Prom
 // The newest `limit` messages in [since, until), oldest first.
 async function listMessages(account: ApiAccount, chat: string, url: URL): Promise<Response> {
   const query = parseQuery(url, MessagesQuery)
-  const jid = account.resolve(chat)
-  const messages = await account.getMessages(
+  const found = await account.readMessages(
     {
-      chatJid: jid,
+      chatJid: chat,
       limit: query.limit,
       after: query.since === undefined ? undefined : query.since - 1,
       before: query.until,
@@ -232,10 +226,7 @@ async function listMessages(account: ApiAccount, chat: string, url: URL): Promis
     },
     query.transcribe_voice ?? false,
   )
-  return Response.json({
-    chat: account.presentChat(jid),
-    messages: account.presentMessages(messages),
-  })
+  return Response.json(found)
 }
 
 async function setPresence(account: ApiAccount, chat: string, request: Request): Promise<Response> {
