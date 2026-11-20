@@ -444,6 +444,26 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return keys.length
   }
 
+  /** Sends a read receipt for one received message; returns the chat's JID. */
+  async markMessageRead(chatJid: string, messageId: string): Promise<string> {
+    const socket = this.connectedSocket()
+    const jid = this.resolveChat(chatJid)
+    const { key } = this.rawMessage(jid, messageId)
+    if (key.fromMe) {
+      throw new RequestError(
+        400,
+        "invalid_request",
+        "messages sent by this account are already read",
+      )
+    }
+    await socket.readMessages([key])
+    // Older unread messages stay unread, so the count only clears at the newest one.
+    if (this.archive.latestIncoming(jid, 1)[0]?.id === messageId) {
+      this.archive.saveChats([{ jid, unreadCount: 0 }])
+    }
+    return jid
+  }
+
   async saveContact(target: string, name: ContactName): Promise<Identity> {
     return saveContact(this.connectedSocket(), this.archive, target, name)
   }

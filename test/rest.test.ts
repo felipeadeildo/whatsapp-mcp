@@ -46,6 +46,7 @@ function fakeAccount(overrides: Partial<ApiAccount> = {}) {
       },
     ]),
     markRead: record("markRead", Promise.resolve(3)),
+    markMessageRead: record("markMessageRead", Promise.resolve(GROUP)),
     setPresence: record("setPresence", Promise.resolve()),
     getGroupInfo: record(
       "getGroupInfo",
@@ -118,6 +119,15 @@ describe("REST API", () => {
     expect(response.status).toBe(200)
     expect(await jsonOf(response)).toEqual({ chat_jid: GROUP, id: "SENT" })
     expect(argsOf(calls, "editMessage")).toEqual([GROUP, "SENT", "pronto"])
+  })
+
+  test("marks one message as read", async () => {
+    const { account, calls } = fakeAccount()
+    const response = await call(account, "POST", `/messages/${GROUP}/IN/read`)
+    expect(response.status).toBe(200)
+    expect(await jsonOf(response)).toEqual({ chat_jid: GROUP, id: "IN" })
+    expect(argsOf(calls, "markMessageRead")).toEqual([GROUP, "IN"])
+    expect((await call(account, "GET", `/messages/${GROUP}/IN/read`)).status).toBe(405)
   })
 
   test("a refusal keeps its status and code", async () => {

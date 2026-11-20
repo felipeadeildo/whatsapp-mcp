@@ -25,6 +25,7 @@ export interface ApiAccount {
   readMessages(query: MessageQuery, transcribeVoice: boolean): Promise<MessagesData>
   listChats(query: ChatListQuery): ChatSummary[]
   markRead(chatJid: string): Promise<number>
+  markMessageRead(chatJid: string, messageId: string): Promise<string>
   setPresence(chatJid: string, state: Presence): Promise<void>
   getGroupInfo(groupJid: string): Promise<GroupInfo>
 }
@@ -103,6 +104,9 @@ function routesFor(segments: readonly string[]): Record<string, Route> | null {
       return { GET: async (account) => Response.json(presentMe(account.me())) }
     case "messages":
       if (segments.length === 1) return { POST: sendMessage }
+      if (segments.length === 4 && a && b && segments[3] === "read") {
+        return { POST: (account) => markMessageRead(account, a, b) }
+      }
       if (segments.length !== 3 || !a || !b) return null
       return {
         GET: (account, _request, url) => getMessage(account, a, b, url),
@@ -232,6 +236,10 @@ async function setPresence(account: ApiAccount, chat: string, request: Request):
   const body = await parseBody(request, PresenceBody)
   await account.setPresence(chat, body.state)
   return new Response(null, { status: 204 })
+}
+
+async function markMessageRead(account: ApiAccount, chat: string, id: string): Promise<Response> {
+  return Response.json({ chat_jid: await account.markMessageRead(chat, id), id })
 }
 
 async function markRead(account: ApiAccount, chat: string): Promise<Response> {

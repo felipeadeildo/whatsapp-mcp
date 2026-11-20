@@ -119,18 +119,19 @@ A webhook copies every later message out of your account, so an assistant should
 
 Want a bot in your group chat? It gets every message through a [webhook](#webhooks) and answers through these routes, with `Authorization: Bearer <SECRET>`. Anywhere a route takes a chat or a person, a phone number works as well as a JID.
 
-| Under `/accounts/personal`   | What it does                                                             |
-| ---------------------------- | ------------------------------------------------------------------------ |
-| `GET /me`                    | The linked number, by phone and by LID                                   |
-| `POST /messages`             | Sends `text` `to` a chat, with `reply_to`, `mentions`, `idempotency_key` |
-| `GET /messages/:chat/:id`    | One message                                                              |
-| `PATCH /messages/:chat/:id`  | Edits your message, up to 15 minutes after sending                       |
-| `DELETE /messages/:chat/:id` | Deletes your message for everyone                                        |
-| `GET /chats`                 | Chats, filtered by `type=group` or `direct`                              |
-| `GET /chats/:chat/messages`  | Messages between `since` and `until`                                     |
-| `POST /chats/:chat/presence` | Shows `typing` or `recording` for about 25 seconds                       |
-| `POST /chats/:chat/read`     | Marks the chat as read                                                   |
-| `GET /groups/:jid`           | A group and its members, with their phone numbers                        |
+| Under `/accounts/personal`      | What it does                                                             |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| `GET /me`                       | The linked number, by phone and by LID                                   |
+| `POST /messages`                | Sends `text` `to` a chat, with `reply_to`, `mentions`, `idempotency_key` |
+| `GET /messages/:chat/:id`       | One message                                                              |
+| `PATCH /messages/:chat/:id`     | Edits your message, up to 15 minutes after sending                       |
+| `DELETE /messages/:chat/:id`    | Deletes your message for everyone                                        |
+| `POST /messages/:chat/:id/read` | Marks one received message as read                                       |
+| `GET /chats`                    | Chats, filtered by `type=group` or `direct`                              |
+| `GET /chats/:chat/messages`     | Messages between `since` and `until`                                     |
+| `POST /chats/:chat/presence`    | Shows `typing` or `recording` for about 25 seconds                       |
+| `POST /chats/:chat/read`        | Marks the chat as read                                                   |
+| `GET /groups/:jid`              | A group and its members, with their phone numbers                        |
 
 Each webhook message says whether it mentions you (`mentions_me`) or replies to you (`reply_to_me`), so your bot knows when to answer. To mention someone back, list their number in `mentions` and write `@<number>` in the text, and the server makes it a link in any group. Errors come as `{"error", "code"}`, and [ADR 0005](docs/adr/0005-rest-api-for-bots.md) explains the choices.
 
