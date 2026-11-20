@@ -1,7 +1,6 @@
 // The REST API for programs that act on the account without an assistant, such as
 // bots. It runs inside the account's Durable Object, so a refusal keeps its status
 // and `code`. JSON follows the webhooks: snake_case, nulls kept, ISO 8601 UTC times.
-import { isBoom } from "@oxidezap/baileyrs/lib/Utils/boom.js"
 import { z } from "zod"
 
 import type {
@@ -13,7 +12,7 @@ import type {
   SendRequest,
   SendResult,
 } from "../account"
-import { errorText, RequestError } from "../errors"
+import { errorText, RequestError, whatsappStatus } from "../errors"
 import type { ChatListQuery, ChatSummary, MessageQuery } from "../store/archive"
 import { isoTime } from "../webhooks/events"
 
@@ -266,7 +265,7 @@ function errorResponse(error: unknown): Response {
   if (error instanceof RequestError) {
     return Response.json({ error: error.message, code: error.code }, { status: error.status })
   }
-  if (isBoom(error)) {
+  if (whatsappStatus(error) !== null) {
     return Response.json({ error: errorText(error), code: "whatsapp_error" }, { status: 502 })
   }
   return Response.json({ error: errorText(error), code: "internal" }, { status: 500 })

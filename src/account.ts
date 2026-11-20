@@ -15,7 +15,7 @@ import { renderSVG } from "uqr"
 import { z } from "zod"
 
 import { handleApi } from "./api/rest"
-import { errorText, RequestError } from "./errors"
+import { errorText, RequestError, whatsappStatus } from "./errors"
 import {
   Archive,
   type ArchivedMessage,
@@ -718,7 +718,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     try {
       group = await socket.groupMetadata(jid)
     } catch (error) {
-      const status = isBoom(error) ? error.output.statusCode : 0
+      const status = whatsappStatus(error)
       if (status === 403 || status === 404) {
         throw new RequestError(
           404,

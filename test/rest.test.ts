@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { z } from "zod"
 
 import { type ApiAccount, handleApi } from "../src/api/rest"
-import { RequestError } from "../src/errors"
+import { RequestError, whatsappStatus } from "../src/errors"
 
 const GROUP = "120363000000000001@g.us"
 
@@ -191,5 +191,17 @@ describe("REST API", () => {
       name: "Bob",
       state: "open",
     })
+  })
+})
+
+describe("whatsappStatus", () => {
+  test("reads the bridge's serverCode, and ignores other errors", () => {
+    const bridge = Object.assign(new Error("server error 404: item-not-found"), {
+      name: "WhatsAppError",
+      kind: "server",
+      serverCode: 404,
+    })
+    expect(whatsappStatus(bridge)).toBe(404)
+    expect(whatsappStatus(new Error("boom"))).toBeNull()
   })
 })
