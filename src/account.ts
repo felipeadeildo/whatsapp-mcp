@@ -18,6 +18,7 @@ import { handleApi } from "./api/rest"
 import { errorText, RequestError } from "./errors"
 import {
   Archive,
+  type ArchivedMessage,
   type ArchiveStats,
   chatTypeOf,
   type ChatListQuery,
@@ -481,12 +482,9 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   me(): Me {
     const jid = numberOf(this.socket) ?? this.owner()
-    const socketLid = this.socket?.user?.lid
-    const known = jid ? this.archive.canonical(jid) : null
-    const lid = socketLid ? jidNormalizedUser(socketLid) : known?.endsWith("@lid") ? known : null
     return {
       jid,
-      lid,
+      lid: this.ownLid(jid),
       phone: jid ? `+${jid.slice(0, jid.indexOf("@"))}` : null,
       name: this.socket?.user?.name || null,
       state: this.state,
@@ -500,10 +498,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
 
   presentMessages(messages: readonly ReadMessage[]): Record<string, unknown>[] {
     const self = this.self()
-    return messages.map((message) => {
-      const sender = message.fromMe || !message.senderJid ? null : this.person(message.senderJid)
-      return messageData(message, sender, self)
-    })
+    return messages.map((message) => messageData(message, this.senderOf(message), self))
   }
 
   resolve(to: string): string {
@@ -664,7 +659,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     }
     const message = this.archive.getMessage(change.chatJid, change.id)
     if (!message) return null
-    const sender = message.fromMe || !message.senderJid ? null : this.person(message.senderJid)
+    const sender = this.senderOf(message)
     const type =
       change.type === "edit"
         ? "message.edited"
@@ -674,6 +669,14 @@ export class WhatsAppAccount extends DurableObject<Env> {
             ? "message.sent"
             : "message.received"
     return messageEvent(type, chat, message, sender, this.self(), now)
+  }
+
+  // The socket knows the LID while connected; the archive remembers it otherwise.
+  private ownLid(jid: string | null): string | null {
+    const socketLid = this.socket?.user?.lid
+    if (socketLid) return jidNormalizedUser(socketLid)
+    const known = jid ? this.archive.canonical(jid) : null
+    return known?.endsWith("@lid") ? known : null
   }
 
   private self(): Self {
@@ -749,6 +752,11 @@ export class WhatsAppAccount extends DurableObject<Env> {
     return { jid, name, phone }
   }
 
+  // Webhooks name the sender of received messages only.
+  private senderOf(message: ArchivedMessage): Person | null {
+    return message.fromMe || !message.senderJid ? null : this.person(message.senderJid)
+  }
+
   // Reports links and unlinks, not every reconnect.
   private connectionChanged(
     state: ConnectionChange,
@@ -804,8 +812,7 @@ export class WhatsAppAccount extends DurableObject<Env> {
     if (!message) return null
     const [read] = await this.transcripts.read([message], true)
     if (!read) return null
-    const sender = read.fromMe || !read.senderJid ? null : this.person(read.senderJid)
-    return messageData(read, sender, this.self())
+    return messageData(read, this.senderOf(read), this.self())
   }
 
   // Concurrent callers share one attempt.

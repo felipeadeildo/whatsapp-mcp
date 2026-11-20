@@ -84,13 +84,11 @@ export async function handleApi(request: Request, account: ApiAccount): Promise<
       .split("/")
       .filter((segment) => segment.length > 0)
       .map((segment) => decodeURIComponent(segment))
-    const route = routeOf(segments, request.method)
-    if (route === "not_found") throw new RequestError(404, "not_found", `no route ${url.pathname}`)
-    if (route === "method_not_allowed") {
-      return Response.json(
-        { error: `${request.method} is not allowed here`, code: "invalid_request" },
-        { status: 405 },
-      )
+    const routes = routesFor(segments)
+    if (!routes) throw new RequestError(404, "not_found", `no route ${url.pathname}`)
+    const route = routes[request.method]
+    if (!route) {
+      throw new RequestError(405, "invalid_request", `${request.method} is not allowed here`)
     }
     return await route(account, request, url)
   } catch (error) {
@@ -98,50 +96,39 @@ export async function handleApi(request: Request, account: ApiAccount): Promise<
   }
 }
 
-function routeOf(
-  segments: readonly string[],
-  method: string,
-): Route | "not_found" | "method_not_allowed" {
-  const [resource, a, b, c] = segments
-  const pick = (routes: Record<string, Route>) => routes[method] ?? "method_not_allowed"
+// The handlers of a path, by HTTP method, or null when no resource has that path.
+function routesFor(segments: readonly string[]): Record<string, Route> | null {
+  const [resource, a, b] = segments
   switch (resource) {
     case "me":
-      if (segments.length !== 1) return "not_found"
-      return pick({ GET: async (account) => Response.json(presentMe(account.me())) })
+      if (segments.length !== 1) return null
+      return { GET: async (account) => Response.json(presentMe(account.me())) }
     case "messages":
-      if (segments.length === 1) return pick({ POST: sendMessage })
-      if (segments.length === 3 && a && b) {
-        return pick({
-          GET: (account, _request, url) => getMessage(account, a, b, url),
-          PATCH: (account, request) => editMessage(account, a, b, request),
-          DELETE: async (account) => {
-            await account.deleteMessage(a, b)
-            return new Response(null, { status: 204 })
-          },
-        })
+      if (segments.length === 1) return { POST: sendMessage }
+      if (segments.length !== 3 || !a || !b) return null
+      return {
+        GET: (account, _request, url) => getMessage(account, a, b, url),
+        PATCH: (account, request) => editMessage(account, a, b, request),
+        DELETE: (account) => deleteMessage(account, a, b),
       }
-      return "not_found"
     case "chats":
-      if (segments.length === 1) return pick({ GET: listChats })
-      if (segments.length === 3 && a) {
-        if (b === "messages")
-          return pick({ GET: (account, _r, url) => listMessages(account, a, url) })
-        if (b === "presence")
-          return pick({ POST: (account, request) => setPresence(account, a, request) })
-        if (b === "read") {
-          return pick({
-            POST: async (account) => Response.json({ marked: await account.markRead(a) }),
-          })
-        }
+      if (segments.length === 1) return { GET: listChats }
+      if (segments.length !== 3 || !a) return null
+      switch (b) {
+        case "messages":
+          return { GET: (account, _request, url) => listMessages(account, a, url) }
+        case "presence":
+          return { POST: (account, request) => setPresence(account, a, request) }
+        case "read":
+          return { POST: (account) => markRead(account, a) }
+        default:
+          return null
       }
-      return "not_found"
     case "groups":
-      if (segments.length === 2 && a && c === undefined) {
-        return pick({ GET: (account) => getGroup(account, a) })
-      }
-      return "not_found"
+      if (segments.length !== 2 || !a) return null
+      return { GET: (account) => getGroup(account, a) }
     default:
-      return "not_found"
+      return null
   }
 }
 
@@ -203,6 +190,11 @@ async function editMessage(
   return Response.json({ chat_jid: jid, id })
 }
 
+async function deleteMessage(account: ApiAccount, chat: string, id: string): Promise<Response> {
+  await account.deleteMessage(chat, id)
+  return new Response(null, { status: 204 })
+}
+
 async function listChats(account: ApiAccount, _request: Request, url: URL): Promise<Response> {
   const query = parseQuery(url, ChatsQuery)
   const chats = account.listChats({
@@ -250,6 +242,10 @@ async function setPresence(account: ApiAccount, chat: string, request: Request):
   const body = await parseBody(request, PresenceBody)
   await account.setPresence(chat, body.state)
   return new Response(null, { status: 204 })
+}
+
+async function markRead(account: ApiAccount, chat: string): Promise<Response> {
+  return Response.json({ marked: await account.markRead(chat) })
 }
 
 async function getGroup(account: ApiAccount, jid: string): Promise<Response> {

@@ -117,7 +117,7 @@ A webhook copies every later message out of your account, so an assistant should
 
 ## REST API
 
-Programs that act without an assistant, such as a bot that answers in a group, use the REST API with `Authorization: Bearer <SECRET>`. Bodies and answers are JSON like the webhooks': snake_case, `null` for empty fields, times in ISO 8601 UTC. Wherever a path or body takes a chat or a person, a phone number with country code works as well as a JID; encode the `@` as `%40` if your HTTP client needs it.
+Programs that act without an assistant, such as a bot that answers in a group, use the REST API with `Authorization: Bearer <SECRET>`. Bodies and answers are JSON like the webhooks': snake_case, `null` for empty fields, times in ISO 8601 UTC. Wherever a path or body takes a chat or a person, it accepts a JID or a phone number with country code. Encode the `@` of a JID in a path as `%40` if your HTTP client needs it.
 
 | Method and path under `/accounts/personal` | What it does                                                             |
 | ------------------------------------------ | ------------------------------------------------------------------------ |
@@ -130,9 +130,9 @@ Programs that act without an assistant, such as a bot that answers in a group, u
 | `GET /chats/:chat/messages`                | Messages in `[since, until)`, newest `limit` (max 1000), oldest first    |
 | `POST /chats/:chat/presence`               | Shows `typing`, `recording` or `paused` for about 25 seconds             |
 | `POST /chats/:chat/read`                   | Marks the chat as read                                                   |
-| `GET /groups/:jid`                         | A group, asked of WhatsApp now, with each member's `jid`, `phone`, admin |
+| `GET /groups/:jid`                         | A group, fetched from WhatsApp, with each member's `jid`, `phone`, admin |
 
-To mention someone, put their phone number or JID in `mentions` and write `@<their number>` in the text. The server rewrites it to what the group expects: groups that address members by LID need `@<lid>`, and WhatsApp shows a plain number otherwise.
+To mention someone, put their phone number or JID in `mentions` and write `@<their number>` in the text. A group that addresses members by LID turns a mention into a link only when the text says `@<lid>`. The server checks the group and rewrites the text to match.
 
 ```sh
 curl -X POST https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/messages \
@@ -142,7 +142,7 @@ curl -X POST https://whatsapp-mcp.<your-name>.workers.dev/accounts/personal/mess
 
 The answer is `{"chat_jid": "...", "id": "...", "deduplicated": false}`. A refusal has an `error` to read and a `code` to branch on: `invalid_request`, `invalid_address`, `not_found`, `message_not_found`, `not_own_message`, `edit_window_closed` (409), `not_connected` (503) or `whatsapp_error` (502).
 
-Webhook messages carry `mentions_me` and `reply_to_me`, so a bot knows it was called without comparing JIDs: WhatsApp names the same number by phone in some chats and by LID in others. A bot also receives its own messages as `message.sent` and its edits as `message.edited`, both with `from_me: true`.
+WhatsApp names the same number by phone in some chats and by LID in others. Webhook messages carry `mentions_me` and `reply_to_me`, so a bot doesn't compare JIDs to know it was called. A bot also receives its own messages as `message.sent` and its edits as `message.edited`, both with `from_me: true`.
 
 ## How it works
 
